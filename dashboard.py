@@ -2,14 +2,15 @@
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List
 
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
+from streamlit_keyup import st_keyup
 
 DB_PATH_DEFAULT = "dex_data.sqlite"
 SOL_MONITOR_TABLE = "sol_monitor_snapshots"
@@ -17,7 +18,7 @@ SPOT_TABLE = "spot_price_snapshots"
 
 
 # -----------------------------
-# Helpers / Math
+# Quant helpers
 # -----------------------------
 def sharpe_ratio(r: pd.Series, periods_per_year: float) -> float:
     r = r.dropna()
@@ -41,7 +42,6 @@ def sortino_ratio(r: pd.Series, periods_per_year: float) -> float:
 
 
 def downside_deviation(r: pd.Series, periods_per_year: float) -> float:
-    """Downside deviation (annualized) using only negative returns."""
     r = r.dropna()
     if r.empty:
         return float("nan")
@@ -51,27 +51,17 @@ def downside_deviation(r: pd.Series, periods_per_year: float) -> float:
 
 
 def rolling_beta(asset_r: pd.Series, bench_r: pd.Series, window: int) -> pd.Series:
-    """Rolling beta = Cov(asset, bench) / Var(bench)."""
     df = pd.concat([asset_r, bench_r], axis=1).dropna()
     if df.empty:
         return pd.Series(dtype=float)
-
     a = df.iloc[:, 0]
     b = df.iloc[:, 1]
     cov = a.rolling(window).cov(b)
     var = b.rolling(window).var(ddof=1)
-    beta = cov / var
-    return beta
+    return cov / var
 
 
 def annualization_factor(freq: str) -> float:
-    """
-    freq options we’ll use:
-      - "10s", "30s"
-      - "1min", "5min", "15min"
-      - "1H"
-      - "1D"
-    """
     if freq.endswith("s"):
         seconds = int(freq[:-1])
         return (365 * 24 * 60 * 60) / seconds
@@ -82,7 +72,6 @@ def annualization_factor(freq: str) -> float:
         return 365 * 24
     if freq.upper() == "1D":
         return 365
-    # fallback: assume minute
     return 365 * 24 * 60
 
 
@@ -125,7 +114,6 @@ def resample_prices_wide(spot_df: pd.DataFrame, freq: str) -> pd.DataFrame:
     spot_df["spot_price_usd"] = pd.to_numeric(spot_df["spot_price_usd"], errors="coerce")
     spot_df = spot_df.dropna(subset=["spot_price_usd"])
 
-    # per-symbol series
     out: Dict[str, pd.Series] = {}
     for sym in sorted(spot_df["symbol"].unique().tolist()):
         sub = spot_df[spot_df["symbol"] == sym].set_index("ts_utc").sort_index()
@@ -136,32 +124,21 @@ def resample_prices_wide(spot_df: pd.DataFrame, freq: str) -> pd.DataFrame:
     if not out:
         return pd.DataFrame()
 
-    wide = pd.DataFrame(out).dropna(how="any")  # inner-join alignment
-    return wide
+    return pd.DataFrame(out).dropna(how="any")  # inner-join alignment
 
 
 def resample_liquidity(sol_df: pd.DataFrame, freq: str) -> pd.Series:
     sol_df = sol_df.copy()
     sol_df["ts_utc"] = to_dt_utc(sol_df["ts_utc"])
-    sol_df = sol_df.dropna(subset=["ts_utc"])
-    sol_df = sol_df.set_index("ts_utc").sort_index()
-    liq = pd.to_numeric(sol_df["liquidity_usd"], errors="coerce").resample(freq).last()
-    return liq
+    sol_df = sol_df.dropna(subset=["ts_utc"]).set_index("ts_utc").sort_index()
+    return pd.to_numeric(sol_df["liquidity_usd"], errors="coerce").resample(freq).last()
 
 
 def add_regime_from_percentile(vol: pd.Series) -> pd.DataFrame:
-    """
-    Regime by percentile of rolling vol:
-      Low < 33%
-      Mid 33–66%
-      High > 66%
-    """
     v = vol.dropna()
     if v.empty:
         return pd.DataFrame(index=vol.index)
-
     pct = v.rank(pct=True)
-    # align back to full index
     pct_full = pd.Series(index=vol.index, dtype=float)
     pct_full.loc[pct.index] = pct.values
 
@@ -169,75 +146,236 @@ def add_regime_from_percentile(vol: pd.Series) -> pd.DataFrame:
     regime[pct_full < 0.33] = "Low"
     regime[(pct_full >= 0.33) & (pct_full <= 0.66)] = "Mid"
     regime[pct_full > 0.66] = "High"
-
     return pd.DataFrame({"vol_percentile": pct_full, "regime": regime})
 
 
 # -----------------------------
-# Streamlit UI
+# Bloomberg-style UI
 # -----------------------------
-st.set_page_config(page_title="Crypto Analyzer Dashboard", layout="wide")
+st.set_page_config(page_title="Crypto Analyzer", layout="wide")
 
-st.title("Crypto Analyzer — Multi-Asset Quant Dashboard")
+# Session defaults
+if "page" not in st.session_state:
+    st.session_state.page = "PRICES"
+if "mode" not in st.session_state:
+    st.session_state.mode = "Bloomberg Dark"
+if "accent" not in st.session_state:
+    st.session_state.accent = "Lime"
 
+PAGES = ["PRICES", "RISK", "BETA", "REGIMES", "DEX ↔ VOL"]
+ACCENTS = ["Lime", "Cyan", "Magenta", "Amber", "Blue"]
+
+
+# Sidebar controls
 with st.sidebar:
-    st.header("Data Source")
+    st.markdown("## Terminal")
+
     db_path = st.text_input("SQLite DB path", DB_PATH_DEFAULT)
 
-    st.header("Chart Theme")
-    template = st.selectbox(
-        "Plotly template",
-        [
-            "plotly",
-            "plotly_white",
-            "plotly_dark",
-            "ggplot2",
-            "seaborn",
-            "simple_white",
-            "presentation",
-        ],
-        index=2,  # dark default
-    )
-    colorway = st.selectbox(
-        "Color set",
-        ["Plotly default", "Vivid", "Pastel", "Bold"],
-        index=1,
-    )
+    st.markdown("## Real-time")
+    auto_refresh = st.toggle("Auto-refresh", value=True)
+    refresh_s = st.slider("Refresh interval (seconds)", 2, 60, 5, 1)
 
-    st.header("Analysis Controls")
-    freq = st.selectbox("Resample frequency (analysis bars)", ["10s", "30s", "1min", "5min", "15min", "1H", "1D"], index=2)
-    roll_window = st.slider("Rolling window (bars)", min_value=5, max_value=300, value=30, step=1)
-    min_ratio_points = st.slider("Min points to show ratios", min_value=10, max_value=2000, value=300, step=10)
+    st.markdown("## Look & Feel")
+    mode = st.selectbox("Theme", ["Bloomberg Dark", "Bloomberg Light"], index=0 if st.session_state.mode == "Bloomberg Dark" else 1)
+    accent = st.selectbox("Accent", ACCENTS, index=ACCENTS.index(st.session_state.accent))
 
-    st.header("Beta / Regimes")
-    beta_window = st.slider("Rolling beta window (bars)", min_value=10, max_value=500, value=60, step=5)
-    regime_window = st.slider("Regime vol window (bars)", min_value=10, max_value=500, value=60, step=5)
+    st.markdown("## Analysis")
+    freq = st.selectbox("Resample bars", ["10s", "30s", "1min", "5min", "15min", "1H", "1D"], index=2)
+    roll_window = st.slider("Rolling window (bars)", 5, 300, 30, 1)
+    min_ratio_points = st.slider("Min bars for ratios", 10, 2000, 300, 10)
 
-    st.caption("Tip: For stable metrics, use 1min bars and run the poller for hours+.")
+    st.markdown("## Beta / Regimes")
+    beta_window = st.slider("Rolling beta window (bars)", 10, 500, 60, 5)
+    regime_window = st.slider("Regime vol window (bars)", 10, 500, 60, 5)
+
+# Persist selects
+st.session_state.mode = mode
+st.session_state.accent = accent
+
+# Auto refresh
+if auto_refresh:
+    st_autorefresh(interval=refresh_s * 1000, key="autorefresh")
+
+# Keyboard shortcuts listener (returns last key pressed as a string)
+key = st_keyup("", key="keypress", label_visibility="collapsed")
+
+# Shortcut handling
+def cycle_accent(delta: int) -> None:
+    i = ACCENTS.index(st.session_state.accent)
+    st.session_state.accent = ACCENTS[(i + delta) % len(ACCENTS)]
+
+if key:
+    k = key.lower().strip()
+    if k == "1":
+        st.session_state.page = "PRICES"
+    elif k == "2":
+        st.session_state.page = "RISK"
+    elif k == "3":
+        st.session_state.page = "BETA"
+    elif k == "4":
+        st.session_state.page = "REGIMES"
+    elif k == "5":
+        st.session_state.page = "DEX ↔ VOL"
+    elif k == "t":
+        st.session_state.mode = "Bloomberg Light" if st.session_state.mode == "Bloomberg Dark" else "Bloomberg Dark"
+        st.rerun()
+    elif k == "a":
+        cycle_accent(+1)
+        st.rerun()
+    elif k == "z":
+        cycle_accent(-1)
+        st.rerun()
 
 
-def apply_colorway(fig: go.Figure, colorway_choice: str) -> go.Figure:
-    palettes = {
-        "Plotly default": None,
-        "Vivid": ["#00E5FF", "#FF2D55", "#34C759", "#AF52DE", "#FF9F0A", "#5AC8FA"],
-        "Pastel": ["#A7C7E7", "#FADADD", "#C1E1C1", "#E6E6FA", "#FFE5B4", "#BEE3DB"],
-        "Bold": ["#00C2FF", "#FF3B30", "#30D158", "#BF5AF2", "#FFD60A", "#64D2FF"],
-    }
-    palette = palettes.get(colorway_choice)
-    if palette:
-        fig.update_layout(colorway=palette)
-    return fig
+# Theme constants
+DARK_BG = "#0b0f14"
+DARK_PANEL = "#111823"
+DARK_TEXT = "#e6edf3"
+DARK_MUTED = "#9aa4b2"
+GRID_DARK = "rgba(255,255,255,0.08)"
+
+LIGHT_BG = "#f6f7fb"
+LIGHT_PANEL = "#ffffff"
+LIGHT_TEXT = "#0b0f14"
+LIGHT_MUTED = "#51606e"
+GRID_LIGHT = "rgba(0,0,0,0.08)"
+
+ACCENT_HEX = {
+    "Lime": "#b6ff00",
+    "Cyan": "#00e5ff",
+    "Magenta": "#ff2d55",
+    "Amber": "#ffb020",
+    "Blue": "#4da3ff",
+}[st.session_state.accent]
+
+is_dark = (st.session_state.mode == "Bloomberg Dark")
+BG = DARK_BG if is_dark else LIGHT_BG
+PANEL = DARK_PANEL if is_dark else LIGHT_PANEL
+TXT = DARK_TEXT if is_dark else LIGHT_TEXT
+MUTED = DARK_MUTED if is_dark else LIGHT_MUTED
+GRID = GRID_DARK if is_dark else GRID_LIGHT
+
+# CSS + ticker tape animation
+st.markdown(
+    f"""
+<style>
+.stApp {{ background: {BG}; color: {TXT}; }}
+section[data-testid="stSidebar"] {{
+  background: {PANEL};
+  border-right: 1px solid rgba(128,128,128,0.18);
+}}
+.block-container {{ padding-top: 1.0rem; padding-bottom: 1.0rem; }}
+
+html, body, [class*="css"] {{
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}}
+
+.panel {{
+  background: {PANEL};
+  border: 1px solid rgba(128,128,128,0.18);
+  border-radius: 14px;
+  padding: 10px 14px;
+}}
+
+.kpi {{
+  background: {PANEL};
+  border: 1px solid rgba(128,128,128,0.18);
+  border-radius: 12px;
+  padding: 10px 12px;
+}}
+.kpi .label {{ color: {MUTED}; font-size: 12px; }}
+.kpi .value {{ color: {TXT}; font-size: 20px; margin-top: 6px; }}
+.kpi .accent {{ color: {ACCENT_HEX}; font-size: 12px; margin-top: 8px; }}
+
+/* Ticker tape */
+.ticker-wrap {{
+  background: {PANEL};
+  border: 1px solid rgba(128,128,128,0.18);
+  border-radius: 14px;
+  overflow: hidden;
+  padding: 8px 0;
+}}
+.ticker {{
+  display: inline-block;
+  white-space: nowrap;
+  animation: ticker 22s linear infinite;
+}}
+.ticker:hover {{ animation-play-state: paused; }}
+.ticker-item {{
+  display: inline-block;
+  padding: 0 26px;
+  color: {TXT};
+  font-size: 13px;
+}}
+.ticker-item .sym {{ color: {ACCENT_HEX}; font-weight: 700; }}
+.ticker-item .muted {{ color: {MUTED}; }}
+@keyframes ticker {{
+  0% {{ transform: translate3d(100%,0,0); }}
+  100% {{ transform: translate3d(-100%,0,0); }}
+}}
+
+a, a:visited {{ color: {ACCENT_HEX}; }}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+# Header + shortcuts
+st.markdown(
+    f"""
+<div class="panel">
+  <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+    <div>
+      <div style="font-size:22px; font-weight:800; letter-spacing:0.6px;">CRYPTO ANALYZER</div>
+      <div style="color:{MUTED}; font-size:12px; margin-top:4px;">
+        Keys: <span style="color:{ACCENT_HEX};">1–5</span> tabs • <span style="color:{ACCENT_HEX};">T</span> theme • <span style="color:{ACCENT_HEX};">A/Z</span> accent cycle
+      </div>
+    </div>
+    <div style="text-align:right;">
+      <div style="color:{MUTED}; font-size:12px;">Theme</div>
+      <div style="color:{ACCENT_HEX}; font-size:16px; font-weight:800;">{st.session_state.mode} • {st.session_state.accent}</div>
+    </div>
+  </div>
+</div>
+""",
+    unsafe_allow_html=True,
+)
+
+# Page selector (Bloomberg-ish nav)
+st.session_state.page = st.radio(
+    "NAV",
+    PAGES,
+    index=PAGES.index(st.session_state.page),
+    horizontal=True,
+    label_visibility="collapsed",
+)
+
+st.write("")
 
 
-def make_layout(fig: go.Figure, title: str) -> go.Figure:
+def fig_style(fig: go.Figure, title: str, height: int = 430) -> go.Figure:
     fig.update_layout(
-        template=template,
         title=title,
-        margin=dict(l=20, r=20, t=50, b=20),
-        height=420,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        height=height,
+        paper_bgcolor=BG,
+        plot_bgcolor=BG,
+        font=dict(color=TXT, family="ui-monospace, Menlo, Consolas, monospace", size=12),
+        margin=dict(l=18, r=18, t=55, b=18),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="left",
+            x=0,
+            font=dict(color=MUTED, size=11),
+        ),
+        hovermode="x unified",
+        hoverlabel=dict(bgcolor=PANEL, font_color=TXT, bordercolor="rgba(128,128,128,0.35)"),
     )
-    return apply_colorway(fig, colorway)
+    fig.update_xaxes(showgrid=True, gridcolor=GRID, zeroline=False, linecolor="rgba(128,128,128,0.25)", tickfont=dict(color=MUTED))
+    fig.update_yaxes(showgrid=True, gridcolor=GRID, zeroline=False, linecolor="rgba(128,128,128,0.25)", tickfont=dict(color=MUTED))
+    return fig
 
 
 # -----------------------------
@@ -252,11 +390,7 @@ try:
         st.stop()
 
     sol_df = load_sol_monitor(conn)
-
-    spot_df = None
-    if SPOT_TABLE in tables:
-        spot_df = load_spot_prices(conn)
-
+    spot_df = load_spot_prices(conn) if SPOT_TABLE in tables else None
 finally:
     try:
         conn.close()
@@ -264,12 +398,9 @@ finally:
         pass
 
 if spot_df is None or spot_df.empty:
-    st.warning("spot_price_snapshots is missing/empty — showing SOL-only from sol_monitor_snapshots.")
-    # Build a single-symbol wide frame from sol_df
     sol_df2 = sol_df.copy()
     sol_df2["ts_utc"] = to_dt_utc(sol_df2["ts_utc"])
-    sol_df2 = sol_df2.dropna(subset=["ts_utc"])
-    sol_df2 = sol_df2.set_index("ts_utc").sort_index()
+    sol_df2 = sol_df2.dropna(subset=["ts_utc"]).set_index("ts_utc").sort_index()
     prices_wide = pd.DataFrame({"SOL": pd.to_numeric(sol_df2["spot_price_usd"], errors="coerce")}).resample(freq).last().dropna()
 else:
     prices_wide = resample_prices_wide(spot_df, freq)
@@ -282,21 +413,15 @@ if prices_wide.empty or len(prices_wide) < 3:
     st.stop()
 
 symbols = list(prices_wide.columns)
-st.caption(f"Symbols aligned: {symbols} | Bars: {len(prices_wide)} | Annualization factor: {periods_per_year:.1f}")
 
-# Returns + rolling stats
 rets = prices_wide.pct_change()
 cum = (1.0 + rets.fillna(0)).cumprod() - 1.0
 roll_vol = rets.rolling(roll_window).std(ddof=1) * np.sqrt(periods_per_year)
 
-# Downside deviation per asset (annualized) — rolling
 downside = rets.clip(upper=0)
 roll_down_dev = downside.rolling(roll_window).apply(lambda x: np.sqrt((x * x).mean()), raw=True) * np.sqrt(periods_per_year)
-
-# Rolling Sharpe (time-varying)
 roll_sharpe = (rets.rolling(roll_window).mean() / rets.rolling(roll_window).std(ddof=1)) * np.sqrt(periods_per_year)
 
-# Beta (SOL vs BTC) — rolling + static
 beta_series = pd.Series(dtype=float)
 beta_static = float("nan")
 if "SOL" in symbols and "BTC" in symbols:
@@ -307,71 +432,116 @@ if "SOL" in symbols and "BTC" in symbols:
         var = df_beta.iloc[:, 1].var(ddof=1)
         beta_static = float(cov / var) if var and not np.isnan(var) else float("nan")
 
-# Volatility regime detection (SOL) based on rolling vol percentile
 sol_vol_for_regime = rets["SOL"].rolling(regime_window).std(ddof=1) * np.sqrt(periods_per_year) if "SOL" in symbols else None
 regime_df = add_regime_from_percentile(sol_vol_for_regime) if sol_vol_for_regime is not None else pd.DataFrame()
 
+# -----------------------------
+# Ticker tape content
+# -----------------------------
+def fmt_money(x: float) -> str:
+    if np.isnan(x):
+        return "n/a"
+    if x >= 1000:
+        return f"{x:,.2f}"
+    return f"{x:.4f}"
 
-# -----------------------------
-# Top KPIs
-# -----------------------------
-kpi_cols = st.columns(5)
-kpi_cols[0].metric("Bars", f"{len(prices_wide)}")
-kpi_cols[1].metric("Resample", freq)
-kpi_cols[2].metric("Roll window", f"{roll_window} bars")
-if not np.isnan(beta_static):
-    kpi_cols[3].metric("β(SOL vs BTC)", f"{beta_static:.2f}")
-else:
-    kpi_cols[3].metric("β(SOL vs BTC)", "n/a")
-kpi_cols[4].metric("Dex liquidity latest", f"{liq.dropna().iloc[-1]:,.0f}" if liq.dropna().shape[0] else "n/a")
+ticker_items = []
+for sym in symbols:
+    s = prices_wide[sym].dropna()
+    if len(s) >= 2:
+        last = float(s.iloc[-1])
+        prev = float(s.iloc[-2])
+        chg = (last / prev - 1.0) * 100.0 if prev else np.nan
+        sign = "+" if chg >= 0 else ""
+        ticker_items.append(f"<span class='sym'>{sym}</span> {fmt_money(last)} <span class='muted'>({sign}{chg:.2f}%)</span>")
+    elif len(s) == 1:
+        last = float(s.iloc[-1])
+        ticker_items.append(f"<span class='sym'>{sym}</span> {fmt_money(last)} <span class='muted'>(n/a)</span>")
 
+liq_last = liq.dropna().iloc[-1] if liq.dropna().shape[0] else np.nan
+ticker_items.append(f"<span class='sym'>DEX_LIQ</span> {liq_last:,.0f}" if not np.isnan(liq_last) else "<span class='sym'>DEX_LIQ</span> n/a")
 
-# -----------------------------
-# Tabs
-# -----------------------------
-tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    ["Prices & Returns", "Risk & Ratios", "Beta", "Vol Regimes", "Dex Liquidity vs Vol"]
+ticker_html = " • ".join([f"<span class='ticker-item'>{it}</span>" for it in ticker_items])
+
+st.markdown(
+    f"""
+<div class="ticker-wrap">
+  <div class="ticker">{ticker_html} {ticker_html}</div>
+</div>
+""",
+    unsafe_allow_html=True,
 )
 
-with tab1:
-    st.subheader("Multi-asset normalized price + cumulative return")
+st.write("")
+
+# -----------------------------
+# KPI row
+# -----------------------------
+k1, k2, k3, k4, k5 = st.columns(5)
+latest_liq = liq.dropna().iloc[-1] if liq.dropna().shape[0] else np.nan
+bars = len(prices_wide)
+
+def kpi(col, label, value, accent_text=""):
+    col.markdown(
+        f"""
+<div class="kpi">
+  <div class="label">{label}</div>
+  <div class="value">{value}</div>
+  <div class="accent">{accent_text}</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+kpi(k1, "BARS", f"{bars}", f"resample={freq}")
+kpi(k2, "WINDOW", f"{roll_window}", "rolling (bars)")
+kpi(k3, "SYMBOLS", f"{len(symbols)}", ", ".join(symbols))
+kpi(k4, "β SOL/BTC", ("n/a" if np.isnan(beta_static) else f"{beta_static:.2f}"), f"beta window={beta_window}")
+kpi(k5, "DEX LIQ (USD)", ("n/a" if np.isnan(latest_liq) else f"{latest_liq:,.0f}"), f"refresh={refresh_s}s")
+
+st.write("")
+
+
+# -----------------------------
+# Pages (no st.tabs; keyboard friendly)
+# -----------------------------
+page = st.session_state.page
+
+if page == "PRICES":
+    st.markdown("#### Normalized price & cumulative return")
 
     norm = (prices_wide / prices_wide.iloc[0]) * 100.0
-
     fig = px.line(norm, x=norm.index, y=norm.columns)
-    fig = make_layout(fig, "Normalized price (start = 100)")
+    fig = fig_style(fig, "Normalized price (start = 100)")
     st.plotly_chart(fig, use_container_width=True)
 
     fig = px.line(cum, x=cum.index, y=cum.columns)
-    fig = make_layout(fig, "Cumulative return")
+    fig = fig_style(fig, "Cumulative return")
     st.plotly_chart(fig, use_container_width=True)
 
-    st.subheader("Return distributions")
-    pick = st.selectbox("Histogram asset", symbols, index=0)
+    st.markdown("#### Return distribution")
+    pick = st.selectbox("Histogram asset", symbols, index=0, key="hist_pick")
     r = rets[pick].dropna()
-    fig = px.histogram(r, nbins=60, marginal="rug")
-    fig = make_layout(fig, f"{pick} return histogram ({freq} bars)")
+    fig = px.histogram(r, nbins=70, marginal="rug")
+    fig = fig_style(fig, f"{pick} return histogram ({freq} bars)", height=380)
     st.plotly_chart(fig, use_container_width=True)
 
-with tab2:
-    st.subheader("Downside deviation, rolling volatility, rolling Sharpe")
+elif page == "RISK":
+    st.markdown("#### Rolling volatility / downside deviation / rolling Sharpe")
 
-    # Rolling vol
     fig = px.line(roll_vol, x=roll_vol.index, y=roll_vol.columns)
-    fig = make_layout(fig, f"Rolling volatility (annualized, window={roll_window} bars)")
+    fig = fig_style(fig, f"Rolling volatility (annualized) — window={roll_window} bars")
     st.plotly_chart(fig, use_container_width=True)
 
-    # Downside deviation
     fig = px.line(roll_down_dev, x=roll_down_dev.index, y=roll_down_dev.columns)
-    fig = make_layout(fig, f"Downside deviation (annualized, window={roll_window} bars)")
+    fig = fig_style(fig, f"Downside deviation (annualized) — window={roll_window} bars")
     st.plotly_chart(fig, use_container_width=True)
 
-    # Rolling Sharpe
     fig = px.line(roll_sharpe, x=roll_sharpe.index, y=roll_sharpe.columns)
-    fig = make_layout(fig, f"Rolling Sharpe (rf=0, window={roll_window} bars)")
+    fig = fig_style(fig, f"Rolling Sharpe (rf=0) — window={roll_window} bars")
     st.plotly_chart(fig, use_container_width=True)
 
-    st.subheader("Current summary (only when enough points)")
+    st.markdown("#### Ratio snapshot (gated)")
     if len(prices_wide) >= min_ratio_points:
         rows = []
         for sym in symbols:
@@ -385,43 +555,41 @@ with tab2:
                     "vol_ann": float(rr.std(ddof=1) * np.sqrt(periods_per_year)),
                 }
             )
-        st.dataframe(pd.DataFrame(rows).set_index("symbol").round(4), use_container_width=True)
+        out = pd.DataFrame(rows).set_index("symbol").round(4)
+        st.dataframe(out, use_container_width=True)
     else:
-        st.info(f"Need {min_ratio_points}+ aligned bars to show stable ratios (have {len(prices_wide)}).")
+        st.info(f"Need {min_ratio_points}+ aligned bars to show ratios (have {len(prices_wide)}).")
 
-with tab3:
-    st.subheader("Beta of SOL vs BTC")
-
+elif page == "BETA":
+    st.markdown("#### Beta (SOL vs BTC)")
     if "SOL" not in symbols or "BTC" not in symbols:
-        st.warning("Need SOL and BTC in the aligned symbol set to compute beta.")
+        st.warning("Need SOL and BTC present to compute beta.")
     else:
-        st.caption(f"Static beta: {beta_static:.3f} (computed from aligned {freq} returns)")
-
+        st.caption(f"Static beta: {beta_static:.3f} (aligned {freq} returns)")
         fig = px.line(beta_series, x=beta_series.index, y=beta_series.values)
-        fig = make_layout(fig, f"Rolling beta: SOL vs BTC (window={beta_window} bars)")
-        fig.update_traces(name="beta", showlegend=False)
+        fig = fig_style(fig, f"Rolling beta: SOL vs BTC — window={beta_window} bars")
+        fig.data[0].update(name="beta", showlegend=False, line=dict(width=2.6, color=ACCENT_HEX))
         st.plotly_chart(fig, use_container_width=True)
 
-with tab4:
-    st.subheader("Volatility regime detection (SOL)")
-
+elif page == "REGIMES":
+    st.markdown("#### Volatility regimes (SOL)")
     if "SOL" not in symbols:
-        st.warning("SOL not present in aligned symbol set.")
+        st.warning("SOL not present.")
     else:
         sol_vol = sol_vol_for_regime
+
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=sol_vol.index, y=sol_vol.values, mode="lines", name="SOL vol (ann.)"))
+        fig.add_trace(go.Scatter(x=sol_vol.index, y=sol_vol.values, mode="lines", name="SOL vol (ann.)", line=dict(width=2.6, color=ACCENT_HEX)))
 
-        # Shade regimes if available
         if not regime_df.empty and regime_df["regime"].notna().any():
-            # Create background bands by regime chunks
-            reg = regime_df["regime"].copy()
-            # Fill forward to avoid gaps after window warmup
-            reg = reg.ffill()
-
-            # Build segments
+            reg = regime_df["regime"].ffill()
             current = None
             start = None
+            band = {
+                "Low": "rgba(0,229,255,0.10)",
+                "Mid": "rgba(255,176,32,0.10)",
+                "High": "rgba(255,45,85,0.10)",
+            }
             for t, v in reg.items():
                 if pd.isna(v):
                     continue
@@ -429,66 +597,37 @@ with tab4:
                     current, start = v, t
                     continue
                 if v != current:
-                    fig.add_vrect(
-                        x0=start,
-                        x1=t,
-                        fillcolor={"Low": "rgba(0,200,255,0.12)", "Mid": "rgba(255,200,0,0.12)", "High": "rgba(255,0,100,0.12)"}[current],
-                        line_width=0,
-                        layer="below",
-                    )
+                    fig.add_vrect(x0=start, x1=t, fillcolor=band.get(current, "rgba(255,255,255,0.06)"), line_width=0, layer="below")
                     current, start = v, t
-            # close last segment
             if current is not None and start is not None:
-                fig.add_vrect(
-                    x0=start,
-                    x1=reg.index[-1],
-                    fillcolor={"Low": "rgba(0,200,255,0.12)", "Mid": "rgba(255,200,0,0.12)", "High": "rgba(255,0,100,0.12)"}[current],
-                    line_width=0,
-                    layer="below",
-                )
+                fig.add_vrect(x0=start, x1=reg.index[-1], fillcolor=band.get(current, "rgba(255,255,255,0.06)"), line_width=0, layer="below")
 
-        fig = make_layout(fig, f"SOL volatility regimes (vol window={regime_window} bars, shaded by percentile)")
+        fig = fig_style(fig, f"SOL volatility regimes — vol window={regime_window} bars")
         st.plotly_chart(fig, use_container_width=True)
 
-        # Percentile chart
         if not regime_df.empty:
             fig = px.line(regime_df["vol_percentile"], x=regime_df.index, y="vol_percentile")
-            fig = make_layout(fig, "SOL volatility percentile (0..1)")
+            fig = fig_style(fig, "SOL volatility percentile (0..1)", height=360)
             st.plotly_chart(fig, use_container_width=True)
 
-with tab5:
-    st.subheader("Liquidity vs volatility scatter (SOL)")
-
+elif page == "DEX ↔ VOL":
+    st.markdown("#### Dex liquidity vs volatility (SOL)")
     if "SOL" not in symbols:
-        st.warning("SOL not present in aligned symbol set.")
+        st.warning("SOL not present.")
     else:
-        # Build scatter dataset: align liquidity with SOL rolling vol
         sol_vol = rets["SOL"].rolling(roll_window).std(ddof=1) * np.sqrt(periods_per_year)
-        scatter_df = pd.DataFrame(
-            {
-                "liq_usd": liq,
-                "sol_vol_ann": sol_vol,
-                "sol_return": rets["SOL"],
-            }
-        ).dropna()
 
-        # Add regime label if available
+        scatter_df = pd.DataFrame({"liq_usd": liq, "sol_vol_ann": sol_vol, "sol_return": rets["SOL"]}).dropna()
         if not regime_df.empty and "regime" in regime_df.columns:
             scatter_df = scatter_df.join(regime_df[["regime"]], how="left")
         else:
             scatter_df["regime"] = "n/a"
 
-        fig = px.scatter(
-            scatter_df,
-            x="liq_usd",
-            y="sol_vol_ann",
-            color="regime",
-            hover_data=["sol_return"],
-            opacity=0.8,
-        )
+        fig = px.scatter(scatter_df, x="liq_usd", y="sol_vol_ann", color="regime", hover_data=["sol_return"], opacity=0.85)
+        fig.update_traces(marker=dict(size=9, line=dict(width=0.6, color="rgba(0,0,0,0.25)")))
         fig.update_xaxes(title="Dex liquidity (USD)")
         fig.update_yaxes(title="SOL rolling volatility (annualized)")
-        fig = make_layout(fig, "Dex liquidity vs SOL volatility (colored by regime)")
+        fig = fig_style(fig, "Dex liquidity vs SOL volatility (colored by regime)")
         st.plotly_chart(fig, use_container_width=True)
 
-        st.caption("Tip: let the poller run longer so you see meaningful structure in scatter + regimes.")
+st.caption("Shortcuts: 1–5 tabs • T theme • A/Z accent • ticker pauses on hover.")
