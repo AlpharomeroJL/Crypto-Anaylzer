@@ -103,19 +103,12 @@ Then open **http://localhost:8501** in your browser.
 
 ## 4. Optional: clear or reset data
 
-**Clear all table data (keep DB file)** — run while the poller is stopped, then start the poller again and use **Reload data** in the dashboard.
+The **dashboard never clears or deletes** your historical data; there is no clear button in the app. Clearing is only done by running the script below (with explicit `--yes`).
 
-**Windows:**
+**Clear all table data (keep DB file)** — run while the poller is stopped, then start the poller again and refresh the dashboard (F5).
 
-```powershell
-python clear_db_data.py
-```
-
-**macOS / Pop!_OS (Linux):**
-
-```bash
-python clear_db_data.py
-```
+- `python clear_db_data.py` — dry run: shows row counts, does not delete.
+- `python clear_db_data.py --yes` — **permanently** deletes all table data (use when you want a fresh dataset).
 
 **Full reset (archive DB + plots, delete, restart poller):**
 
@@ -131,7 +124,7 @@ python clear_db_data.py
 | `dashboard.py` | Streamlit app: charts, metrics, theme/settings. |
 | `dex_poll_to_sqlite.py` | Poller: fetches DEX + spot data, writes to SQLite. |
 | `analyze_from_sqlite.py` | CLI/analysis using the same DB. |
-| `clear_db_data.py` | Deletes all rows in DB tables for a fresh dataset. |
+| `clear_db_data.py` | Clears all rows only when run with `--yes` (dashboard never clears data). |
 | `reset_data.ps1` | Stops poller, archives DB/plots, restarts poller **(Windows + NSSM)**. |
 | `run_dashboard.ps1` | Starts Streamlit **(Windows)**; on Mac/Linux run the `streamlit run` command above. |
 | `dex_data.sqlite` | Created by the poller; used by dashboard and analyzer. |

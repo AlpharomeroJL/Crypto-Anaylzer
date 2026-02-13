@@ -207,8 +207,7 @@ with st.sidebar:
     else:
         st.caption("DB file not found. Run poller or check path.")
 
-    if st.button("Reload data", help="Rerun the app to read the DB again (e.g. after reset_data.ps1)"):
-        st.rerun()
+    st.caption("To refresh after new data or a reset: reload the page (F5). Historical data is never cleared from the dashboard.")
 
     st.markdown("## Real-time")
     auto_refresh = st.toggle("Auto-refresh", value=True)
@@ -522,7 +521,7 @@ if hasattr(latest_cst, "strftime"):
     latest_str = latest_cst.strftime("%Y-%m-%d %H:%M %Z")
 else:
     latest_str = str(latest_cst)
-st.caption(f"Data through: **{latest_str}** — turn on Auto-refresh in sidebar to see new rows. After running reset_data.ps1, refresh this page (F5 or Rerun) to load the new DB.")
+st.caption(f"Data through: **{latest_str}** — turn on Auto-refresh to see new rows. After a data reset, refresh this page (F5) to load the DB.")
 
 symbols = list(prices_wide.columns)
 
