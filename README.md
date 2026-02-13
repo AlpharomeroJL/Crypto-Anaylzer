@@ -5,16 +5,20 @@ A local crypto/DEX analytics stack: a **poller** writes DEX and spot price data 
 ## Prerequisites
 
 - **Python 3.10+**
-- **PowerShell** (for the suggested commands; adjust for your OS/shell if needed)
+- A shell: **PowerShell** (Windows), **Terminal/zsh** (macOS), or **bash** (Pop!_OS / Linux)
+
+---
 
 ## 1. Clone and set up the environment
 
-```powershell
+```bash
 git clone <your-repo-url>
 cd Crypto-Anaylzer
 ```
 
-Create a virtual environment and install dependencies:
+Create a virtual environment and install dependencies.
+
+**Windows (PowerShell):**
 
 ```powershell
 python -m venv .venv
@@ -22,15 +26,27 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-Optional: install `st-keyup` for keyboard shortcuts in the dashboard (e.g. theme toggle). The app works without it.
+**macOS / Pop!_OS (Linux) — bash or zsh:**
 
-```powershell
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Optional: install `st-keyup` for keyboard shortcuts in the dashboard. The app works without it.
+
+```bash
 pip install st-keyup
 ```
 
+---
+
 ## 2. Run the poller (to populate data)
 
-The poller fetches DEX pair and spot prices and writes them to `dex_data.sqlite` in the repo root. Run it from the repo directory so the DB is created there:
+The poller writes to `dex_data.sqlite` in the repo root. Run it from the repo directory.
+
+**Windows (PowerShell):**
 
 ```powershell
 cd Crypto-Anaylzer
@@ -38,17 +54,28 @@ cd Crypto-Anaylzer
 python dex_poll_to_sqlite.py --interval 60
 ```
 
-Leave it running (or run it as a Windows service; see docs in the repo). It creates `dex_data.sqlite` and the tables on first run. Use `Ctrl+C` to stop.
+**macOS / Pop!_OS (Linux):**
 
-To write logs to a file:
-
-```powershell
-python dex_poll_to_sqlite.py --interval 60 --log-file "C:\ProgramData\CryptoAnalyzer\poller.log"
+```bash
+cd Crypto-Anaylzer
+source .venv/bin/activate
+python dex_poll_to_sqlite.py --interval 60
 ```
+
+Leave it running (or run it as a service; see docs). It creates `dex_data.sqlite` and tables on first run. Use `Ctrl+C` to stop.
+
+**Optional — log to a file:**
+
+- Windows: `--log-file "C:\ProgramData\CryptoAnalyzer\poller.log"`
+- macOS / Linux: `--log-file /var/log/crypto-analyzer/poller.log` (create the directory first if needed)
+
+---
 
 ## 3. Run the dashboard
 
-From the repo root with the same venv activated:
+From the repo root with the same venv activated.
+
+**Windows (PowerShell):**
 
 ```powershell
 python -m streamlit run dashboard.py --server.port 8501
@@ -60,22 +87,42 @@ Or use the helper script (edit the path inside if your clone is elsewhere):
 .\run_dashboard.ps1
 ```
 
+**macOS / Pop!_OS (Linux):**
+
+```bash
+python -m streamlit run dashboard.py --server.port 8501
+```
+
 Then open **http://localhost:8501** in your browser.
 
-- **SQLite DB path:** In the sidebar, set the path to your `dex_data.sqlite`. If you run the dashboard from the repo root, you can use the full path to your clone, e.g. `C:\Users\You\...\Crypto-Anaylzer\dex_data.sqlite`, or a relative path like `dex_data.sqlite` when the working directory is the repo.
+- **SQLite DB path:** In the sidebar, set the path to your `dex_data.sqlite`. From the repo root you can use a relative path: `dex_data.sqlite`. Or use the full path to your clone (e.g. `/Users/you/Crypto-Anaylzer/dex_data.sqlite` on macOS, `/home/you/Crypto-Anaylzer/dex_data.sqlite` on Pop!_OS).
 - Use **Reload data** in the sidebar after the poller has written new data (or after a reset).
 - Turn on **Auto-refresh** to update the charts periodically.
 
+---
+
 ## 4. Optional: clear or reset data
 
-- **Clear all table data (keep DB file):** Run while the poller is stopped. Then start the poller again and use **Reload data** in the dashboard.
-  ```powershell
-  python clear_db_data.py
-  ```
-- **Full reset (archive DB + plots, delete, restart poller):** Use the script if you have NSSM and the CryptoPoller service installed. Run PowerShell as Administrator.
-  ```powershell
-  .\reset_data.ps1
-  ```
+**Clear all table data (keep DB file)** — run while the poller is stopped, then start the poller again and use **Reload data** in the dashboard.
+
+**Windows:**
+
+```powershell
+python clear_db_data.py
+```
+
+**macOS / Pop!_OS (Linux):**
+
+```bash
+python clear_db_data.py
+```
+
+**Full reset (archive DB + plots, delete, restart poller):**
+
+- **Windows:** Use `reset_data.ps1` if you have NSSM and the CryptoPoller service. Run PowerShell as Administrator: `.\reset_data.ps1`
+- **macOS / Linux:** The provided `reset_data.ps1` is for Windows. To do a full reset manually: stop the poller, move or delete `dex_data.sqlite` and the `plots/` folder, then start the poller again.
+
+---
 
 ## Project layout (main pieces)
 
@@ -85,15 +132,21 @@ Then open **http://localhost:8501** in your browser.
 | `dex_poll_to_sqlite.py` | Poller: fetches DEX + spot data, writes to SQLite. |
 | `analyze_from_sqlite.py` | CLI/analysis using the same DB. |
 | `clear_db_data.py` | Deletes all rows in DB tables for a fresh dataset. |
-| `reset_data.ps1` | Stops poller, archives DB/plots, deletes them, restarts poller (Windows + NSSM). |
-| `run_dashboard.ps1` | Starts Streamlit (edit path if needed). |
+| `reset_data.ps1` | Stops poller, archives DB/plots, restarts poller **(Windows + NSSM)**. |
+| `run_dashboard.ps1` | Starts Streamlit **(Windows)**; on Mac/Linux run the `streamlit run` command above. |
 | `dex_data.sqlite` | Created by the poller; used by dashboard and analyzer. |
+
+---
 
 ## Docs in the repo
 
 - **DEPLOY.md** – Deployment and running the dashboard in production.
-- **HANDOFF_AUTOPOLLING.md** – Poller and NSSM service setup.
+- **HANDOFF_AUTOPOLLING.md** – Poller and NSSM service setup (Windows).
 - **WINDOWS_24_7.md** – Running the poller 24/7 on Windows.
+
+On **macOS** or **Pop!_OS**, you can run the poller in the background with `tmux`, `screen`, or a systemd user service (Linux) / launchd (macOS) instead of NSSM.
+
+---
 
 ## License
 
