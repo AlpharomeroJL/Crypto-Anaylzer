@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import os
 import sqlite3
+import time
 from typing import Dict, List
 
 import numpy as np
@@ -10,11 +12,20 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
-from streamlit_keyup import st_keyup
 
-DB_PATH_DEFAULT = "dex_data.sqlite"
+try:
+    from st_keyup import st_keyup
+except ImportError:
+    def st_keyup(default: str, *, key: str = "", label_visibility: str = "collapsed"):
+        return default  # keyboard shortcuts disabled when st-keyup not installed
+
+# Same path the poller uses when NSSM AppDirectory is the project folder
+DB_PATH_DEFAULT = r"C:\Users\jo312\OneDrive\Desktop\Github Projects\Crypto-Anaylzer\dex_data.sqlite"
 SOL_MONITOR_TABLE = "sol_monitor_snapshots"
 SPOT_TABLE = "spot_price_snapshots"
+
+# All displayed timestamps in Central Time (CST/CDT)
+DISPLAY_TZ = "America/Chicago"
 
 
 # -----------------------------
@@ -77,6 +88,18 @@ def annualization_factor(freq: str) -> float:
 
 def to_dt_utc(s: pd.Series) -> pd.Series:
     return pd.to_datetime(s, utc=True, errors="coerce")
+
+
+def to_display_tz(dt_index_or_ts):
+    """Convert UTC datetime index or timestamp to display timezone (CST)."""
+    if hasattr(dt_index_or_ts, "tz_convert"):
+        if dt_index_or_ts.tz is None:
+            return dt_index_or_ts.tz_localize("UTC", ambiguous="infer").tz_convert(DISPLAY_TZ)
+        return dt_index_or_ts.tz_convert(DISPLAY_TZ)
+    ts = pd.Timestamp(dt_index_or_ts)
+    if ts.tzinfo is None:
+        ts = ts.tz_localize("UTC")
+    return ts.tz_convert(DISPLAY_TZ)
 
 
 def load_tables(conn: sqlite3.Connection) -> List[str]:
@@ -161,6 +184,11 @@ if "mode" not in st.session_state:
     st.session_state.mode = "Bloomberg Dark"
 if "accent" not in st.session_state:
     st.session_state.accent = "Lime"
+# Sync theme from Settings popover (keyed selectboxes) so theme updates on same run
+if "settings_theme" in st.session_state:
+    st.session_state.mode = st.session_state.settings_theme
+if "settings_accent" in st.session_state:
+    st.session_state.accent = st.session_state.settings_accent
 
 PAGES = ["PRICES", "RISK", "BETA", "REGIMES", "DEX ↔ VOL"]
 ACCENTS = ["Lime", "Cyan", "Magenta", "Amber", "Blue"]
@@ -171,14 +199,20 @@ with st.sidebar:
     st.markdown("## Terminal")
 
     db_path = st.text_input("SQLite DB path", DB_PATH_DEFAULT)
+    # Show which file we're actually reading and when it was last written (so reset is visible)
+    if db_path and os.path.isfile(db_path):
+        mtime = os.path.getmtime(db_path)
+        mtime_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(mtime))
+        st.caption(f"DB last written: **{mtime_str}**")
+    else:
+        st.caption("DB file not found. Run poller or check path.")
+
+    if st.button("Reload data", help="Rerun the app to read the DB again (e.g. after reset_data.ps1)"):
+        st.rerun()
 
     st.markdown("## Real-time")
     auto_refresh = st.toggle("Auto-refresh", value=True)
     refresh_s = st.slider("Refresh interval (seconds)", 2, 60, 5, 1)
-
-    st.markdown("## Look & Feel")
-    mode = st.selectbox("Theme", ["Bloomberg Dark", "Bloomberg Light"], index=0 if st.session_state.mode == "Bloomberg Dark" else 1)
-    accent = st.selectbox("Accent", ACCENTS, index=ACCENTS.index(st.session_state.accent))
 
     st.markdown("## Analysis")
     freq = st.selectbox("Resample bars", ["10s", "30s", "1min", "5min", "15min", "1H", "1D"], index=2)
@@ -188,10 +222,6 @@ with st.sidebar:
     st.markdown("## Beta / Regimes")
     beta_window = st.slider("Rolling beta window (bars)", 10, 500, 60, 5)
     regime_window = st.slider("Regime vol window (bars)", 10, 500, 60, 5)
-
-# Persist selects
-st.session_state.mode = mode
-st.session_state.accent = accent
 
 # Auto refresh
 if auto_refresh:
@@ -256,7 +286,7 @@ TXT = DARK_TEXT if is_dark else LIGHT_TEXT
 MUTED = DARK_MUTED if is_dark else LIGHT_MUTED
 GRID = GRID_DARK if is_dark else GRID_LIGHT
 
-# CSS + ticker tape animation
+# CSS + ticker tape animation + overlay fixes
 st.markdown(
     f"""
 <style>
@@ -265,7 +295,34 @@ section[data-testid="stSidebar"] {{
   background: {PANEL};
   border-right: 1px solid rgba(128,128,128,0.18);
 }}
-.block-container {{ padding-top: 1.0rem; padding-bottom: 1.0rem; }}
+.block-container {{
+  padding-top: 1.0rem;
+  padding-bottom: 1.0rem;
+  position: relative;
+  z-index: 1;
+}}
+/* Header row (title + Settings) as one panel */
+.block-container [data-testid="stHorizontalBlock"]:first-of-type {{
+  background: {PANEL};
+  border: 1px solid rgba(128,128,128,0.18);
+  border-radius: 14px;
+  padding: 10px 14px;
+  margin-bottom: 0.5rem;
+  align-items: center;
+}}
+
+/* Prevent Streamlit header/toolbar from overlapping main content */
+[data-testid="stHeader"] {{
+  background: {BG};
+  z-index: 999;
+}}
+[data-testid="stToolbar"] {{
+  z-index: 1000;
+}}
+[data-testid="stAppViewContainer"] {{
+  position: relative;
+  z-index: 0;
+}}
 
 html, body, [class*="css"] {{
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
@@ -276,6 +333,8 @@ html, body, [class*="css"] {{
   border: 1px solid rgba(128,128,128,0.18);
   border-radius: 14px;
   padding: 10px 14px;
+  position: relative;
+  z-index: 2;
 }}
 
 .kpi {{
@@ -283,18 +342,23 @@ html, body, [class*="css"] {{
   border: 1px solid rgba(128,128,128,0.18);
   border-radius: 12px;
   padding: 10px 12px;
+  position: relative;
+  z-index: 2;
 }}
 .kpi .label {{ color: {MUTED}; font-size: 12px; }}
 .kpi .value {{ color: {TXT}; font-size: 20px; margin-top: 6px; }}
 .kpi .accent {{ color: {ACCENT_HEX}; font-size: 12px; margin-top: 8px; }}
 
-/* Ticker tape */
+/* Ticker tape — contain so it doesn't overlap nav */
 .ticker-wrap {{
   background: {PANEL};
   border: 1px solid rgba(128,128,128,0.18);
   border-radius: 14px;
   overflow: hidden;
   padding: 8px 0;
+  position: relative;
+  z-index: 2;
+  isolation: isolate;
 }}
 .ticker {{
   display: inline-block;
@@ -315,32 +379,59 @@ html, body, [class*="css"] {{
   100% {{ transform: translate3d(-100%,0,0); }}
 }}
 
+/* Plotly chart container — contain so one chart doesn't overlap the next; margin so title doesn't overlap content above */
+.js-plotly-plot .plotly .modebar {{
+  z-index: 10;
+}}
+div[data-testid="stVerticalBlock"] > div:has(.js-plotly-plot) {{
+  overflow: hidden;
+  min-height: 480px;
+  margin-top: 1.5rem;
+  position: relative;
+  z-index: 1;
+  isolation: isolate;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}}
+/* Reduce title ghosting: force Plotly title into its own layer */
+.js-plotly-plot .plotly .gtitle {{
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}}
+
 a, a:visited {{ color: {ACCENT_HEX}; }}
 </style>
 """,
     unsafe_allow_html=True,
 )
 
-# Header + shortcuts
-st.markdown(
-    f"""
-<div class="panel">
-  <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
-    <div>
-      <div style="font-size:22px; font-weight:800; letter-spacing:0.6px;">CRYPTO ANALYZER</div>
-      <div style="color:{MUTED}; font-size:12px; margin-top:4px;">
-        Keys: <span style="color:{ACCENT_HEX};">1–5</span> tabs • <span style="color:{ACCENT_HEX};">T</span> theme • <span style="color:{ACCENT_HEX};">A/Z</span> accent cycle
-      </div>
-    </div>
-    <div style="text-align:right;">
-      <div style="color:{MUTED}; font-size:12px;">Theme</div>
-      <div style="color:{ACCENT_HEX}; font-size:16px; font-weight:800;">{st.session_state.mode} • {st.session_state.accent}</div>
-    </div>
-  </div>
+# Header: title left, Settings popover right
+header_col1, header_col2 = st.columns([4, 1])
+with header_col1:
+    st.markdown(
+        f"""
+<div style="font-size:22px; font-weight:800; letter-spacing:0.6px;">CRYPTO ANALYZER</div>
+<div style="color:{MUTED}; font-size:12px; margin-top:4px;">
+  Keys: <span style="color:{ACCENT_HEX};">1–5</span> tabs • <span style="color:{ACCENT_HEX};">T</span> theme • <span style="color:{ACCENT_HEX};">A/Z</span> accent cycle
 </div>
 """,
-    unsafe_allow_html=True,
-)
+        unsafe_allow_html=True,
+    )
+with header_col2:
+    with st.popover("Settings", use_container_width=True):
+        st.markdown("**Look & Feel**")
+        st.selectbox(
+            "Theme",
+            ["Bloomberg Dark", "Bloomberg Light"],
+            index=0 if st.session_state.mode == "Bloomberg Dark" else 1,
+            key="settings_theme",
+        )
+        st.selectbox(
+            "Accent",
+            ACCENTS,
+            index=ACCENTS.index(st.session_state.accent),
+            key="settings_accent",
+        )
 
 # Page selector (Bloomberg-ish nav)
 st.session_state.page = st.radio(
@@ -354,18 +445,30 @@ st.session_state.page = st.radio(
 st.write("")
 
 
+def chart_df_cst(df_or_series):
+    """Return a copy with index in display TZ (CST) for chart x-axis."""
+    out = df_or_series.copy()
+    out.index = to_display_tz(out.index)
+    return out
+
+
 def fig_style(fig: go.Figure, title: str, height: int = 430) -> go.Figure:
     fig.update_layout(
-        title=title,
+        title=dict(
+            text=title,
+            font=dict(size=14),
+            x=0.02,
+            xanchor="left",
+        ),
         height=height,
         paper_bgcolor=BG,
         plot_bgcolor=BG,
         font=dict(color=TXT, family="ui-monospace, Menlo, Consolas, monospace", size=12),
-        margin=dict(l=18, r=18, t=55, b=18),
+        margin=dict(l=18, r=18, t=72, b=18),
         legend=dict(
             orientation="h",
             yanchor="bottom",
-            y=1.02,
+            y=0.98,
             xanchor="left",
             x=0,
             font=dict(color=MUTED, size=11),
@@ -411,6 +514,15 @@ periods_per_year = annualization_factor(freq)
 if prices_wide.empty or len(prices_wide) < 3:
     st.error("Not enough aligned price data yet. Let the poller run longer.")
     st.stop()
+
+# Show latest data time in CST so you can confirm poller is feeding the dashboard
+latest_ts = prices_wide.index[-1]
+latest_cst = to_display_tz(latest_ts)
+if hasattr(latest_cst, "strftime"):
+    latest_str = latest_cst.strftime("%Y-%m-%d %H:%M %Z")
+else:
+    latest_str = str(latest_cst)
+st.caption(f"Data through: **{latest_str}** — turn on Auto-refresh in sidebar to see new rows. After running reset_data.ps1, refresh this page (F5 or Rerun) to load the new DB.")
 
 symbols = list(prices_wide.columns)
 
@@ -508,36 +620,41 @@ st.write("")
 page = st.session_state.page
 
 if page == "PRICES":
-    st.markdown("#### Normalized price & cumulative return")
-
+    st.write("")
     norm = (prices_wide / prices_wide.iloc[0]) * 100.0
-    fig = px.line(norm, x=norm.index, y=norm.columns)
+    fig = px.line(chart_df_cst(norm), x=chart_df_cst(norm).index, y=norm.columns)
     fig = fig_style(fig, "Normalized price (start = 100)")
     st.plotly_chart(fig, use_container_width=True)
 
-    fig = px.line(cum, x=cum.index, y=cum.columns)
+    st.write("")
+    cum_cst = chart_df_cst(cum)
+    fig = px.line(cum_cst, x=cum_cst.index, y=cum.columns)
     fig = fig_style(fig, "Cumulative return")
     st.plotly_chart(fig, use_container_width=True)
 
-    st.markdown("#### Return distribution")
     pick = st.selectbox("Histogram asset", symbols, index=0, key="hist_pick")
+    st.write("")
     r = rets[pick].dropna()
     fig = px.histogram(r, nbins=70, marginal="rug")
     fig = fig_style(fig, f"{pick} return histogram ({freq} bars)", height=380)
     st.plotly_chart(fig, use_container_width=True)
 
 elif page == "RISK":
-    st.markdown("#### Rolling volatility / downside deviation / rolling Sharpe")
-
-    fig = px.line(roll_vol, x=roll_vol.index, y=roll_vol.columns)
+    st.write("")
+    rv_cst = chart_df_cst(roll_vol)
+    fig = px.line(rv_cst, x=rv_cst.index, y=roll_vol.columns)
     fig = fig_style(fig, f"Rolling volatility (annualized) — window={roll_window} bars")
     st.plotly_chart(fig, use_container_width=True)
 
-    fig = px.line(roll_down_dev, x=roll_down_dev.index, y=roll_down_dev.columns)
+    st.write("")
+    rd_cst = chart_df_cst(roll_down_dev)
+    fig = px.line(rd_cst, x=rd_cst.index, y=roll_down_dev.columns)
     fig = fig_style(fig, f"Downside deviation (annualized) — window={roll_window} bars")
     st.plotly_chart(fig, use_container_width=True)
 
-    fig = px.line(roll_sharpe, x=roll_sharpe.index, y=roll_sharpe.columns)
+    st.write("")
+    rs_cst = chart_df_cst(roll_sharpe)
+    fig = px.line(rs_cst, x=rs_cst.index, y=roll_sharpe.columns)
     fig = fig_style(fig, f"Rolling Sharpe (rf=0) — window={roll_window} bars")
     st.plotly_chart(fig, use_container_width=True)
 
@@ -561,28 +678,30 @@ elif page == "RISK":
         st.info(f"Need {min_ratio_points}+ aligned bars to show ratios (have {len(prices_wide)}).")
 
 elif page == "BETA":
-    st.markdown("#### Beta (SOL vs BTC)")
     if "SOL" not in symbols or "BTC" not in symbols:
         st.warning("Need SOL and BTC present to compute beta.")
     else:
         st.caption(f"Static beta: {beta_static:.3f} (aligned {freq} returns)")
-        fig = px.line(beta_series, x=beta_series.index, y=beta_series.values)
+        beta_cst = chart_df_cst(beta_series)
+        fig = px.line(beta_cst, x=beta_cst.index, y=beta_series.values)
         fig = fig_style(fig, f"Rolling beta: SOL vs BTC — window={beta_window} bars")
         fig.data[0].update(name="beta", showlegend=False, line=dict(width=2.6, color=ACCENT_HEX))
         st.plotly_chart(fig, use_container_width=True)
 
 elif page == "REGIMES":
-    st.markdown("#### Volatility regimes (SOL)")
     if "SOL" not in symbols:
         st.warning("SOL not present.")
     else:
         sol_vol = sol_vol_for_regime
+        sol_vol_cst = chart_df_cst(sol_vol)
 
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=sol_vol.index, y=sol_vol.values, mode="lines", name="SOL vol (ann.)", line=dict(width=2.6, color=ACCENT_HEX)))
+        fig.add_trace(go.Scatter(x=sol_vol_cst.index, y=sol_vol.values, mode="lines", name="SOL vol (ann.)", line=dict(width=2.6, color=ACCENT_HEX)))
 
         if not regime_df.empty and regime_df["regime"].notna().any():
             reg = regime_df["regime"].ffill()
+            reg_cst = reg.copy()
+            reg_cst.index = to_display_tz(reg.index)
             current = None
             start = None
             band = {
@@ -590,7 +709,7 @@ elif page == "REGIMES":
                 "Mid": "rgba(255,176,32,0.10)",
                 "High": "rgba(255,45,85,0.10)",
             }
-            for t, v in reg.items():
+            for t, v in reg_cst.items():
                 if pd.isna(v):
                     continue
                 if current is None:
@@ -600,18 +719,20 @@ elif page == "REGIMES":
                     fig.add_vrect(x0=start, x1=t, fillcolor=band.get(current, "rgba(255,255,255,0.06)"), line_width=0, layer="below")
                     current, start = v, t
             if current is not None and start is not None:
-                fig.add_vrect(x0=start, x1=reg.index[-1], fillcolor=band.get(current, "rgba(255,255,255,0.06)"), line_width=0, layer="below")
+                fig.add_vrect(x0=start, x1=reg_cst.index[-1], fillcolor=band.get(current, "rgba(255,255,255,0.06)"), line_width=0, layer="below")
 
         fig = fig_style(fig, f"SOL volatility regimes — vol window={regime_window} bars")
         st.plotly_chart(fig, use_container_width=True)
 
+        st.write("")
         if not regime_df.empty:
-            fig = px.line(regime_df["vol_percentile"], x=regime_df.index, y="vol_percentile")
+            rp_cst = chart_df_cst(regime_df["vol_percentile"].to_frame())
+            fig = px.line(rp_cst, x=rp_cst.index, y="vol_percentile")
             fig = fig_style(fig, "SOL volatility percentile (0..1)", height=360)
             st.plotly_chart(fig, use_container_width=True)
 
 elif page == "DEX ↔ VOL":
-    st.markdown("#### Dex liquidity vs volatility (SOL)")
+    st.write("")
     if "SOL" not in symbols:
         st.warning("SOL not present.")
     else:

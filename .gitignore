@@ -1,0 +1,23 @@
+# venvs
+.venv/
+venv/
+
+# runtime artifacts (do not commit)
+*.sqlite
+*.sqlite3
+plots/
+logs/
+archive/
+__pycache__/
+*.pyc
+
+# streamlit
+.streamlit/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Service logs live outside repo (not trackable here):
+# C:\ProgramData\CryptoAnalyzer\poller.log
+# C:\ProgramData\CryptoAnalyzer\poller_error.log

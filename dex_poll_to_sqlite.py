@@ -9,13 +9,28 @@ Stores into SQLite so you can compute returns/volatility cleanly.
 
 from __future__ import annotations
 
+import argparse
 import json
+import os
 import sqlite3
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 import requests
+
+# When --log-file is set, all output is also appended here (for Windows service).
+_log_file: Optional[Any] = None
+
+
+def _log(msg: str) -> None:
+    print(msg, flush=True)
+    if _log_file is not None:
+        try:
+            _log_file.write(msg + "\n")
+            _log_file.flush()
+        except Exception:
+            pass
 
 DB_PATH = "dex_data.sqlite"
 
@@ -24,7 +39,8 @@ COINBASE_URL = "https://api.coinbase.com"
 KRAKEN_URL = "https://api.kraken.com"
 
 CHAIN_ID = "solana"
-PAIR_ADDRESS = "AvSUmeK93LAo2DGZaojQuU3WFCGB895L2CzUgdEewZEX"  # SOL/USDC pool you selected
+# Orca SOL/USDC (Dexscreener returns data). Previous AvSUmeK93... often returns null.
+PAIR_ADDRESS = "Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE"
 
 # Multi-asset spot feeds: (symbol, Coinbase product, Kraken pair). Kraken uses XBT for BTC.
 SPOT_ASSETS = [
@@ -33,8 +49,8 @@ SPOT_ASSETS = [
     ("BTC", "BTC-USD", "XBTUSD"),
 ]
 
-# 10s polling → 300 resampled points in ~50 min (analyzer uses 10s resample). Watch for API rate limits.
-POLL_EVERY_SECONDS = 10
+# Default 60s for 1-min bars; override with --interval.
+POLL_EVERY_SECONDS = 60
 HTTP_TIMEOUT_S = 15.0
 RETRIES = 3
 
@@ -118,6 +134,39 @@ def ensure_db(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def pick_pair_from_dex_payload(data: dict) -> Dict[str, Any]:
+    if not isinstance(data, dict):
+        raise RuntimeError(f"Unexpected Dex response type: {type(data)}")
+
+    # Prefer single pair object if present (accept any dict, including empty)
+    p = data.get("pair")
+    if isinstance(p, dict):
+        return p
+    if isinstance(p, list) and p and isinstance(p[0], dict):
+        return p[0]
+
+    # Fallback: pairs as list or single object
+    pairs = data.get("pairs")
+    if isinstance(pairs, dict):
+        return pairs
+    if isinstance(pairs, list):
+        for item in pairs:
+            if isinstance(item, dict):
+                return item
+
+    # Top-level payload is the pair (e.g. unwrapped)
+    if data.get("chainId") and (data.get("priceUsd") is not None or data.get("liquidity")):
+        return data
+
+    # API returned pair=null, pairs=null (pair may be delisted or invalid)
+    if data.get("pair") is None and data.get("pairs") is None:
+        raise RuntimeError(
+            "Dex returned no data for this pair (pair may be delisted or invalid). "
+            "Try --pairAddress with a different pool (e.g. Orca SOL/USDC: Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE)."
+        )
+    raise RuntimeError(f"Unexpected Dex response shape. Top-level keys: {list(data.keys())}")
+
+
 def fetch_dex_pair(chain_id: str, pair_address: str) -> Dict[str, Any]:
     url = f"{DEX_BASE_URL}/latest/dex/pairs/{chain_id}/{pair_address}"
     last_err: Optional[str] = None
@@ -132,11 +181,15 @@ def fetch_dex_pair(chain_id: str, pair_address: str) -> Dict[str, Any]:
             r.raise_for_status()
             data = r.json()
 
-            if "pair" in data and isinstance(data["pair"], dict):
-                return data["pair"]
-            if "pairs" in data and isinstance(data["pairs"], list) and data["pairs"]:
-                return data["pairs"][0]
-            raise RuntimeError("Unexpected Dex response shape.")
+            if isinstance(data, dict) and (data.get("error") or data.get("message")):
+                err = data.get("error") or data.get("message")
+                raise RuntimeError(f"Dex API error: {err}")
+
+            if isinstance(data, list) and data and isinstance(data[0], dict):
+                return data[0]
+            if isinstance(data, dict):
+                return pick_pair_from_dex_payload(data)
+            raise RuntimeError(f"Unexpected Dex response type: {type(data)}")
         except Exception as e:
             last_err = f"{type(e).__name__}: {e}"
             time.sleep(0.5 * attempt)
@@ -217,11 +270,18 @@ def fetch_spot_price_usd() -> float:
     return fetch_spot_price_asset(cb, kk)
 
 
-def insert_snapshot(conn: sqlite3.Connection, ts: str, pair: Dict[str, Any], bpx: float) -> None:
+def insert_snapshot(
+    conn: sqlite3.Connection,
+    ts: str,
+    pair: Dict[str, Any],
+    bpx: float,
+    chain_id: str = CHAIN_ID,
+    pair_address: str = PAIR_ADDRESS,
+) -> None:
     row = {
         "ts_utc": ts,
-        "chain_id": CHAIN_ID,
-        "pair_address": PAIR_ADDRESS,
+        "chain_id": chain_id,
+        "pair_address": pair_address,
         "dex_id": pair.get("dexId"),
         "base_symbol": safe_get(pair, "baseToken.symbol"),
         "quote_symbol": safe_get(pair, "quoteToken.symbol"),
@@ -276,27 +336,43 @@ def insert_spot_prices(
 
 
 def main() -> int:
+    global _log_file
+    parser = argparse.ArgumentParser(description="Poll Dexscreener + spot prices into SQLite")
+    parser.add_argument("--chainId", default=CHAIN_ID, help=f"Chain id (default: {CHAIN_ID})")
+    parser.add_argument("--pairAddress", default=PAIR_ADDRESS, help="DEX pair address")
+    parser.add_argument("--interval", type=int, default=POLL_EVERY_SECONDS, help="Poll interval in seconds (default: 60 for 1-min bars)")
+    parser.add_argument("--log-file", default=None, help="Also append all output to this file (for Windows service)")
+    args = parser.parse_args()
+    chain_id = args.chainId
+    pair_address = args.pairAddress
+    interval_sec = args.interval
+
+    if getattr(args, "log_file", None):
+        log_path = getattr(args, "log_file")
+        os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
+        _log_file = open(log_path, "a", encoding="utf-8")
+
     conn = sqlite3.connect(DB_PATH)
     ensure_db(conn)
 
-    print(f"Writing to SQLite: {DB_PATH}")
-    print(f"Dex pair: {CHAIN_ID}/{PAIR_ADDRESS}")
-    print(f"Spot assets: {[s[0] for s in SPOT_ASSETS]}")
-    print(f"Price feed: Coinbase (primary) / Kraken (fallback)")
-    print(f"Poll every {POLL_EVERY_SECONDS}s. Stop with Ctrl+C.\n")
+    _log(f"Writing to SQLite: {DB_PATH}")
+    _log(f"Dex pair: {chain_id}/{pair_address}")
+    _log(f"Spot assets: {[s[0] for s in SPOT_ASSETS]}")
+    _log(f"Price feed: Coinbase (primary) / Kraken (fallback)")
+    _log(f"Poll every {interval_sec}s. Stop with Ctrl+C.\n")
 
     try:
         while True:
             ts = utc_now_iso()
             try:
-                pair = fetch_dex_pair(CHAIN_ID, PAIR_ADDRESS)
+                pair = fetch_dex_pair(chain_id, pair_address)
                 spot_prices: list[tuple[str, float]] = []
                 for symbol, cb_product, kraken_pair in SPOT_ASSETS:
                     px = fetch_spot_price_asset(cb_product, kraken_pair)
                     spot_prices.append((symbol, px))
                 sol_price = spot_prices[0][1]
 
-                insert_snapshot(conn, ts, pair, sol_price)
+                insert_snapshot(conn, ts, pair, sol_price, chain_id, pair_address)
                 insert_spot_prices(conn, ts, spot_prices)
                 conn.commit()
 
@@ -306,18 +382,23 @@ def main() -> int:
                 sells = safe_get(pair, "txns.h24.sells")
                 spot_str = "  ".join(f"{s}={p:.2f}" for s, p in spot_prices)
 
-                print(
+                _log(
                     f"{ts}  OK  {spot_str}  "
                     f"dex_liqUsd={liq} dex_vol24={vol} dex_txns24={buys}/{sells}"
                 )
             except Exception as e:
-                print(f"{ts}  ERR  {e}")
+                _log(f"{ts}  ERR  {e}")
 
-            time.sleep(POLL_EVERY_SECONDS)
+            time.sleep(interval_sec)
 
     except KeyboardInterrupt:
-        print("\nStopped.")
+        _log("\nStopped.")
     finally:
+        if _log_file is not None:
+            try:
+                _log_file.close()
+            except Exception:
+                pass
         conn.close()
 
     return 0
