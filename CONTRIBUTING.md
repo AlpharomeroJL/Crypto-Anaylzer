@@ -1,6 +1,6 @@
 # Contributing
 
-Contributions that keep the repository research-grade and maintainable are welcome. Below are minimal expectations.
+Contributions that keep the repository research-grade and maintainable are welcome. This repo is **research-only** — no execution, order routing, or trading keys.
 
 ---
 
@@ -29,6 +29,18 @@ This repository is **research-only**. Do not add:
 - Code that sends trades or modifies positions
 
 Signals, backtests, and reports are for study and validation. Any deployment or execution layer belongs outside this repo.
+
+---
+
+## Commit Messages
+
+Use present tense, imperative; one short subject line. Examples:
+
+- **Add** universe churn audit table and check_universe.py
+- **Fix** doctor exit code when DB is missing
+- **Document** run.ps1 commands in README Quickstart
+
+Optionally reference an issue in the body. Keep history readable for collaborators and future you.
 
 ---
 

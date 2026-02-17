@@ -12,12 +12,18 @@ reports/
 __pycache__/
 *.pyc
 
+# pytest cache (local test run artifacts)
+.pytest_cache/
+
 # streamlit
 .streamlit/
 
 # OS
 .DS_Store
 Thumbs.db
+
+# local backup copies (avoid accidental commit of temp edits)
+*.md.bak
 
 # Service logs live outside repo (not trackable here):
 # C:\ProgramData\CryptoAnalyzer\poller.log

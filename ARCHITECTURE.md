@@ -1,5 +1,7 @@
 # Architecture
 
+This expands the README’s high-level diagram with module responsibilities.
+
 ## Diagram
 
 Data flow: poll → SQLite → materialize bars → research / backtests / reports / UI.
