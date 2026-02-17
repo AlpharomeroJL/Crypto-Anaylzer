@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 Poll:
-- Dexscreener pair metrics (liquidity/volume/txns) for SOL/USDC pool
-- Spot SOL price from Coinbase (primary) or Kraken (fallback) for returns/volatility
+- Spot SOL/ETH/BTC from Coinbase (primary) or Kraken (fallback) -> spot_price_snapshots
+- Multiple Dexscreener pairs (config or CLI) -> sol_monitor_snapshots (one row per pair per cycle)
 
-Stores into SQLite so you can compute returns/volatility cleanly.
+Stores into SQLite for returns/volatility and multi-pair bars.
 """
 
 from __future__ import annotations
@@ -15,7 +15,8 @@ import os
 import sqlite3
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
@@ -39,8 +40,11 @@ COINBASE_URL = "https://api.coinbase.com"
 KRAKEN_URL = "https://api.kraken.com"
 
 CHAIN_ID = "solana"
-# Orca SOL/USDC (Dexscreener returns data). Previous AvSUmeK93... often returns null.
+# Orca SOL/USDC (Dexscreener returns data). Fallback when config has no pairs.
 PAIR_ADDRESS = "Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE"
+DEFAULT_DEX_PAIRS: List[Dict[str, str]] = [
+    {"chain_id": CHAIN_ID, "pair_address": PAIR_ADDRESS, "label": "SOL/USDC"},
+]
 
 # Multi-asset spot feeds: (symbol, Coinbase product, Kraken pair). Kraken uses XBT for BTC.
 SPOT_ASSETS = [
@@ -270,6 +274,46 @@ def fetch_spot_price_usd() -> float:
     return fetch_spot_price_asset(cb, kk)
 
 
+def load_dex_pairs_from_config(config_path: str) -> List[Dict[str, str]]:
+    """
+    Read DEX pairs from config YAML key `pairs`. Each item: chain_id, pair_address, label (optional).
+    If PyYAML missing but file exists, log a message and return [].
+    """
+    path = Path(config_path)
+    if not path.exists():
+        return []
+    try:
+        import yaml
+    except ImportError:
+        _log("Config file present but PyYAML not installed. pip install PyYAML to use config pairs. Using defaults.")
+        return []
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+    except Exception as e:
+        _log(f"Could not load config {config_path}: {e}. Using defaults.")
+        return []
+    if not isinstance(data, dict):
+        return []
+    pairs = data.get("pairs")
+    if not pairs or not isinstance(pairs, list):
+        return []
+    out: List[Dict[str, str]] = []
+    for item in pairs:
+        if not isinstance(item, dict):
+            continue
+        cid = item.get("chain_id") or item.get("chainId")
+        addr = item.get("pair_address") or item.get("pairAddress")
+        if not cid or not addr:
+            continue
+        out.append({
+            "chain_id": str(cid).strip(),
+            "pair_address": str(addr).strip(),
+            "label": str(item.get("label", "")).strip() or f"{cid}/{addr[:8]}",
+        })
+    return out
+
+
 def insert_snapshot(
     conn: sqlite3.Connection,
     ts: str,
@@ -321,8 +365,29 @@ def insert_snapshot(
     )
 
 
+def poll_one_dex_pair(
+    conn: sqlite3.Connection,
+    ts: str,
+    chain_id: str,
+    pair_address: str,
+    spot_price_sol: float,
+    label: str = "",
+) -> Tuple[bool, Optional[Dict[str, Any]]]:
+    """
+    Fetch one DEX pair and insert one row into sol_monitor_snapshots.
+    Returns (True, pair_dict for logging) or (False, None) on failure.
+    """
+    try:
+        pair = fetch_dex_pair(chain_id, pair_address)
+        insert_snapshot(conn, ts, pair, spot_price_sol, chain_id, pair_address)
+        return True, pair
+    except Exception as e:
+        _log(f"WARN dex {chain_id}:{pair_address} {e}")
+        return False, None
+
+
 def insert_spot_prices(
-    conn: sqlite3.Connection, ts: str, prices: list[tuple[str, float]]
+    conn: sqlite3.Connection, ts: str, prices: List[Tuple[str, float]]
 ) -> None:
     """Insert one row per (ts, symbol, price) into spot_price_snapshots."""
     for symbol, px in prices:
@@ -338,14 +403,32 @@ def insert_spot_prices(
 def main() -> int:
     global _log_file
     parser = argparse.ArgumentParser(description="Poll Dexscreener + spot prices into SQLite")
-    parser.add_argument("--chainId", default=CHAIN_ID, help=f"Chain id (default: {CHAIN_ID})")
-    parser.add_argument("--pairAddress", default=PAIR_ADDRESS, help="DEX pair address")
-    parser.add_argument("--interval", type=int, default=POLL_EVERY_SECONDS, help="Poll interval in seconds (default: 60 for 1-min bars)")
+    parser.add_argument("--config", default="config.yaml", help="Path to config YAML (default: config.yaml)")
+    parser.add_argument("--pairs-from-config", dest="pairs_from_config", action="store_true", default=True, help="Load DEX pairs from config (default)")
+    parser.add_argument("--no-pairs-from-config", dest="pairs_from_config", action="store_false", help="Disable config pairs; use single default or --pair only")
+    parser.add_argument("--pair", action="append", default=[], metavar="CHAIN_ID:PAIR_ADDRESS", help="Add DEX pair (repeatable); e.g. solana:Czfq3xZZ...")
+    parser.add_argument("--pair-delay", type=float, default=0.2, metavar="SEC", help="Seconds between DEX API calls (default: 0.2)")
+    parser.add_argument("--chainId", default=CHAIN_ID, help=f"Chain id for legacy single pair (default: {CHAIN_ID})")
+    parser.add_argument("--pairAddress", default=PAIR_ADDRESS, help="DEX pair address for legacy single pair")
+    parser.add_argument("--interval", type=int, default=POLL_EVERY_SECONDS, help="Poll interval in seconds (default: 60)")
     parser.add_argument("--log-file", default=None, help="Also append all output to this file (for Windows service)")
     args = parser.parse_args()
-    chain_id = args.chainId
-    pair_address = args.pairAddress
     interval_sec = args.interval
+
+    # Build dex_pairs list
+    dex_pairs: List[Dict[str, str]] = []
+    if args.pairs_from_config:
+        dex_pairs = load_dex_pairs_from_config(args.config)
+    if not dex_pairs:
+        dex_pairs = list(DEFAULT_DEX_PAIRS)
+    for raw in args.pair:
+        if ":" in raw:
+            cid, addr = raw.split(":", 1)
+            dex_pairs.append({
+                "chain_id": cid.strip(),
+                "pair_address": addr.strip(),
+                "label": f"{cid.strip()}/{addr.strip()[:8]}",
+            })
 
     if getattr(args, "log_file", None):
         log_path = getattr(args, "log_file")
@@ -356,36 +439,45 @@ def main() -> int:
     ensure_db(conn)
 
     _log(f"Writing to SQLite: {DB_PATH}")
-    _log(f"Dex pair: {chain_id}/{pair_address}")
+    _log(f"Dex pairs: {len(dex_pairs)}  {[p.get('label', f\"{p['chain_id']}/{p['pair_address'][:8]}\") for p in dex_pairs]}")
     _log(f"Spot assets: {[s[0] for s in SPOT_ASSETS]}")
     _log(f"Price feed: Coinbase (primary) / Kraken (fallback)")
-    _log(f"Poll every {interval_sec}s. Stop with Ctrl+C.\n")
+    _log(f"Poll every {interval_sec}s. Pair delay {args.pair_delay}s. Stop with Ctrl+C.\n")
 
     try:
         while True:
             ts = utc_now_iso()
             try:
-                pair = fetch_dex_pair(chain_id, pair_address)
-                spot_prices: list[tuple[str, float]] = []
+                # A) Spot polling (unchanged)
+                spot_prices: List[Tuple[str, float]] = []
                 for symbol, cb_product, kraken_pair in SPOT_ASSETS:
                     px = fetch_spot_price_asset(cb_product, kraken_pair)
                     spot_prices.append((symbol, px))
                 sol_price = spot_prices[0][1]
-
-                insert_snapshot(conn, ts, pair, sol_price, chain_id, pair_address)
                 insert_spot_prices(conn, ts, spot_prices)
+
+                # B) DEX pairs: one row per pair per cycle
+                dex_summaries: List[str] = []
+                for i, p in enumerate(dex_pairs):
+                    ok, pair = poll_one_dex_pair(
+                        conn, ts,
+                        p["chain_id"], p["pair_address"],
+                        sol_price,
+                        label=p.get("label", ""),
+                    )
+                    if ok and pair is not None:
+                        liq = safe_get(pair, "liquidity.usd")
+                        vol = safe_get(pair, "volume.h24")
+                        lbl = p.get("label", "") or f"{safe_get(pair, 'baseToken.symbol')}/{safe_get(pair, 'quoteToken.symbol')}"
+                        dex_summaries.append(f"[{lbl} liq={liq} vol24={vol}]")
+                    if i < len(dex_pairs) - 1 and args.pair_delay > 0:
+                        time.sleep(args.pair_delay)
+
                 conn.commit()
 
-                liq = safe_get(pair, "liquidity.usd")
-                vol = safe_get(pair, "volume.h24")
-                buys = safe_get(pair, "txns.h24.buys")
-                sells = safe_get(pair, "txns.h24.sells")
                 spot_str = "  ".join(f"{s}={p:.2f}" for s, p in spot_prices)
-
-                _log(
-                    f"{ts}  OK  {spot_str}  "
-                    f"dex_liqUsd={liq} dex_vol24={vol} dex_txns24={buys}/{sells}"
-                )
+                dex_str = f"  dex_pairs={len(dex_pairs)} " + " ".join(dex_summaries) if dex_summaries else f"  dex_pairs={len(dex_pairs)} (no ok)"
+                _log(f"{ts}  OK  {spot_str}{dex_str}")
             except Exception as e:
                 _log(f"{ts}  ERR  {e}")
 

@@ -1,0 +1,43 @@
+# Crypto-Analyzer config: DB, table, filters, and analysis defaults.
+# Override with environment variables: CRYPTO_DB_PATH, CRYPTO_TABLE, etc. (see config.py).
+
+db:
+  path: "dex_data.sqlite"
+  table: "sol_monitor_snapshots"
+  price_column: "dex_price_usd"   # use "price_usd" for generic snapshots table
+  timezone: "UTC"
+
+# Default resample frequency and rolling window for analysis/backtest
+defaults:
+  freq: "5min"       # 5min, 15min, 1h, 1D
+  window: 288        # rolling vol window in bars (288 x 5min = 1 day)
+
+# Quality filters: exclude low-liquidity / low-volume pairs
+filters:
+  min_liquidity_usd: 250000
+  min_vol_h24: 500000
+  min_bars: 48       # minimum bars per pair (e.g. 48 for 1h = 2 days)
+  exclude_stable_pairs: true   # exclude USDC/USDT etc. from mover scans
+
+# Bars materialization: which frequencies to build
+bars_freqs:
+  - "5min"
+  - "15min"
+  - "1h"
+  - "1D"
+
+# Market factor for beta/correlation (if no BTC pair in data, load from spot_price_snapshots)
+factor_symbol: "BTC"
+
+# DEX pairs to poll each cycle (dex_poll_to_sqlite.py). Each: chain_id, pair_address, label (optional).
+# If missing or empty, poller falls back to single hard-coded SOL/USDC pair.
+# pairs:
+#   - chain_id: solana
+#     pair_address: "Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE"
+#     label: SOL/USDC
+#   - chain_id: solana
+#     pair_address: "<WETH_USDC_POOL_ADDRESS>"
+#     label: WETH/USDC
+#   - chain_id: solana
+#     pair_address: "<WBTC_USDC_POOL_ADDRESS>"
+#     label: WBTC/USDC

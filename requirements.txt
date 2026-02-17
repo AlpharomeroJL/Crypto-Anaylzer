@@ -1,4 +1,6 @@
 # Pinned for reproducible deploy (pip freeze)
+# Optional: PyYAML for config.yaml (config.py works without it using defaults)
+PyYAML>=6.0
 altair==6.0.0
 attrs==25.4.0
 blinker==1.9.0
