@@ -2,6 +2,11 @@
 .venv/
 venv/
 
+# env files (may contain CRYPTO_DB_PATH, secrets; never commit)
+.env
+.env.local
+.env.*.local
+
 # runtime artifacts (do not commit)
 *.sqlite
 *.sqlite3
