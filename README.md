@@ -104,7 +104,7 @@ See **docs/INSTITUTIONAL.md** for institutional research principles.
 | `research_report.py` | Cross-sectional report: universe, IC summary, IC decay, portfolio backtest (L/S and residual momentum), regime-conditioned metrics. Requires ≥3 assets. |
 | `research_report_v2.py` | Extended report: orthogonalized signals, advanced portfolio (constraints, beta neutrality), deflated Sharpe, PBO proxy, regime conditioning, optional lead/lag. |
 
-Output directory: `reports/` (configurable via `--out-dir`).
+Output directory: `reports/` (configurable via `--out-dir`). Under `reports/`: `csv/`, `charts/`, `manifests/`, `health/`. Research reports write run manifests (git commit, env fingerprint, data window, outputs with SHA256) to `reports/manifests/` when `--save-manifest` (default). V2 also writes a research health summary to `reports/health/health_summary.json`.
 
 ---
 
@@ -114,7 +114,7 @@ Output directory: `reports/` (configurable via `--out-dir`).
 streamlit run app.py
 ```
 
-Open http://localhost:8501. Pages: Overview, Pair detail, Scanner, Backtest, Walk-Forward, Market Structure, Signals, **Research** (Universe, IC Summary, IC Decay, Portfolio, Regime Conditioning), **Institutional Research** (Signal Hygiene, Advanced Portfolio, Overfitting Defenses, Conditional Performance, Experiments). With fewer than 3 assets, Research shows a message; Institutional Research degrades gracefully.
+Open http://localhost:8501. Pages: Overview (universe size, top pairs by liquidity), Pair detail, Scanner, Backtest, Walk-Forward, Market Structure, Signals, **Research** (Universe, IC Summary, IC Decay, Portfolio, Regime Conditioning), **Institutional Research** (Signal Hygiene, Advanced Portfolio, Overfitting Defenses, Conditional Performance, Experiments), **Governance** (latest manifests, health summary, download manifest JSON). With fewer than 3 assets, Research shows a message; Institutional Research degrades gracefully.
 
 ---
 
@@ -127,6 +127,14 @@ python sanity_check.py
 ```
 
 Inspection only (no logic changes). Validates: environment metadata, database existence and table row counts, critical CLI commands (materialize_bars, dex_analyze, dex_scan, report_daily, research_report, research_report_v2, pytest), and Streamlit/crypto_analyzer imports. Writes `reports/system_health_<UTC timestamp>.md` and exits 0 if all pass, 1 otherwise.
+
+**Milestone 5 quick check:**
+
+```powershell
+python sanity_check_m5.py
+```
+
+Verifies M5 modules (governance, artifacts, spec, diagnostics, integrity), prints `RESEARCH_SPEC_VERSION`, runs a tiny manifest write/load in a temp dir, and prints the pytest command. Use after pulling to confirm governance and reproducibility paths.
 
 **Example (pass):**
 
@@ -182,6 +190,16 @@ python dex_poll_to_sqlite.py --interval 60
 ```
 
 Creates DB and tables. Pairs from `config.yaml` `pairs` or `--pair CHAIN_ID:PAIR_ADDRESS` (repeatable).
+
+**Universe mode (multi-asset):** To poll top DEX pairs by chain from Dexscreener’s public API (no API keys), use either `--universe` or `--universe top`:
+
+```powershell
+python dex_poll_to_sqlite.py --universe top --universe-chain solana --universe-refresh-minutes 60 --interval 60
+# or
+python dex_poll_to_sqlite.py --universe --universe-chain solana --interval 60
+```
+
+Configure in `config.yaml` under `universe`: `enabled`, `chain_id`, `page_size`, `refresh_minutes`, `min_liquidity_usd`, `min_vol_h24`. If the universe fetch fails, the poller falls back to configured pairs.
 
 **2. Materialize bars**
 

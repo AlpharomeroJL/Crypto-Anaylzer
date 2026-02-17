@@ -68,4 +68,23 @@ This document summarizes the research standards and controls implemented in the 
 
 ---
 
+---
+
+## 8. Governance and Reproducibility (Milestone 5)
+
+- **Run manifests.** Each research report run can write a manifest (run_id, created_utc, git_commit, env_fingerprint, spec version, args, data_window, outputs with file SHA256, metrics, notes) to `reports/manifests/`. Enables auditability and reproducibility.
+- **Research spec version.** A single `RESEARCH_SPEC_VERSION` (e.g. 5.0) and `spec_summary()` expose version and key module presence. Optional boundary check scans repo source for forbidden keywords (e.g. execution/keys) and raises if found; docs and the spec module itself are excluded.
+- **Artifacts.** Centralized artifact I/O (UTF-8 CSV/JSON/text), directory creation, and file SHA256 hashing. Streamlit download buttons use bytes (e.g. `df.to_csv(...).encode("utf-8")`) to avoid type errors.
+- **Diagnostics.** Fragility/stability (e.g. rolling IC stability), parameter sensitivity smoke (small grid), regime concentration, asset concentration, cost sensitivity. A `build_health_summary` aggregates data coverage, signal stability, overfitting proxies, regime dependency, capacity proxy. Research report v2 writes `reports/health/health_summary.json` and the dashboard Governance page shows latest manifests and health summary.
+- **Data integrity checks.** Before forward returns: monotonic time index, no zero/negative prices, no forward-looking alignment. Checks emit warnings only; they do not crash the run.
+
+---
+
+## Multi-asset (universe) polling
+
+- **Universe mode.** The poller can optionally fetch “top” DEX pairs for a chain via Dexscreener’s public search API (no API keys). Pairs are filtered by min liquidity and min 24h volume; the allowlist is refreshed at a configurable interval. All pairs are stored in the same `sol_monitor_snapshots` table. If the universe fetch fails, the poller falls back to configured pairs.
+- **Research modules.** Universe and research reports handle &gt;3 assets gracefully; quality filters and constant-return drops keep the research universe consistent.
+
+---
+
 *This platform is research-only: no order routing, execution, exchange keys, or broker integration.*

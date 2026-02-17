@@ -3,6 +3,7 @@
 Crypto quant monitoring + research dashboard.
 Pages: Overview (leaderboard), Pair detail, Scanner, Backtest.
 Run: streamlit run app.py
+Uses use_container_width=True for dataframe/chart width (width='stretch' can error in some Streamlit versions).
 """
 from __future__ import annotations
 
@@ -30,17 +31,20 @@ from data import append_spot_returns_to_returns_df, get_factor_returns, load_bar
 from report_daily import run_momentum_scan, run_risk_snapshot, run_vol_scan
 from dex_scan import run_scan as dex_run_scan
 from crypto_analyzer.ui import _safe_df as _safe_df
+from crypto_analyzer.artifacts import df_to_download_bytes
+from crypto_analyzer.governance import load_manifests
 from crypto_analyzer.regimes import classify_market_regime, explain_regime
 from crypto_analyzer.signals import load_signals
 from crypto_analyzer.walkforward import bars_per_day, run_walkforward_backtest
 from crypto_analyzer.research_universe import get_research_assets
+# Alias avoids UI variable shadowing (UnboundLocalError).
 from crypto_analyzer.alpha_research import (
     compute_forward_returns,
     information_coefficient,
     ic_summary,
     ic_decay,
     rank_signal_df,
-    signal_momentum_24h,
+    signal_momentum_24h as calc_signal_momentum_24h,
     signal_residual_momentum_24h,
     compute_dispersion_series,
     dispersion_zscore_series,
@@ -131,14 +135,16 @@ def main():
     st.title("Crypto Quant Monitoring & Research")
 
     db_path_str = st.sidebar.text_input("DB path", value=get_db_path())
-    page = st.sidebar.radio("Page", ["Overview", "Pair detail", "Scanner", "Backtest", "Walk-Forward", "Market Structure", "Signals", "Research", "Institutional Research"])
+    page = st.sidebar.radio("Page", ["Overview", "Pair detail", "Scanner", "Backtest", "Walk-Forward", "Market Structure", "Signals", "Research", "Institutional Research", "Governance"])
 
     if page == "Overview":
         st.header("Overview")
         with st.sidebar.expander("Filters", expanded=True):
             freq = st.selectbox("Freq", ["5min", "15min", "1h", "1D"], index=2, key="overview_freq")
-            min_liq = st.number_input("Min liquidity USD", value=float(config_min_liq() if callable(config_min_liq) else 250_000), min_value=0.0, step=50_000.0, key="overview_liq")
-            min_vol = st.number_input("Min vol_h24 USD", value=float(config_min_vol() if callable(config_min_vol) else 500_000), min_value=0.0, step=50_000.0, key="overview_vol")
+            _min_liq = float(config_min_liq() if callable(config_min_liq) else 250_000)
+            min_liq = st.number_input("Min liquidity USD", value=_min_liq, min_value=0.0, step=50000.0, key="overview_liq")
+            _min_vol = float(config_min_vol() if callable(config_min_vol) else 500_000)
+            min_vol = st.number_input("Min vol_h24 USD", value=_min_vol, min_value=0.0, step=50000.0, key="overview_vol")
             _min_bars = int(config_min_bars() if callable(config_min_bars) else 48)
             min_bars_count = st.number_input("Min bars", value=_min_bars, min_value=10, max_value=10000, step=1, key="overview_bars")
             top_n = st.number_input("Top N", value=10, min_value=1, max_value=50, step=1, key="overview_top")
@@ -150,9 +156,21 @@ def main():
         if summary.empty and (bars_overview.empty or bars_overview is None):
             st.warning("No data. Check DB path and run poller + materialize_bars if needed.")
         else:
+            n_dex = len(summary) if not summary.empty else 0
+            st.metric("Universe size", f"{n_dex} DEX pairs" + (" (+ spot in Research when ≥3 assets)" if n_dex else ""))
             if not summary.empty:
                 st.subheader("Leaderboard (snapshots)")
                 st.dataframe(_safe_df(summary.head(50)), use_container_width=True)
+                st.subheader("Top pairs by liquidity (latest snapshot)")
+                if not snap_df.empty and "liquidity_usd" in snap_df.columns:
+                    last_ts = snap_df["ts_utc"].max()
+                    last = snap_df[snap_df["ts_utc"] == last_ts].copy()
+                    last = last.sort_values("liquidity_usd", ascending=False).head(20)
+                    top_liq = last[["pair_id", "label", "chain_id", "liquidity_usd", "vol_h24"]].copy() if "label" in last.columns else last
+                    top_liq.columns = [str(c) for c in top_liq.columns]
+                    st.dataframe(_safe_df(top_liq), use_container_width=True)
+                else:
+                    st.dataframe(_safe_df(summary.head(20)), use_container_width=True)
             if not bars_overview.empty:
                 st.subheader("Top momentum (return_24h, annual_vol, annual_sharpe, max_drawdown)")
                 st.caption("annual_vol = 24h rolling realized vol, annualized.")
@@ -680,7 +698,7 @@ def main():
         with tab_ic:
             st.subheader("IC Summary")
             if n_assets >= 3 and not returns_df_res.empty:
-                sig_mom_res = signal_momentum_24h(returns_df_res, freq_res)
+                sig_mom_res = calc_signal_momentum_24h(returns_df_res, freq_res)
                 if not sig_mom_res.empty:
                     fwd1 = compute_forward_returns(returns_df_res, 1)
                     ic_ts_res = information_coefficient(sig_mom_res, fwd1, method="spearman")
@@ -698,7 +716,7 @@ def main():
         with tab_decay:
             st.subheader("IC Decay")
             if n_assets >= 3 and not returns_df_res.empty:
-                sig_mom_res = signal_momentum_24h(returns_df_res, freq_res)
+                sig_mom_res = calc_signal_momentum_24h(returns_df_res, freq_res)
                 horizons_res = [1, 2, 3, 6, 12, 24]
                 decay_df_res = ic_decay(sig_mom_res, returns_df_res, horizons_res, method="spearman")
                 if not decay_df_res.empty:
@@ -716,7 +734,7 @@ def main():
             if n_assets >= 3 and not returns_df_res.empty:
                 top_k = st.number_input("Top K", value=3, min_value=1, max_value=10, step=1, key="res_topk")
                 bot_k = st.number_input("Bottom K", value=3, min_value=1, max_value=10, step=1, key="res_botk")
-                sig_mom_res = signal_momentum_24h(returns_df_res, freq_res)
+                sig_mom_res = calc_signal_momentum_24h(returns_df_res, freq_res)
                 ranks_res = rank_signal_df(sig_mom_res)
                 weights_res = long_short_from_ranks(ranks_res, int(top_k), int(bot_k), gross_leverage=1.0)
                 port_ret_res = portfolio_returns_from_weights(weights_res, returns_df_res).dropna()
@@ -744,7 +762,7 @@ def main():
             if n_assets >= 3 and not returns_df_res.empty:
                 disp_ser = compute_dispersion_series(returns_df_res)
                 disp_z_ser = dispersion_zscore_series(disp_ser, 24) if len(disp_ser) >= 24 else pd.Series(dtype=float)
-                sig_mom_res = signal_momentum_24h(returns_df_res, freq_res)
+                sig_mom_res = calc_signal_momentum_24h(returns_df_res, freq_res)
                 ranks_res = rank_signal_df(sig_mom_res)
                 weights_res = long_short_from_ranks(ranks_res, 3, 3, gross_leverage=1.0)
                 port_ret_res = portfolio_returns_from_weights(weights_res, returns_df_res).dropna()
@@ -792,8 +810,7 @@ def main():
             else:
                 try:
                     from crypto_analyzer.signals_xs import clean_momentum, value_vs_beta, orthogonalize_signals
-                    from crypto_analyzer.alpha_research import signal_momentum_24h
-                    sig_mom_i = signal_momentum_24h(returns_inst, "1h")
+                    sig_mom_i = calc_signal_momentum_24h(returns_inst, "1h")
                     sig_clean_i = clean_momentum(returns_inst, "1h", factor_inst) if not returns_inst.empty else pd.DataFrame()
                     sig_value_i = value_vs_beta(returns_inst, "1h", factor_inst)
                     signals_dict_i = {}
@@ -821,10 +838,10 @@ def main():
             else:
                 try:
                     from crypto_analyzer.signals_xs import build_exposure_panel
-                    from crypto_analyzer.alpha_research import signal_momentum_24h, rank_signal_df
+                    from crypto_analyzer.alpha_research import rank_signal_df
                     from crypto_analyzer.portfolio_advanced import optimize_long_short_portfolio
                     from crypto_analyzer.risk_model import estimate_covariance
-                    sig_mom_i = signal_momentum_24h(returns_inst, "1h")
+                    sig_mom_i = calc_signal_momentum_24h(returns_inst, "1h")
                     if sig_mom_i.empty:
                         st.write("No signal.")
                     else:
@@ -855,10 +872,10 @@ def main():
                 st.info("Need at least 2 assets.")
             else:
                 try:
-                    from crypto_analyzer.alpha_research import signal_momentum_24h, rank_signal_df
+                    from crypto_analyzer.alpha_research import rank_signal_df
                     from crypto_analyzer.portfolio import long_short_from_ranks, portfolio_returns_from_weights, turnover_from_weights, apply_costs_to_portfolio
                     from crypto_analyzer.multiple_testing import deflated_sharpe_ratio, reality_check_warning, pbo_proxy_walkforward
-                    sig_mom_i = signal_momentum_24h(returns_inst, "1h")
+                    sig_mom_i = calc_signal_momentum_24h(returns_inst, "1h")
                     if sig_mom_i.empty:
                         st.write("No signal.")
                     else:
@@ -886,12 +903,12 @@ def main():
             else:
                 try:
                     from crypto_analyzer.evaluation import conditional_metrics
-                    from crypto_analyzer.alpha_research import signal_momentum_24h, rank_signal_df, compute_dispersion_series, dispersion_zscore_series
+                    from crypto_analyzer.alpha_research import rank_signal_df, compute_dispersion_series, dispersion_zscore_series
                     from crypto_analyzer.portfolio import long_short_from_ranks, portfolio_returns_from_weights, turnover_from_weights, apply_costs_to_portfolio
                     disp_ser = compute_dispersion_series(returns_inst)
                     disp_z_ser = dispersion_zscore_series(disp_ser, 24) if len(disp_ser) >= 24 else pd.Series(dtype=float)
                     regime_ser = disp_z_ser.apply(lambda z: "high_disp" if z > 1 else ("low_disp" if z < -1 else "mid")) if not disp_z_ser.empty else pd.Series(dtype=str)
-                    sig_mom_i = signal_momentum_24h(returns_inst, "1h")
+                    sig_mom_i = calc_signal_momentum_24h(returns_inst, "1h")
                     if sig_mom_i.empty or regime_ser.empty:
                         st.write("No signal or regime.")
                     else:
@@ -922,6 +939,40 @@ def main():
                         st.json(df_exp[df_exp["run_name"].astype(str) == str(sel_run)].iloc[0].to_dict())
             except Exception as e:
                 st.error(str(e))
+
+    elif page == "Governance":
+        st.header("Governance (manifests & health)")
+        reports_dir = Path("reports")
+        manifests_df = load_manifests(reports_dir)
+        if manifests_df.empty:
+            st.info("No manifests yet. Run research_report.py or research_report_v2.py with --save-manifest (default).")
+        else:
+            st.subheader("Latest manifests")
+            st.dataframe(_safe_df(manifests_df.tail(30)), use_container_width=True)
+            run_ids = manifests_df["run_id"].dropna().astype(str).tolist()
+            if run_ids:
+                sel_run = st.selectbox("Download manifest JSON", options=run_ids, key="gov_sel")
+                manifest_path = manifests_df[manifests_df["run_id"].astype(str) == str(sel_run)]["path"].iloc[0]
+                if Path(manifest_path).is_file():
+                    try:
+                        with open(manifest_path, encoding="utf-8") as f:
+                            import json
+                            data = json.load(f)
+                        st.download_button("Download JSON", data=json.dumps(data, indent=2).encode("utf-8"), file_name=f"manifest_{sel_run}.json", mime="application/json", key="gov_dl")
+                    except Exception:
+                        pass
+        health_path = reports_dir / "health" / "health_summary.json"
+        if health_path.is_file():
+            st.subheader("Latest health summary")
+            try:
+                with open(health_path, encoding="utf-8") as f:
+                    import json
+                    health = json.load(f)
+                st.json(health)
+            except Exception:
+                st.caption("Could not load health summary.")
+        else:
+            st.caption("No health summary. Run research_report_v2.py to generate.")
 
 if __name__ == "__main__":
     main()

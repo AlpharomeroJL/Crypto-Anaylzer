@@ -65,7 +65,11 @@ def load_snapshots(
     df = df.dropna(subset=["ts_utc", "chain_id", "pair_address", "price_usd"])
     df["price_usd"] = pd.to_numeric(df["price_usd"], errors="coerce")
     df = df.dropna(subset=["price_usd"])
+    n_bad = (df["price_usd"] <= 0).sum()
     df = df[df["price_usd"] > 0]
+    if n_bad > 0:
+        import warnings
+        warnings.warn(f"load_snapshots: dropped {int(n_bad)} rows with non-positive price_usd (table {table})", UserWarning, stacklevel=2)
     if apply_filters and (min_liq is not None or min_vol is not None):
         mask = pd.Series(True, index=df.index)
         if min_liq is not None and "liquidity_usd" in df.columns:
@@ -75,7 +79,16 @@ def load_snapshots(
             vol = pd.to_numeric(df["vol_h24"], errors="coerce")
             mask = mask & (vol > min_vol)
         df = df.loc[mask]
-    return df.reset_index(drop=True)
+    df = df.reset_index(drop=True)
+    try:
+        from .integrity import assert_monotonic_time_index
+        w = assert_monotonic_time_index(df, col="ts_utc")
+        if w:
+            import warnings
+            warnings.warn(f"load_snapshots: {w}", UserWarning, stacklevel=2)
+    except Exception:
+        pass
+    return df
 
 
 def load_bars(
@@ -115,11 +128,23 @@ def load_bars(
     df["ts_utc"] = pd.to_datetime(df["ts_utc"], utc=True, errors="coerce")
     df = df.dropna(subset=["ts_utc", "chain_id", "pair_address", "close"])
     df["close"] = pd.to_numeric(df["close"], errors="coerce")
+    n_bad = (df["close"] <= 0).sum()
     df = df[df["close"] > 0]
+    if n_bad > 0:
+        import warnings
+        warnings.warn(f"load_bars: dropped {int(n_bad)} rows with non-positive close (table {table})", UserWarning, stacklevel=2)
     if min_bars is not None:
         counts = df.groupby(["chain_id", "pair_address"]).size()
         valid = counts[counts >= min_bars].index
         df = df[df.set_index(["chain_id", "pair_address"]).index.isin(valid)].reset_index(drop=True)
+    try:
+        from .integrity import assert_monotonic_time_index
+        w = assert_monotonic_time_index(df, col="ts_utc")
+        if w:
+            import warnings
+            warnings.warn(f"load_bars: {w}", UserWarning, stacklevel=2)
+    except Exception:
+        pass
     return df
 
 
@@ -193,7 +218,11 @@ def load_spot_series(db_path_override: Optional[str] = None, symbol: str = "BTC"
     df["ts_utc"] = pd.to_datetime(df["ts_utc"], utc=True, errors="coerce")
     df = df.dropna(subset=["ts_utc", "spot_price_usd"])
     df["spot_price_usd"] = pd.to_numeric(df["spot_price_usd"], errors="coerce")
+    n_bad = (df["spot_price_usd"] <= 0).sum()
     df = df[df["spot_price_usd"] > 0]
+    if n_bad > 0:
+        import warnings
+        warnings.warn(f"load_spot_series: dropped {int(n_bad)} rows with non-positive spot_price_usd (symbol={symbol})", UserWarning, stacklevel=2)
     return df.set_index("ts_utc")["spot_price_usd"].sort_index()
 
 

@@ -224,17 +224,20 @@ def materialize_freq(
         print(f"{table}: no bars generated (try coarser freq or more data).")
         return 0
 
+    chunk_size = 500
     with sqlite3.connect(path) as conn:
-        conn.executemany(
-            f"""
-            INSERT OR REPLACE INTO {table}
-            (ts_utc, chain_id, pair_address, base_symbol, quote_symbol,
-             open, high, low, close, log_return, cum_return, roll_vol,
-             liquidity_usd, vol_h24)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            rows_to_insert,
-        )
+        for i in range(0, len(rows_to_insert), chunk_size):
+            chunk = rows_to_insert[i : i + chunk_size]
+            conn.executemany(
+                f"""
+                INSERT OR REPLACE INTO {table}
+                (ts_utc, chain_id, pair_address, base_symbol, quote_symbol,
+                 open, high, low, close, log_return, cum_return, roll_vol,
+                 liquidity_usd, vol_h24)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                chunk,
+            )
         conn.commit()
 
     print(f"{table}: inserted {len(rows_to_insert)} rows.")

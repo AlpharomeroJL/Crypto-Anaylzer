@@ -274,6 +274,81 @@ def fetch_spot_price_usd() -> float:
     return fetch_spot_price_asset(cb, kk)
 
 
+def fetch_dex_universe_top_pairs(
+    chain_id: str = "solana",
+    page_size: int = 50,
+    min_liquidity_usd: float = 250_000,
+    min_vol_h24: float = 500_000,
+) -> List[Dict[str, str]]:
+    """
+    Fetch top DEX pairs for a chain via Dexscreener search API.
+    Uses public search endpoint; filters by liquidity and volume.
+    Returns list of {chain_id, pair_address, label}. Empty on failure (caller should fall back to config pairs).
+    """
+    # Search by chain-native token to get pairs on that chain
+    query_map = {"solana": "SOL", "ethereum": "ETH", "bsc": "BNB", "base": "ETH", "arbitrum": "ETH", "polygon": "MATIC"}
+    query = query_map.get(chain_id.lower(), "SOL")
+    url = f"{DEX_BASE_URL}/latest/dex/search?q={query}"
+    try:
+        r = requests.get(url, timeout=HTTP_TIMEOUT_S)
+        if r.status_code == 429:
+            time.sleep(2.0)
+            r = requests.get(url, timeout=HTTP_TIMEOUT_S)
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        _log(f"Universe fetch failed: {e}. Using configured pairs.")
+        return []
+
+    pairs_raw = data.get("pairs") if isinstance(data, dict) else None
+    if not isinstance(pairs_raw, list):
+        return []
+
+    out: List[Dict[str, str]] = []
+    seen: set = set()
+    for item in pairs_raw:
+        if not isinstance(item, dict):
+            continue
+        cid = (item.get("chainId") or "").strip().lower()
+        if cid != chain_id.lower():
+            continue
+        addr = (item.get("pairAddress") or item.get("dexId") or "").strip()
+        if not addr or addr in seen:
+            continue
+        liq = to_float(safe_get(item, "liquidity.usd"))
+        vol = to_float(safe_get(item, "volume.h24"))
+        if liq is not None and liq < min_liquidity_usd:
+            continue
+        if vol is not None and vol < min_vol_h24:
+            continue
+        base = (safe_get(item, "baseToken.symbol") or "").strip() or "?"
+        quote = (safe_get(item, "quoteToken.symbol") or "").strip() or "?"
+        label = f"{base}/{quote}" if base and quote else f"{chain_id}/{addr[:8]}"
+        seen.add(addr)
+        out.append({"chain_id": chain_id, "pair_address": addr, "label": label})
+        if len(out) >= page_size:
+            break
+    return out
+
+
+def load_universe_config(config_path: str) -> Dict[str, Any]:
+    """Load universe section from config YAML. Returns dict with enabled, chain_id, page_size, refresh_minutes, min_liquidity_usd, min_vol_h24."""
+    path = Path(config_path)
+    defaults = {"enabled": False, "chain_id": "solana", "page_size": 50, "refresh_minutes": 60, "min_liquidity_usd": 250_000, "min_vol_h24": 500_000}
+    if not path.exists():
+        return defaults
+    try:
+        import yaml
+        with open(path, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+    except Exception:
+        return defaults
+    if not isinstance(data, dict):
+        return defaults
+    u = data.get("universe") or {}
+    return {**defaults, **{k: u[k] for k in defaults if k in u and u[k] is not None}}
+
+
 def load_dex_pairs_from_config(config_path: str) -> List[Dict[str, str]]:
     """
     Read DEX pairs from config YAML key `pairs`. Each item: chain_id, pair_address, label (optional).
@@ -412,12 +487,44 @@ def main() -> int:
     parser.add_argument("--pairAddress", default=PAIR_ADDRESS, help="DEX pair address for legacy single pair")
     parser.add_argument("--interval", type=int, default=POLL_EVERY_SECONDS, help="Poll interval in seconds (default: 60)")
     parser.add_argument("--log-file", default=None, help="Also append all output to this file (for Windows service)")
+    parser.add_argument("--universe", nargs="?", const="top", default=None, metavar="top", help="Enable universe mode: use --universe or --universe top. Other flags: --universe-chain, --universe-page-size, etc.")
+    parser.add_argument("--universe-chain", default="solana", help="Chain for universe fetch (default: solana)")
+    parser.add_argument("--universe-page-size", type=int, default=50, metavar="N", help="Max pairs to keep in universe (default: 50)")
+    parser.add_argument("--universe-refresh-minutes", type=float, default=60, metavar="M", help="Refresh universe allowlist every M minutes (default: 60)")
+    parser.add_argument("--universe-min-liquidity", type=float, default=250_000, help="Min liquidity USD for universe pairs (default: 250000)")
+    parser.add_argument("--universe-min-vol-h24", type=float, default=500_000, help="Min 24h volume USD for universe pairs (default: 500000)")
     args = parser.parse_args()
     interval_sec = args.interval
 
+    # Universe mode: refresh allowlist periodically (--universe or --universe top)
+    universe_enabled = (getattr(args, "universe", None) == "top")
+    universe_refresh_sec = max(60, float(getattr(args, "universe_refresh_minutes", 60)) * 60)
+    universe_last_refresh: List[Optional[float]] = [None]
+    universe_cache: List[Optional[List[Dict[str, str]]]] = [None]
+
+    def _get_universe_pairs() -> List[Dict[str, str]]:
+        if not universe_enabled:
+            return []
+        now = time.time()
+        if universe_last_refresh[0] is None or (now - universe_last_refresh[0]) >= universe_refresh_sec:
+            cfg = load_universe_config(args.config)
+            chain = getattr(args, "universe_chain", "solana") or cfg.get("chain_id", "solana")
+            page_size = getattr(args, "universe_page_size", None) or cfg.get("page_size", 50)
+            min_liq = getattr(args, "universe_min_liquidity", None) or cfg.get("min_liquidity_usd", 250_000)
+            min_vol = getattr(args, "universe_min_vol_h24", None) or cfg.get("min_vol_h24", 500_000)
+            pairs = fetch_dex_universe_top_pairs(chain_id=chain, page_size=page_size, min_liquidity_usd=min_liq, min_vol_h24=min_vol)
+            universe_last_refresh[0] = now
+            universe_cache[0] = pairs
+            if pairs:
+                _log(f"Universe refreshed: {len(pairs)} pairs (chain={chain})")
+            return pairs
+        return universe_cache[0] or []
+
     # Build dex_pairs list
     dex_pairs: List[Dict[str, str]] = []
-    if args.pairs_from_config:
+    if universe_enabled:
+        dex_pairs = _get_universe_pairs()
+    if not dex_pairs and args.pairs_from_config:
         dex_pairs = load_dex_pairs_from_config(args.config)
     if not dex_pairs:
         dex_pairs = list(DEFAULT_DEX_PAIRS)
@@ -438,14 +545,21 @@ def main() -> int:
     conn = sqlite3.connect(DB_PATH)
     ensure_db(conn)
 
+    # Mutable ref so universe mode can refresh the list each cycle
+    current_dex_pairs: List[List[Dict[str, str]]] = [dex_pairs]
     _log(f"Writing to SQLite: {DB_PATH}")
-    _log(f"Dex pairs: {len(dex_pairs)}  {[p.get('label', f\"{p['chain_id']}/{p['pair_address'][:8]}\") for p in dex_pairs]}")
+    _log(f"Dex pairs: {len(dex_pairs)}  (universe_mode={universe_enabled})")
     _log(f"Spot assets: {[s[0] for s in SPOT_ASSETS]}")
     _log(f"Price feed: Coinbase (primary) / Kraken (fallback)")
     _log(f"Poll every {interval_sec}s. Pair delay {args.pair_delay}s. Stop with Ctrl+C.\n")
 
     try:
         while True:
+            if universe_enabled:
+                u = _get_universe_pairs()
+                if u:
+                    current_dex_pairs[0] = u
+            dex_pairs_this_cycle = current_dex_pairs[0]
             ts = utc_now_iso()
             try:
                 # A) Spot polling (unchanged)
@@ -458,7 +572,7 @@ def main() -> int:
 
                 # B) DEX pairs: one row per pair per cycle
                 dex_summaries: List[str] = []
-                for i, p in enumerate(dex_pairs):
+                for i, p in enumerate(dex_pairs_this_cycle):
                     ok, pair = poll_one_dex_pair(
                         conn, ts,
                         p["chain_id"], p["pair_address"],
@@ -470,13 +584,13 @@ def main() -> int:
                         vol = safe_get(pair, "volume.h24")
                         lbl = p.get("label", "") or f"{safe_get(pair, 'baseToken.symbol')}/{safe_get(pair, 'quoteToken.symbol')}"
                         dex_summaries.append(f"[{lbl} liq={liq} vol24={vol}]")
-                    if i < len(dex_pairs) - 1 and args.pair_delay > 0:
+                    if i < len(dex_pairs_this_cycle) - 1 and args.pair_delay > 0:
                         time.sleep(args.pair_delay)
 
                 conn.commit()
 
                 spot_str = "  ".join(f"{s}={p:.2f}" for s, p in spot_prices)
-                dex_str = f"  dex_pairs={len(dex_pairs)} " + " ".join(dex_summaries) if dex_summaries else f"  dex_pairs={len(dex_pairs)} (no ok)"
+                dex_str = f"  dex_pairs={len(dex_pairs_this_cycle)} " + " ".join(dex_summaries) if dex_summaries else f"  dex_pairs={len(dex_pairs_this_cycle)} (no ok)"
                 _log(f"{ts}  OK  {spot_str}{dex_str}")
             except Exception as e:
                 _log(f"{ts}  ERR  {e}")

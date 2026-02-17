@@ -47,6 +47,10 @@ from crypto_analyzer.risk_model import estimate_covariance
 from crypto_analyzer.evaluation import conditional_metrics, stability_report, lead_lag_analysis
 from crypto_analyzer.multiple_testing import deflated_sharpe_ratio, reality_check_warning, pbo_proxy_walkforward
 from crypto_analyzer.experiments import log_experiment, load_experiments
+from crypto_analyzer.integrity import assert_monotonic_time_index, assert_no_negative_or_zero_prices, validate_alignment, count_non_positive_prices
+from crypto_analyzer.artifacts import ensure_dir, snapshot_outputs, write_json, timestamped_filename
+from crypto_analyzer.governance import make_run_manifest, save_manifest
+from crypto_analyzer.diagnostics import build_health_summary, rolling_ic_stability
 
 MIN_ASSETS = 3
 DEFAULT_TOP_K = 3
@@ -68,6 +72,10 @@ def main() -> int:
     ap.add_argument("--cov-method", choices=["ewma", "lw", "shrink"], default="ewma")
     ap.add_argument("--n-trials", type=int, default=50, help="For deflated Sharpe")
     ap.add_argument("--out-dir", default="reports")
+    ap.add_argument("--run-name", default=None, help="Run name for manifest (default: research_report_v2)")
+    ap.add_argument("--notes", default="")
+    ap.add_argument("--save-manifest", action="store_true", default=True)
+    ap.add_argument("--no-save-manifest", dest="save_manifest", action="store_false")
     ap.add_argument("--save-charts", action="store_true")
     ap.add_argument("--top-k", type=int, default=DEFAULT_TOP_K)
     ap.add_argument("--bottom-k", type=int, default=DEFAULT_BOTTOM_K)
@@ -78,7 +86,24 @@ def main() -> int:
 
     db = args.db or (db_path() if callable(db_path) else db_path())
     out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    ensure_dir(out_dir)
+    for sub in ("csv", "charts", "manifests", "health"):
+        ensure_dir(out_dir / sub)
+
+    # Integrity diagnostic: non-positive price counts per table/column (informative; loaders filter at read time)
+    try:
+        from crypto_analyzer.config import price_column
+        price_col = price_column() if callable(price_column) else "dex_price_usd"
+    except Exception:
+        price_col = "dex_price_usd"
+    bars_table = f"bars_{args.freq.replace(' ', '')}"
+    checks = [
+        ("spot_price_snapshots", "spot_price_usd"),
+        ("sol_monitor_snapshots", price_col),
+        (bars_table, "close"),
+    ]
+    for table, col, count in count_non_positive_prices(db, checks):
+        print(f"Integrity: {table}.{col}: {count} non-positive (dropped at load time)")
 
     returns_df, meta_df = get_research_assets(db, args.freq, include_spot=True)
     n_assets = returns_df.shape[1] if not returns_df.empty else 0
@@ -94,11 +119,21 @@ def main() -> int:
     ]
     if n_assets < 1:
         lines.append("No assets. Add DEX pairs or ensure DB path is correct.")
-        report_path = out_dir / f"research_report_v2_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.md"
+        report_path = out_dir / timestamped_filename("research_v2", "md", sep="_")
         with open(report_path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
         print(f"Report: {report_path}")
         return 0
+
+    # Integrity checks (warnings only)
+    df_for_ts = returns_df.reset_index()
+    ts_col = "ts_utc" if "ts_utc" in df_for_ts.columns else df_for_ts.columns[0]
+    warn_mono = assert_monotonic_time_index(df_for_ts, col=ts_col)
+    if warn_mono:
+        print("Integrity warning:", warn_mono)
+    warn_prices = assert_no_negative_or_zero_prices(returns_df)
+    if warn_prices:
+        print("Integrity warning:", warn_prices)
 
     lines.append(f"Assets: {n_assets}  Bars: {len(returns_df)}")
     lines.append("")
@@ -237,10 +272,40 @@ def main() -> int:
         lines.append("*Insufficient data for lead/lag.*")
     lines.append("")
 
-    report_path = out_dir / f"research_report_v2_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.md"
+    report_path = out_dir / timestamped_filename("research_v2", "md", sep="_")
     with open(report_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
     print(f"Report: {report_path}")
+
+    output_paths = [str(report_path)]
+
+    # Research Health Summary + health_summary.json
+    health_dir = out_dir / "health"
+    try:
+        data_coverage = {"n_assets": n_assets, "n_bars": len(returns_df)}
+        signal_stability = {}
+        if len(signals_dict) >= 1 and not returns_df.empty:
+            sig_first = next(iter(signals_dict.values()))
+            if sig_first is not None and not sig_first.empty:
+                from crypto_analyzer.alpha_research import information_coefficient
+                fwd1 = compute_forward_returns(returns_df, 1)
+                ic_ts = information_coefficient(sig_first, fwd1, method="spearman")
+                signal_stability = rolling_ic_stability(ic_ts, window=min(24, max(2, len(ic_ts) // 2)))
+        overfitting_risk = {}
+        if portfolio_pnls:
+            for name, pnl in portfolio_pnls.items():
+                if len(pnl) >= 10 and pnl.std() and pnl.std() > 0:
+                    overfitting_risk[f"sharpe_{name}"] = float(pnl.mean() / pnl.std())
+        health = build_health_summary(
+            data_coverage=data_coverage,
+            signal_stability=signal_stability if signal_stability else None,
+            overfitting_risk_proxies=overfitting_risk if overfitting_risk else None,
+        )
+        health_path = health_dir / "health_summary.json"
+        write_json(health, health_path)
+        output_paths.append(str(health_path))
+    except Exception as e:
+        print("Health summary skip:", e)
 
     # Experiment log
     try:
@@ -253,6 +318,29 @@ def main() -> int:
         )
     except Exception as e:
         print("Experiment log skip:", e)
+
+    if getattr(args, "save_manifest", True):
+        try:
+            data_window = {
+                "start_ts": str(returns_df.index.min()) if not returns_df.empty else "",
+                "end_ts": str(returns_df.index.max()) if not returns_df.empty else "",
+                "freq": args.freq,
+                "n_assets": n_assets,
+                "bars_per_asset_summary": int(returns_df.shape[0]) if not returns_df.empty else 0,
+            }
+            metrics_summary = {k: float(v.mean() / v.std()) if v.std() and v.std() > 0 else np.nan for k, v in portfolio_pnls.items()}
+            outputs_with_hashes = snapshot_outputs(output_paths)
+            manifest = make_run_manifest(
+                name=getattr(args, "run_name", None) or "research_report_v2",
+                args={"freq": args.freq, "signals": args.signals, "portfolio": args.portfolio, "cov_method": args.cov_method},
+                data_window=data_window,
+                outputs=outputs_with_hashes,
+                metrics=metrics_summary,
+                notes=getattr(args, "notes", "") or "",
+            )
+            save_manifest(str(out_dir), manifest)
+        except Exception as e:
+            print("Manifest skip:", e)
 
     return 0
 

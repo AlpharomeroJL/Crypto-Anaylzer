@@ -41,3 +41,12 @@ factor_symbol: "BTC"
 #   - chain_id: solana
 #     pair_address: "<WBTC_USDC_POOL_ADDRESS>"
 #     label: WBTC/USDC
+
+# Universe mode (dex_poll_to_sqlite.py --universe top): fetch top pairs from Dexscreener by chain
+universe:
+  enabled: false
+  chain_id: solana
+  page_size: 50
+  refresh_minutes: 60
+  min_liquidity_usd: 250000
+  min_vol_h24: 500000

@@ -39,6 +39,9 @@ from crypto_analyzer.portfolio import (
 )
 from crypto_analyzer.statistics import significance_summary, reality_check_simple
 from crypto_analyzer.data import get_factor_returns
+from crypto_analyzer.integrity import assert_monotonic_time_index, assert_no_negative_or_zero_prices, validate_alignment, count_non_positive_prices
+from crypto_analyzer.artifacts import ensure_dir, snapshot_outputs, timestamped_filename
+from crypto_analyzer.governance import make_run_manifest, save_manifest
 
 MIN_ASSETS = 3
 DEFAULT_TOP_K = 3
@@ -62,17 +65,33 @@ def main() -> int:
     ap.add_argument("--fee-bps", type=float, default=30)
     ap.add_argument("--slippage-bps", type=float, default=10)
     ap.add_argument("--out-dir", default="reports")
+    ap.add_argument("--run-name", default=None, help="Run name for manifest (default: research_report)")
+    ap.add_argument("--notes", default="")
+    ap.add_argument("--save-manifest", action="store_true", default=True, help="Write run manifest (default: True)")
+    ap.add_argument("--no-save-manifest", dest="save_manifest", action="store_false")
     ap.add_argument("--db", default=None)
     ap.add_argument("--save-charts", action="store_true")
     args = ap.parse_args()
 
     db = args.db or (db_path() if callable(db_path) else db_path())
     out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    ensure_dir(out_dir)
+    for sub in ("csv", "charts", "manifests"):
+        ensure_dir(out_dir / sub)
 
     horizons = [int(x.strip()) for x in args.horizons.split(",") if x.strip()]
     if not horizons:
         horizons = DEFAULT_HORIZONS
+
+    # Integrity diagnostic: non-positive price counts per table/column
+    try:
+        from crypto_analyzer.config import price_column
+        price_col = price_column() if callable(price_column) else "dex_price_usd"
+    except Exception:
+        price_col = "dex_price_usd"
+    bars_table = f"bars_{args.freq.replace(' ', '')}"
+    for table, col, count in count_non_positive_prices(db, [("spot_price_snapshots", "spot_price_usd"), ("sol_monitor_snapshots", price_col), (bars_table, "close")]):
+        print(f"Integrity: {table}.{col}: {count} non-positive (dropped at load time)")
 
     returns_df, meta_df = get_research_assets(db, args.freq, include_spot=True)
     n_assets = returns_df.shape[1] if not returns_df.empty else 0
@@ -89,11 +108,21 @@ def main() -> int:
     if n_assets < MIN_ASSETS:
         lines.append(f"**Need >= {MIN_ASSETS} assets for cross-sectional research.** Current: {n_assets}. Add more DEX pairs or ensure spot series exist.")
         lines.append("")
-        report_path = out_dir / f"research_report_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.md"
+        report_path = out_dir / timestamped_filename("research_report", "md", sep="_")
         with open(report_path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
         print(f"Report: {report_path}")
         return 0
+
+    # Integrity checks (warnings only)
+    warn_mono = assert_monotonic_time_index(returns_df.reset_index(), col="ts_utc")
+    if warn_mono:
+        print("Integrity warning:", warn_mono)
+    warn_prices = assert_no_negative_or_zero_prices(returns_df)
+    if warn_prices:
+        print("Integrity warning:", warn_prices)
+    for _ in validate_alignment(returns_df, pd.DataFrame(), horizons):
+        print("Integrity warning: alignment")
 
     lines.append(f"Assets: {n_assets}")
     lines.append(f"Bars: {len(returns_df)}")
@@ -216,20 +245,26 @@ def main() -> int:
         lines.append(f"**Note:** {warn}")
         lines.append("")
 
-    report_path = out_dir / f"research_report_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.md"
+    report_path = out_dir / timestamped_filename("research_report", "md", sep="_")
     with open(report_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
     print(f"Report: {report_path}")
 
-    # CSV artifacts
+    output_paths = [str(report_path)]
+    csv_dir = out_dir / "csv"
     if ic_results:
-        pd.DataFrame(ic_results).T.to_csv(out_dir / "research_ic_summary.csv")
+        p = csv_dir / "research_ic_summary.csv"
+        pd.DataFrame(ic_results).T.to_csv(p, index=True)
+        output_paths.append(str(p))
     for name, sig_df in signals_to_report:
         if sig_df is not None and not sig_df.empty:
             decay_df = ic_decay(sig_df, returns_df, horizons, method="spearman")
             if not decay_df.empty:
-                decay_df.to_csv(out_dir / f"research_ic_decay_{name}.csv", index=False)
+                p = csv_dir / f"research_ic_decay_{name}.csv"
+                decay_df.to_csv(p, index=False)
+                output_paths.append(str(p))
 
+    charts_dir = out_dir / "charts"
     if args.save_charts and n_assets >= MIN_ASSETS and not sig_mom.empty:
         try:
             import matplotlib
@@ -243,7 +278,9 @@ def main() -> int:
                 ax.set_title("IC (momentum_24h vs fwd 1-bar)")
                 ax.set_ylabel("IC")
                 plt.tight_layout()
-                plt.savefig(out_dir / "research_ic_series.png", dpi=150)
+                p = charts_dir / "research_ic_series.png"
+                plt.savefig(p, dpi=150)
+                output_paths.append(str(p))
                 plt.close()
             decay_chart = ic_decay(sig_mom, returns_df, horizons, method="spearman")
             if not decay_chart.empty:
@@ -253,11 +290,36 @@ def main() -> int:
                 ax.set_ylabel("Mean IC")
                 ax.set_title("IC decay (momentum_24h)")
                 plt.tight_layout()
-                plt.savefig(out_dir / "research_ic_decay.png", dpi=150)
+                p = charts_dir / "research_ic_decay.png"
+                plt.savefig(p, dpi=150)
+                output_paths.append(str(p))
                 plt.close()
-            print("Charts saved to", out_dir)
+            print("Charts saved to", charts_dir)
         except Exception as e:
             print("Charts skip:", e)
+
+    if getattr(args, "save_manifest", True):
+        try:
+            data_window = {
+                "start_ts": str(returns_df.index.min()) if not returns_df.empty else "",
+                "end_ts": str(returns_df.index.max()) if not returns_df.empty else "",
+                "freq": args.freq,
+                "n_assets": n_assets,
+                "bars_per_asset_summary": int(returns_df.shape[0]) if not returns_df.empty else 0,
+            }
+            metrics_summary = {k: (v.get("mean_ic", np.nan) if isinstance(v, dict) else v) for k, v in (ic_results or {}).items()}
+            outputs_with_hashes = snapshot_outputs(output_paths)
+            manifest = make_run_manifest(
+                name=getattr(args, "run_name", None) or "research_report",
+                args={"freq": args.freq, "top_k": args.top_k, "bottom_k": args.bottom_k, "fee_bps": args.fee_bps, "slippage_bps": args.slippage_bps},
+                data_window=data_window,
+                outputs=outputs_with_hashes,
+                metrics=metrics_summary,
+                notes=getattr(args, "notes", "") or "",
+            )
+            save_manifest(str(out_dir), manifest)
+        except Exception as e:
+            print("Manifest skip:", e)
 
     return 0
 
