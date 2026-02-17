@@ -166,4 +166,4 @@ Legacy/optional scripts in root (see docs): `dashboard.py`, `check_db.py`, `clea
 
 ## 16. License
 
-See repository license file.
+MIT License. See LICENSE.
