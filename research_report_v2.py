@@ -47,7 +47,7 @@ from crypto_analyzer.risk_model import estimate_covariance
 from crypto_analyzer.evaluation import conditional_metrics, stability_report, lead_lag_analysis
 from crypto_analyzer.multiple_testing import deflated_sharpe_ratio, reality_check_warning, pbo_proxy_walkforward
 from crypto_analyzer.experiments import log_experiment, load_experiments
-from crypto_analyzer.integrity import assert_monotonic_time_index, assert_no_negative_or_zero_prices, validate_alignment, count_non_positive_prices
+from crypto_analyzer.integrity import assert_monotonic_time_index, assert_no_negative_or_zero_prices, validate_alignment, count_non_positive_prices, bad_row_rate
 from crypto_analyzer.artifacts import ensure_dir, snapshot_outputs, write_json, timestamped_filename
 from crypto_analyzer.governance import make_run_manifest, save_manifest
 from crypto_analyzer.diagnostics import build_health_summary, rolling_ic_stability
@@ -65,6 +65,9 @@ def _table(df: pd.DataFrame) -> str:
 
 
 def main() -> int:
+    import sys
+    if sys.prefix == sys.base_prefix:
+        print("Not running inside venv. Use .\\scripts\\run.ps1 reportv2 or .\\.venv\\Scripts\\python.exe ...", flush=True)
     ap = argparse.ArgumentParser(description="M4 research report: signals hygiene, advanced portfolio, deflated Sharpe, PBO, regime")
     ap.add_argument("--freq", default="1h")
     ap.add_argument("--signals", default="clean_momentum,value_vs_beta", help="Comma-separated signal names")
@@ -82,6 +85,8 @@ def main() -> int:
     ap.add_argument("--fee-bps", type=float, default=30)
     ap.add_argument("--slippage-bps", type=float, default=10)
     ap.add_argument("--db", default=None)
+    ap.add_argument("--strict-integrity", dest="strict_integrity", action="store_true", help="Exit 4 if bad row rate exceeds threshold")
+    ap.add_argument("--strict-integrity-pct", dest="strict_integrity_pct", type=float, default=5.0, help="Max allowed bad row %% (default 5); used with --strict-integrity")
     args = ap.parse_args()
 
     db = args.db or (db_path() if callable(db_path) else db_path())
@@ -104,6 +109,13 @@ def main() -> int:
     ]
     for table, col, count in count_non_positive_prices(db, checks):
         print(f"Integrity: {table}.{col}: {count} non-positive (dropped at load time)")
+    if getattr(args, "strict_integrity", False):
+        pct_limit = float(getattr(args, "strict_integrity_pct", 5.0))
+        for table, col, bad, total, pct in bad_row_rate(db, checks):
+            if total and pct > pct_limit:
+                print(f"Integrity FAIL: {table}.{col} bad rate {pct:.2f}% (>{pct_limit}%)")
+                return 4
+        print("Integrity: strict check passed (bad row rate within limit)")
 
     returns_df, meta_df = get_research_assets(db, args.freq, include_spot=True)
     n_assets = returns_df.shape[1] if not returns_df.empty else 0
@@ -114,6 +126,17 @@ def main() -> int:
         "# Research Report v2 (Milestone 4)",
         f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
         f"Freq: {args.freq}  Signals: {args.signals}  Portfolio: {args.portfolio}  Cov: {args.cov_method}",
+        "",
+        "## Assumptions",
+        "| Parameter | Value |",
+        "|-----------|-------|",
+        f"| freq | {args.freq} |",
+        f"| fee_bps | {getattr(args, 'fee_bps', 30)} |",
+        f"| slippage_bps | {getattr(args, 'slippage_bps', 10)} |",
+        f"| cost model | fee + slippage (bps) |",
+        f"| cov_method | {args.cov_method} |",
+        f"| portfolio | {args.portfolio} |",
+        f"| deflated_sharpe n_trials | {getattr(args, 'n_trials', 50)} |",
         "",
         "## 1) Universe",
     ]

@@ -50,3 +50,14 @@ universe:
   refresh_minutes: 60
   min_liquidity_usd: 250000
   min_vol_h24: 500000
+  queries: ["USDC", "USDT", "SOL", "SOL/USDC", "orca"]
+  quote_allowlist: ["USDC", "USDT"]
+  reject_same_symbol: true
+  reject_stable_stable: true
+  max_churn_pct: 0.20
+  min_persistence_refreshes: 2   # require pair to fail selection K refreshes before removal (0 = disable)
+  # bootstrap_pairs: optional list when API returns 0; each: chain_id, pair_address, label
+  # bootstrap_pairs:
+  #   - chain_id: solana
+  #     pair_address: "Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE"
+  #     label: SOL/USDC

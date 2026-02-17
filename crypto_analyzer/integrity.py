@@ -36,6 +36,34 @@ def count_non_positive_prices(
     return result
 
 
+def bad_row_rate(
+    db_path: str,
+    checks: List[Tuple[str, str]],
+) -> List[Tuple[str, str, int, int, float]]:
+    """
+    For each (table, column) return (table, column, bad_count, total_rows, bad_pct).
+    Identifies which table/column is generating non-positive prices and the bad row rate.
+    """
+    result: List[Tuple[str, str, int, int, float]] = []
+    try:
+        with sqlite3.connect(db_path) as con:
+            for table, column in checks:
+                try:
+                    cur = con.execute(
+                        f"SELECT COUNT(*) FROM [{table}] WHERE [{column}] IS NULL OR [{column}] <= 0"
+                    )
+                    bad = cur.fetchone()[0]
+                    cur = con.execute(f"SELECT COUNT(*) FROM [{table}]")
+                    total = cur.fetchone()[0]
+                    pct = (100.0 * bad / total) if total else 0.0
+                    result.append((table, column, bad, total, pct))
+                except sqlite3.OperationalError:
+                    pass
+    except Exception:
+        pass
+    return result
+
+
 def assert_monotonic_time_index(df: pd.DataFrame, col: str = "ts_utc") -> Optional[str]:
     """
     Check that col is monotonically increasing. Return warning string if not, else None.

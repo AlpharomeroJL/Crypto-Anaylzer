@@ -39,7 +39,7 @@ from crypto_analyzer.portfolio import (
 )
 from crypto_analyzer.statistics import significance_summary, reality_check_simple
 from crypto_analyzer.data import get_factor_returns
-from crypto_analyzer.integrity import assert_monotonic_time_index, assert_no_negative_or_zero_prices, validate_alignment, count_non_positive_prices
+from crypto_analyzer.integrity import assert_monotonic_time_index, assert_no_negative_or_zero_prices, validate_alignment, count_non_positive_prices, bad_row_rate
 from crypto_analyzer.artifacts import ensure_dir, snapshot_outputs, timestamped_filename
 from crypto_analyzer.governance import make_run_manifest, save_manifest
 
@@ -57,6 +57,9 @@ def _table(df: pd.DataFrame) -> str:
 
 
 def main() -> int:
+    import sys
+    if sys.prefix == sys.base_prefix:
+        print("Not running inside venv. Use .\\scripts\\run.ps1 report or .\\.venv\\Scripts\\python.exe ...", flush=True)
     ap = argparse.ArgumentParser(description="Research report: IC, decay, portfolio, regime")
     ap.add_argument("--freq", default="1h")
     ap.add_argument("--top-k", type=int, default=DEFAULT_TOP_K)
@@ -71,6 +74,8 @@ def main() -> int:
     ap.add_argument("--no-save-manifest", dest="save_manifest", action="store_false")
     ap.add_argument("--db", default=None)
     ap.add_argument("--save-charts", action="store_true")
+    ap.add_argument("--strict-integrity", dest="strict_integrity", action="store_true", help="Exit 4 if bad row rate exceeds threshold")
+    ap.add_argument("--strict-integrity-pct", dest="strict_integrity_pct", type=float, default=5.0, help="Max allowed bad row %% (default 5); used with --strict-integrity")
     args = ap.parse_args()
 
     db = args.db or (db_path() if callable(db_path) else db_path())
@@ -90,8 +95,16 @@ def main() -> int:
     except Exception:
         price_col = "dex_price_usd"
     bars_table = f"bars_{args.freq.replace(' ', '')}"
-    for table, col, count in count_non_positive_prices(db, [("spot_price_snapshots", "spot_price_usd"), ("sol_monitor_snapshots", price_col), (bars_table, "close")]):
+    checks = [("spot_price_snapshots", "spot_price_usd"), ("sol_monitor_snapshots", price_col), (bars_table, "close")]
+    for table, col, count in count_non_positive_prices(db, checks):
         print(f"Integrity: {table}.{col}: {count} non-positive (dropped at load time)")
+    if getattr(args, "strict_integrity", False):
+        pct_limit = float(getattr(args, "strict_integrity_pct", 5.0))
+        for table, col, bad, total, pct in bad_row_rate(db, checks):
+            if total and pct > pct_limit:
+                print(f"Integrity FAIL: {table}.{col} bad rate {pct:.2f}% (>{pct_limit}%)")
+                return 4
+        print("Integrity: strict check passed (bad row rate within limit)")
 
     returns_df, meta_df = get_research_assets(db, args.freq, include_spot=True)
     n_assets = returns_df.shape[1] if not returns_df.empty else 0

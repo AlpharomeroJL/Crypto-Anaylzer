@@ -15,6 +15,7 @@ from crypto_analyzer.integrity import (
     assert_no_forward_looking,
     validate_alignment,
     count_non_positive_prices,
+    bad_row_rate,
 )
 
 
@@ -69,6 +70,11 @@ def test_count_non_positive_prices():
         out = count_non_positive_prices(path, [("t", "price")])
         assert len(out) == 1
         assert out[0][0] == "t" and out[0][1] == "price" and out[0][2] == 2
+        rate_out = bad_row_rate(path, [("t", "price")])
+        assert len(rate_out) == 1
+        assert rate_out[0][0] == "t" and rate_out[0][1] == "price"
+        assert rate_out[0][2] == 2 and rate_out[0][3] == 4
+        assert 49 <= rate_out[0][4] <= 51
     finally:
         try:
             Path(path).unlink(missing_ok=True)

@@ -99,6 +99,22 @@ def make_run_manifest(
     return manifest
 
 
+def append_run_registry(out_dir: str | Path, run_id: str, manifest_path: str) -> None:
+    """Append one JSON line to out_dir/run_registry.jsonl (run_id, manifest path, timestamp)."""
+    out_dir = Path(out_dir)
+    registry_path = out_dir / "run_registry.jsonl"
+    line = json.dumps({
+        "run_id": run_id,
+        "manifest_path": manifest_path,
+        "timestamp": now_utc_iso(),
+    }) + "\n"
+    try:
+        with open(registry_path, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        pass
+
+
 def save_manifest(out_dir: str | Path, manifest: dict) -> str:
     """Write manifest JSON to out_dir/manifests/<run_id>.json. Return path."""
     out_dir = Path(out_dir)
@@ -107,7 +123,9 @@ def save_manifest(out_dir: str | Path, manifest: dict) -> str:
     run_id = manifest.get("run_id", "unknown")
     path = manifests_dir / f"{run_id}.json"
     write_json(manifest, path)
-    return str(path)
+    manifest_path_str = str(path)
+    append_run_registry(out_dir, run_id, manifest_path_str)
+    return manifest_path_str
 
 
 def load_manifests(out_dir: str | Path) -> pd.DataFrame:
@@ -122,11 +140,15 @@ def load_manifests(out_dir: str | Path) -> pd.DataFrame:
         try:
             with open(path, encoding="utf-8") as f:
                 m = json.load(f)
+            spec = m.get("spec") or {}
+            outputs = m.get("outputs") or {}
             rows.append({
                 "run_id": m.get("run_id"),
                 "created_utc": m.get("created_utc"),
                 "name": m.get("name"),
                 "git_commit": m.get("git_commit"),
+                "spec_version": spec.get("research_spec_version", ""),
+                "outputs": ", ".join(outputs.keys()) if isinstance(outputs, dict) else str(outputs),
                 "path": str(path),
             })
         except Exception:

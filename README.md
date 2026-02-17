@@ -104,7 +104,11 @@ See **docs/INSTITUTIONAL.md** for institutional research principles.
 | `research_report.py` | Cross-sectional report: universe, IC summary, IC decay, portfolio backtest (L/S and residual momentum), regime-conditioned metrics. Requires ≥3 assets. |
 | `research_report_v2.py` | Extended report: orthogonalized signals, advanced portfolio (constraints, beta neutrality), deflated Sharpe, PBO proxy, regime conditioning, optional lead/lag. |
 
-Output directory: `reports/` (configurable via `--out-dir`). Under `reports/`: `csv/`, `charts/`, `manifests/`, `health/`. Research reports write run manifests (git commit, env fingerprint, data window, outputs with SHA256) to `reports/manifests/` when `--save-manifest` (default). V2 also writes a research health summary to `reports/health/health_summary.json`.
+Output directory: `reports/` (configurable via `--out-dir`). Under `reports/`: `csv/`, `charts/`, `manifests/`, `health/`. Research reports write run manifests (git commit, env fingerprint, data window, outputs with SHA256) to `reports/manifests/` when `--save-manifest` (default). V2 also writes a research health summary to `reports/health/health_summary.json`. **Strict integrity:** Use `--strict-integrity` (and optional `--strict-integrity-pct 5`) with `research_report.py` or `research_report_v2.py` to exit with code 4 if any checked table/column has bad row rate above the threshold (default 5%); useful for institutional pipelines. Default behavior stays warn-only so normal runs are never broken. Example (fail fast when you want it):
+
+```powershell
+.\scripts\run.ps1 reportv2 --strict-integrity --strict-integrity-pct 1
+```
 
 ---
 
@@ -114,7 +118,7 @@ Output directory: `reports/` (configurable via `--out-dir`). Under `reports/`: `
 streamlit run app.py
 ```
 
-Open http://localhost:8501. Pages: Overview (universe size, top pairs by liquidity), Pair detail, Scanner, Backtest, Walk-Forward, Market Structure, Signals, **Research** (Universe, IC Summary, IC Decay, Portfolio, Regime Conditioning), **Institutional Research** (Signal Hygiene, Advanced Portfolio, Overfitting Defenses, Conditional Performance, Experiments), **Governance** (latest manifests, health summary, download manifest JSON). With fewer than 3 assets, Research shows a message; Institutional Research degrades gracefully.
+Open http://localhost:8501. Pages: Overview (universe size, top pairs by liquidity, latest universe allowlist), Pair detail, Scanner, Backtest, Walk-Forward, Market Structure, Signals, **Research**, **Institutional Research**, **Runtime / Health** (universe last refresh, recommended commands, latest manifest/health), **Governance** (manifests, health summary, download JSON). With fewer than 3 assets, Research shows a message; Institutional Research degrades gracefully.
 
 ---
 
@@ -170,6 +174,20 @@ pip install -r requirements.txt
 
 Optional: `pip install st-keyup` (dashboard shortcuts); `pip install PyYAML` (config.yaml; otherwise defaults).
 
+**If you see `ModuleNotFoundError` (e.g. for `requests`):** You're likely running outside the venv. Either activate it (`.\.venv\Scripts\Activate`) or run commands with the venv Python explicitly: `.\.venv\Scripts\python.exe -m ...` or use `.\scripts\run.ps1 <command>`.
+
+---
+
+## System Doctor
+
+One-command preflight to verify environment, dependencies, DB, integrity, and a minimal pipeline smoke:
+
+```powershell
+.\.venv\Scripts\python.exe -m crypto_analyzer.doctor
+```
+
+Exit codes: 0 = OK, 2 = env/deps, 3 = DB/schema, 4 = pipeline smoke. If not in venv, the doctor prints the exact command to run (e.g. activate then `python -m crypto_analyzer.doctor`).
+
 ---
 
 ## Configuration
@@ -183,10 +201,19 @@ Default DB: `dex_data.sqlite`, table: `sol_monitor_snapshots`, price: `dex_price
 
 ## Run the Stack
 
+Prefer running with the venv Python so dependencies are guaranteed. **If you see `ModuleNotFoundError` (e.g. `requests`), you're running outside the venv** — use `.\.venv\Scripts\python.exe` or the helper script below. From repo root:
+
+```powershell
+.\.venv\Scripts\python.exe dex_poll_to_sqlite.py --interval 60
+.\.venv\Scripts\python.exe -m streamlit run app.py
+```
+
+**Helper script** (uses venv automatically): `.\scripts\run.ps1 <command> [args]`. Commands: `poll`, `universe-poll`, `materialize`, `report`, `reportv2`, `streamlit`, `doctor`, `test`. Example: `.\scripts\run.ps1 reportv2 --freq 1h --out-dir reports`.
+
 **1. Poller (populate data)**
 
 ```powershell
-python dex_poll_to_sqlite.py --interval 60
+.\.venv\Scripts\python.exe dex_poll_to_sqlite.py --interval 60
 ```
 
 Creates DB and tables. Pairs from `config.yaml` `pairs` or `--pair CHAIN_ID:PAIR_ADDRESS` (repeatable).
@@ -194,48 +221,132 @@ Creates DB and tables. Pairs from `config.yaml` `pairs` or `--pair CHAIN_ID:PAIR
 **Universe mode (multi-asset):** To poll top DEX pairs by chain from Dexscreener’s public API (no API keys), use either `--universe` or `--universe top`:
 
 ```powershell
-python dex_poll_to_sqlite.py --universe top --universe-chain solana --universe-refresh-minutes 60 --interval 60
+.\.venv\Scripts\python.exe dex_poll_to_sqlite.py --universe top --universe-chain solana --universe-refresh-minutes 60 --interval 60
 # or
-python dex_poll_to_sqlite.py --universe --universe-chain solana --interval 60
+.\.venv\Scripts\python.exe dex_poll_to_sqlite.py --universe --universe-chain solana --interval 60
 ```
 
-Configure in `config.yaml` under `universe`: `enabled`, `chain_id`, `page_size`, `refresh_minutes`, `min_liquidity_usd`, `min_vol_h24`. If the universe fetch fails, the poller falls back to configured pairs.
+**Tradeable universe (institutional defaults):** Discovery uses multiple search queries (default per chain: Solana USDC/USDT/SOL) so you get SOL/USDC pairs, not only SOL/SOL. Quality gates reject garbage pairs, require liquidity and volume, and restrict to quote allowlist (default USDC/USDT). Stable/stable pairs are rejected by default. Known-good Solana example:
+
+```powershell
+.\scripts\run.ps1 universe-poll --universe --universe-chain solana --universe-query USDC --universe-query USDT --interval 60 --universe-debug 20
+```
+
+With min liquidity/volume:
+
+```powershell
+.\scripts\run.ps1 universe-poll --universe --universe-chain solana --universe-min-liquidity 50000 --universe-min-vol-h24 50000 --universe-debug 20 --interval 60
+```
+
+**Start it explicitly in universe mode** (from repo root). You must pass `--universe` or you will run in single-pair mode:
+
+```powershell
+.\scripts\run.ps1 universe-poll --universe --universe-chain solana --interval 60 --universe-debug 5
+```
+
+Confirm in the log: **`Dex pairs: X (universe_mode=True)`** and **`Universe refreshed: N pairs`**. If you see `universe_mode=False`, you did not pass `--universe`.
+
+- **`--universe-query Q`** (repeatable) overrides config search queries; e.g. `--universe-query USDC --universe-query USDT` for broader discovery.
+- **`universe.queries`** in `config.yaml` (default Solana: `["USDC","USDT","SOL"]`) sets search terms; results are merged and de-duplicated by pair address.
+- Default quote allowlist is **USDC/USDT**; SOL/SOL and stable/stable pools are rejected by default.
+- To override allowlist (not recommended): `--universe-quote-allowlist "USDC,USDT,SOL"`.
+- If the universe is empty after filters, the poller first tries **relaxed** thresholds (0.25× min liquidity/volume), then optional **`universe.bootstrap_pairs`** in config (chain-matched), then configured pairs. Each fallback path is logged.
+
+Configure in `config.yaml` under `universe`: `enabled`, `chain_id`, `page_size`, `refresh_minutes`, `min_liquidity_usd`, `min_vol_h24`, `queries`, `quote_allowlist`, `reject_same_symbol`, `reject_stable_stable`, **`max_churn_pct`** (default `0.20`), **`min_persistence_refreshes`** (default `2`; require pair to fail selection K refreshes before removal; `0` = disable), and optional **`bootstrap_pairs`**. CLI overrides: **`--universe-max-churn-pct`** (float; `1.0` = no churn limit), **`--universe-min-persistence-refreshes`** (int; K).
+
+**Universe stability (churn control):** To avoid thrashing the allowlist on each refresh, the poller limits how many pairs can be replaced per cycle. `universe.max_churn_pct` (default `0.20`) caps replacements at `ceil(previous_size × max_churn_pct)` while keeping all overlapping pairs. Set to `1.0` to allow full churn. Log line: *Universe churn: kept=X replaced=Y max_allowed=Z*.
+
+**Minimum persistence:** Once a pair is on the allowlist, it must fail selection for **K** consecutive refreshes (default `min_persistence_refreshes: 2`) before it can be removed. This avoids one-off API glitches dropping pairs. Set to `0` to disable.
+
+**Churn audit:** Removals and additions are logged to `universe_churn_log` (action is `add` or `remove`, plus reason, liquidity_usd, vol_h24). Allowlist rows can include `reason_added` (overlap, sticky, churn_replace, bootstrap_pairs, etc.). *Transition:* Old rows may still have `added`/`removed`; mixed history is expected. If any query filters by action, use `WHERE action IN ('add','remove','added','removed')` until you migrate. Optional one-off migration: `UPDATE universe_churn_log SET action='add' WHERE action='added';` and same for `'remove'`/`'removed'`.
+
+**Universe verification (once universe selects >0 pairs):** Run the poller for 10–15 minutes, then materialize 1h bars. Confirm multiple pairs have bars: `SELECT COUNT(DISTINCT chain_id || ':' || pair_address) FROM bars_1h;` should be > 1. In the Streamlit app: **Overview** should show "Universe size" > 1, **Top pairs by liquidity**, and **Latest universe allowlist (audit)** (top 20 from `universe_allowlist`); **Scanner** should show more than one row when you run a scan.
+
+**Allowlist audit table:** Each universe refresh writes the active allowlist to `universe_allowlist` (columns: `ts_utc`, `chain_id`, `pair_address`, `label`, `liquidity_usd`, `vol_h24`, `source`, `query_summary`). **Operator verification (copy-paste into SQLite):**
+
+```sql
+-- Latest allowlist size + sources (last 5 refreshes)
+SELECT ts_utc, COUNT(*) AS n, MIN(source) AS sources_hint
+FROM universe_allowlist
+GROUP BY ts_utc
+ORDER BY ts_utc DESC
+LIMIT 5;
+
+-- Churn since last refresh
+SELECT action, reason, COUNT(*) AS n
+FROM universe_churn_log
+WHERE ts_utc = (SELECT MAX(ts_utc) FROM universe_churn_log)
+GROUP BY action, reason
+ORDER BY n DESC;
+```
+
+If those look right (n per ts_utc, sources_hint, and churn action/reason counts), universe mode is auditable and closed.
+
+**Final check (production-stable, research-grade):** (1) Run universe-poll long enough to get at least 3 distinct `ts_utc` values in `universe_allowlist`. (2) Run `python check_universe.py`. **Allowlist:** you want multiple rows like `(ts1, N, universe)`, `(ts2, N, universe)`, `(ts3, N, universe)` with stable N. **Churn:** at the latest churn timestamp, ideally 0–1 add and 0–1 remove (e.g. `('add', 'churn_replace', 0–1)`, `('remove', 'churn_replace', 0–1)`) or no churn. If you see 2–4 adds and 2–4 removes every refresh, that’s thrash → tighten `max_churn_pct`, raise thresholds, or increase `min_persistence_refreshes`. If allowlist and churn look sane after 3+ refreshes, the universe system is production-stable. (Old churn rows may still show `added`/`removed`; mixed history is fine; the verification query groups by action and works without changes.)
+
+**Deep check (optional):** To confirm whether the poller rewrites allowlist rows every refresh vs only when the set changes, run in interactive Python:
+
+```python
+import sqlite3
+conn = sqlite3.connect("dex_data.sqlite")
+print(conn.execute("""
+SELECT ts_utc, action, reason, COUNT(*)
+FROM universe_churn_log
+GROUP BY ts_utc, action, reason
+ORDER BY ts_utc DESC
+LIMIT 20
+""").fetchall())
+conn.close()
+```
+
+If you see `add 4` (or similar) every refresh, churn logging may be recording “add” even when the pair set didn’t change (easy to tighten later). From an operator standpoint, allowlist stability is already correct. Net: you’re in the **production-stable, research-grade** zone for universe polling.
+
+**Operational guardrail:** On each universe refresh, the poller logs the top 5 selected pairs (label + full address) so operators can confirm which pairs are active. It also logs a **persistence** line when `min_persistence_refreshes` >= 1: `[persistence] overlap=X kept_sticky=Y failures_inc=Z removed_K=W max_streak_top3=[...]` so you can confirm K is working without digging into SQL.
+
+**Operator sanity (2–3 commands):** To prove universe mode is stable, auditable, and reproducible (even after restarts): (1) Run `.\scripts\run.ps1 doctor`, then `.\scripts\run.ps1 universe-poll --universe --universe-chain solana --interval 60 --universe-debug 20` and wait for 2 refreshes. (2) Check logs for `Universe churn:` and `[persistence]` lines. (3) Run the two verification SQL queries above (or open **Runtime / Health** in Streamlit and check the audit tables). If allowlist size + sources and churn action/reason counts look right, you’re closed.
 
 **2. Materialize bars**
 
 ```powershell
-python materialize_bars.py
-# Or: python materialize_bars.py --freq 1h
+.\.venv\Scripts\python.exe materialize_bars.py
+# Or: .\.venv\Scripts\python.exe materialize_bars.py --freq 1h
 ```
 
 **3. Analyze**
 
 ```powershell
-python dex_analyze.py --freq 1h --window 24
-python dex_analyze.py --freq 1h --top 10
+.\.venv\Scripts\python.exe dex_analyze.py --freq 1h --window 24
+.\.venv\Scripts\python.exe dex_analyze.py --freq 1h --top 10
 ```
 
 **4. Scanner**
 
 ```powershell
-python dex_scan.py --mode momentum --freq 1h --top 5
-python dex_scan.py --mode volatility_breakout --freq 1h --z 2.0
+.\.venv\Scripts\python.exe dex_scan.py --mode momentum --freq 1h --top 5
+.\.venv\Scripts\python.exe dex_scan.py --mode volatility_breakout --freq 1h --z 2.0
 ```
 
 **5. Backtest**
 
 ```powershell
-python backtest.py --strategy trend --freq 1h
-python backtest_walkforward.py --strategy trend --freq 1h --train-days 30 --test-days 7 --step-days 7
+.\.venv\Scripts\python.exe backtest.py --strategy trend --freq 1h
+.\.venv\Scripts\python.exe backtest_walkforward.py --strategy trend --freq 1h --train-days 30 --test-days 7 --step-days 7
 ```
 
 **6. Reports**
 
 ```powershell
-python report_daily.py
-python research_report.py --freq 1h --save-charts
-python research_report_v2.py --freq 1h --save-charts
+.\.venv\Scripts\python.exe report_daily.py
+.\.venv\Scripts\python.exe research_report.py --freq 1h --save-charts
+.\.venv\Scripts\python.exe research_report_v2.py --freq 1h --out-dir reports
 ```
+
+**Acceptance commands (verify stack):** These should run without error when venv is active and (for report/poller) data exists:
+
+- `.\.venv\Scripts\python.exe -m crypto_analyzer.doctor`
+- `.\.venv\Scripts\python.exe research_report_v2.py --freq 1h --out-dir reports`
+- `.\.venv\Scripts\python.exe dex_poll_to_sqlite.py --universe`
+- `.\.venv\Scripts\python.exe -m streamlit run app.py`
 
 ---
 

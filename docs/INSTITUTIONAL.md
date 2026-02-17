@@ -82,7 +82,8 @@ This document summarizes the research standards and controls implemented in the 
 
 ## Multi-asset (universe) polling
 
-- **Universe mode.** The poller can optionally fetch “top” DEX pairs for a chain via Dexscreener’s public search API (no API keys). Pairs are filtered by min liquidity and min 24h volume; the allowlist is refreshed at a configurable interval. All pairs are stored in the same `sol_monitor_snapshots` table. If the universe fetch fails, the poller falls back to configured pairs.
+- **Universe mode.** The poller can optionally fetch “top” DEX pairs for a chain via Dexscreener’s public search API (no API keys). Pairs are filtered by min liquidity and min 24h volume; the allowlist is refreshed at a configurable interval. All pairs are stored in the same `sol_monitor_snapshots` table. If the universe fetch fails, the poller tries relaxed thresholds, then optional config `universe.bootstrap_pairs`, then configured pairs.
+- **Auditability.** Each universe refresh writes the active allowlist to the `universe_allowlist` table (timestamp, chain, pair, label, liquidity, volume, source, query_summary). This provides an audit trail for research governance: which pairs were in scope at each refresh and whether they came from normal discovery, relaxed filters, bootstrap, or config fallback.
 - **Research modules.** Universe and research reports handle &gt;3 assets gracefully; quality filters and constant-return drops keep the research universe consistent.
 
 ---

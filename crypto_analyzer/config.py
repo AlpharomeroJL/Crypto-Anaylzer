@@ -126,6 +126,45 @@ def factor_symbol() -> str:
     return str(get_config().get("factor_symbol", _DEFAULTS["factor_symbol"]))
 
 
+def universe_quote_allowlist() -> list:
+    """Quote token allowlist for universe mode (default USDC, USDT)."""
+    u = get_config().get("universe") or {}
+    raw = u.get("quote_allowlist")
+    if isinstance(raw, list):
+        return [str(s).strip() for s in raw if s]
+    return ["USDC", "USDT"]
+
+
+def universe_reject_same_symbol() -> bool:
+    """Reject base==quote in universe (default True)."""
+    u = get_config().get("universe") or {}
+    return bool(u.get("reject_same_symbol", True))
+
+
+def universe_reject_stable_stable() -> bool:
+    """Reject stable/stable pairs in universe (default True)."""
+    u = get_config().get("universe") or {}
+    return bool(u.get("reject_stable_stable", True))
+
+
+def universe_queries() -> list:
+    """Search queries for universe discovery (default includes SOL/USDC, orca for Solana)."""
+    u = get_config().get("universe") or {}
+    raw = u.get("queries")
+    if isinstance(raw, list):
+        return [str(s).strip() for s in raw if s]
+    return ["USDC", "USDT", "SOL", "SOL/USDC", "orca"]
+
+
+def universe_max_churn_pct() -> float:
+    """Max fraction of allowlist replaceable per refresh (default 0.20; 1.0 = no churn limit)."""
+    u = get_config().get("universe") or {}
+    try:
+        return float(u.get("max_churn_pct", 0.20))
+    except (TypeError, ValueError):
+        return 0.20
+
+
 STABLE_SYMBOLS = frozenset({"USDC", "USDT", "DAI", "BUSD", "TUSD", "USDP", "FRAX"})
 FACTOR_SYMBOLS = frozenset({"BTC", "WBTC", "CBBTC"})
 
