@@ -1,49 +1,71 @@
-# What makes this stack “institutional” (research-only)
+# Institutional Research Principles
 
-This one-pager summarizes the **institutional-grade robustness and portfolio research infrastructure** added in Milestone 4. The platform remains **research-only**: no execution code, no exchange keys, no order routing.
+This document summarizes the research standards and controls implemented in the platform. Tone is descriptive; no execution or order routing is present.
 
-## 1. Robust signal engineering
+---
 
-- **Cross-sectional hygiene:** Z-score (with clipping) and winsorization at each timestamp to limit outlier impact.
-- **Neutralization:** Signals are regressed on exposures (e.g. beta vs BTC, rolling vol, log liquidity) per timestamp; residuals form the neutralized signal. Fewer than three assets at a timestamp degrades gracefully (raw signal returned).
-- **Orthogonalization:** Multiple signals are orthogonalized sequentially (each regressed on the previous and replaced by residuals), with a report of average cross-correlation before and after.
-- **Exposure panel:** Builds beta_btc_72, rolling_vol_24h, turnover proxy, and optional log liquidity from returns (and optional liquidity data), aligned to signal shape.
-- **Composite signals:** e.g. *value_vs_beta* (residual momentum neutralized to beta + vol + liquidity), *clean_momentum* (momentum orthogonalized to beta and vol).
+## 1. Research-Only Architecture
 
-## 2. Portfolio research at “fund style”
+- **No execution code.** All outputs are estimates, backtests, and reports. No order routing, exchange APIs, or broker integration.
+- **No API keys.** Data ingestion uses configurable pollers and snapshot storage; no live trading or execution credentials.
+- **Separation between research and deployment.** The codebase is a research engine. Any production deployment would sit outside this repo and consume only published methodology or artifacts.
 
-- **Constraints:** Max weight per asset, min liquidity filter, capacity-based position cap (capacity_usd proxy), exclusion by estimated slippage (est_slippage_bps &gt; max_slippage_bps).
-- **Neutralities:** Beta neutrality to BTC_spot, dollar neutrality (sum of weights ≈ 0), gross leverage targeting.
-- **Optimizer:** Heuristic when cvxpy is not installed: rank-based raw weights → beta neutralization → risk scaling (inverse vol / covariance diagonal) → clipping → renormalization. Returns weights plus diagnostics (achieved beta, gross/net exposure, #assets, top long/short).
-- **Risk model:** EWMA covariance, shrinkage to diagonal, optional Ledoit–Wolf (sklearn if available; else diagonal-shrink fallback), and ensure_psd (nearest PSD).
+---
 
-## 3. Regime-aware evaluation
+## 2. Data Integrity
 
-- **Conditional metrics:** Performance (Sharpe, CAGR proxy, max DD, hit rate, avg daily PnL, n) broken down by regime bucket (e.g. dispersion high/mid/low, or beta_state).
-- **Stability report:** Rolling Sharpe, rolling IC mean, drawdown duration, “fragility score” (% negative months + worst rolling window).
-- **Lead/lag analysis:** Correlation of signal vs forward/backward returns at multiple lags (e.g. -24..+24 for 1h); works with small universes.
+- **Resampling methodology.** Snapshots are resampled to OHLCV-style bars (5min, 15min, 1h, 1D) with consistent aggregation; bar construction is idempotent and time-aligned.
+- **Log returns.** Returns are computed as log returns for aggregation (additive over time) and symmetric treatment; cumulative return = exp(cumsum(log_return)) − 1.
+- **Annualization assumptions.** Periods-per-year are defined by frequency (e.g. 1h → 8760); annualized vol and Sharpe use sqrt(periods_per_year). Documented in README and config.
+- **Quality filters.** Minimum liquidity, minimum 24h volume, minimum bar count, and optional exclusion of stable/stable pairs are applied consistently in analytics, scans, and the dashboard.
 
-## 4. Multiple-testing / overfitting defenses
+---
 
-- **Deflated Sharpe ratio:** Adjusts for selection bias / number of trials; uses approximate variance of the Sharpe estimator and optional skew/kurtosis. **Disclaimer:** Assumptions are rough; use for research screening only.
-- **Reality-check style warning:** Message and suggested controls when many signals or portfolios were tested.
-- **PBO proxy:** From walk-forward results, a proxy for “probability of backtest overfitting” (e.g. fraction of splits where train-best underperforms median in test). Interpret with caution.
+## 3. Factor Modeling
 
-## 5. Experiment tracking
+- **BTC beta modeling.** A single primary factor (BTC spot) is used for beta and excess returns; optionally ETH or other factors can be included. Beta is estimated over a configurable window.
+- **Residual returns.** Asset returns are regressed on factor returns; residuals represent idiosyncratic move and drive residual momentum and relative strength.
+- **Orthogonalization.** Multiple cross-sectional signals can be orthogonalized sequentially (each signal regressed on the previous, replaced by residuals) to reduce redundancy and improve interpretability.
+- **Signal neutralization.** Signals are neutralized to exposures (e.g. beta, rolling vol, liquidity) via per-timestamp OLS residuals before use in portfolio or ranking.
 
-- **Local, lightweight:** `log_experiment(run_name, config, metrics, artifacts_paths, out_dir)` writes a timestamped JSON (with git hash when available) and appends a row to `experiments.csv`.
-- **Load:** `load_experiments(out_dir)` returns a DataFrame of past runs for comparison and reproducibility.
+---
 
-## What we do *not* do
+## 4. Validation Discipline
 
-- No execution or order routing.
-- No exchange API keys or broker integration.
-- No live trading; all outputs are research estimates and backtests.
+- **Walk-forward validation.** Backtests support train/test splits and rolling or expanding walk-forward folds; no overlap between train and test.
+- **Information coefficient (Spearman).** Cross-sectional signal quality is measured by Spearman rank IC vs forward returns; robust to outliers.
+- **IC decay.** IC is computed at multiple forward horizons to assess signal decay and horizon stability.
+- **Bootstrap confidence intervals.** Block bootstrap (e.g. block size ~ sqrt(n)) is used for Sharpe and related statistic confidence intervals where applicable.
+- **Deflated Sharpe.** An adjustment for selection bias / multiple testing is available; assumptions are documented and the metric is for research screening only.
+- **PBO proxy.** A heuristic proxy for “probability of backtest overfitting” from walk-forward folds (e.g. fraction of splits where train-best underperforms median in test); interpret with caution.
 
-## Verification
+---
 
-- **CLI:** `python research_report_v2.py --freq 1h --save-charts`
-- **Dashboard:** Streamlit → **Institutional Research** (tabs: Signal Hygiene, Advanced Portfolio, Overfitting Defenses, Conditional Performance, Experiments)
-- **Tests:** `python -m pytest tests/ -v --tb=short` (includes `tests/test_milestone4.py`)
+## 5. Portfolio Construction
 
-Fallbacks used when optional deps are missing: **Ledoit–Wolf** uses diagonal shrinkage if sklearn is not installed; **portfolio optimizer** uses the heuristic (no cvxpy).
+- **Vol targeting.** Default target annual vol (e.g. 15%) is applied to scale portfolio weights.
+- **Risk parity.** Inverse-vol or diagonal risk weighting is available for long/short construction.
+- **Beta neutrality.** Portfolios can be constrained to zero (or target) exposure to the primary factor (e.g. BTC).
+- **Capacity-aware filters.** Position size can be capped relative to liquidity; capacity and estimated slippage filters are available in advanced portfolio logic.
+- **Cost modeling.** Backtests and reports apply configurable fee (bps) and a liquidity-based slippage proxy; all results are research estimates, not execution forecasts.
+
+---
+
+## 6. Regime Awareness
+
+- **Vol regime classification.** Volatility is classified (e.g. rising, falling, stable) and used in narrative and filtering.
+- **Beta compression.** Beta state (compressed vs expanded vs stable) is combined with dispersion and vol into a single regime label.
+- **Dispersion index.** Cross-sectional dispersion (e.g. z-score of cross-sectional vol) indicates whether assets move in lockstep or not.
+- **Regime-conditioned performance.** Metrics (Sharpe, drawdown, hit rate) can be broken down by regime bucket for conditional assessment.
+
+---
+
+## 7. Overfitting Controls
+
+- **Multiple testing awareness.** When many signals or portfolios are tested, reality-check style warnings and suggested controls are surfaced.
+- **Signal orthogonalization.** Redundancy among signals is reduced via sequential orthogonalization and reported (e.g. cross-correlation before/after).
+- **Experiment logging.** Runs can be logged (config, metrics, artifacts, optional git hash) to a local experiments store for reproducibility and comparison; no external services required.
+
+---
+
+*This platform is research-only: no order routing, execution, exchange keys, or broker integration.*
