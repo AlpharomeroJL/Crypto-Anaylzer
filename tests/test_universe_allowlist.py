@@ -10,9 +10,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Import from dex_poll_to_sqlite (root script)
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from dex_poll_to_sqlite import (
+_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_root))
+sys.path.insert(0, str(_root / "cli"))
+from poll import (
     _apply_churn_control,
     _persist_universe_allowlist,
     _universe_keep_pair,
@@ -131,7 +132,7 @@ def test_fetch_dex_universe_only_sol_usdc_survives_default_allowlist():
             ]
         }
         return r
-    with patch("dex_poll_to_sqlite.requests.get", side_effect=_mock_get):
+    with patch("poll.requests.get", side_effect=_mock_get):
         out = fetch_dex_universe_top_pairs(
             chain_id="solana", page_size=50, min_liquidity_usd=0, min_vol_h24=0,
             quote_allowlist=["USDC", "USDT"], reject_same_symbol=True, reject_stable_stable=True,
@@ -162,7 +163,7 @@ def test_fetch_dex_universe_multi_query_sol_returns_sol_sol_usdc_returns_sol_usd
         else:
             r.json.return_value = {"pairs": []}
         return r
-    with patch("dex_poll_to_sqlite.requests.get", side_effect=_mock_get):
+    with patch("poll.requests.get", side_effect=_mock_get):
         out = fetch_dex_universe_top_pairs(
             chain_id="solana", page_size=50, min_liquidity_usd=0, min_vol_h24=0,
             quote_allowlist=["USDC", "USDT"], reject_same_symbol=True, reject_stable_stable=True,
@@ -183,7 +184,7 @@ def test_fetch_dex_universe_dedup_by_pair_address():
         r.raise_for_status = MagicMock()
         r.json.return_value = {"pairs": [common_pair]}
         return r
-    with patch("dex_poll_to_sqlite.requests.get", side_effect=_mock_get):
+    with patch("poll.requests.get", side_effect=_mock_get):
         out = fetch_dex_universe_top_pairs(
             chain_id="solana", page_size=50, min_liquidity_usd=0, min_vol_h24=0,
             queries=["USDC", "USDT"],
@@ -200,7 +201,7 @@ def test_fetch_dex_universe_uses_pair_address_not_dex_id():
             {"chainId": "solana", "pairAddress": "real_pair_addr", "baseToken": {"symbol": "SOL"}, "quoteToken": {"symbol": "USDC"}, "liquidity": {"usd": 1e6}, "volume": {"h24": 1e6}},
         ]
     }
-    with patch("dex_poll_to_sqlite.requests.get") as m:
+    with patch("poll.requests.get") as m:
         m.return_value.json.return_value = payload
         m.return_value.raise_for_status = MagicMock()
         out = fetch_dex_universe_top_pairs(
@@ -215,7 +216,7 @@ def test_fetch_dex_universe_uses_pair_address_not_dex_id():
 def test_fetch_dex_universe_debug_does_not_crash(capsys):
     """Call fetch with universe_debug > 0; must not throw."""
     payload = {"pairs": [{"chainId": "solana", "pairAddress": "a1", "baseToken": {"symbol": "SOL"}, "quoteToken": {"symbol": "USDC"}, "liquidity": {"usd": 1e6}, "volume": {"h24": 1e6}}]}
-    with patch("dex_poll_to_sqlite.requests.get") as m:
+    with patch("poll.requests.get") as m:
         m.return_value.json.return_value = payload
         m.return_value.raise_for_status = MagicMock()
         out = fetch_dex_universe_top_pairs(
@@ -230,7 +231,7 @@ def test_fetch_dex_universe_debug_does_not_crash(capsys):
 
 def test_fetch_dex_universe_top_pairs_mock_empty():
     """When API returns no pairs (all queries empty), result is empty for chains with no bootstrap."""
-    with patch("dex_poll_to_sqlite.requests.get") as m:
+    with patch("poll.requests.get") as m:
         m.return_value.json.return_value = {"pairs": []}
         m.return_value.raise_for_status = MagicMock()
         out = fetch_dex_universe_top_pairs(chain_id="ethereum", page_size=10, min_liquidity_usd=0, min_vol_h24=0, queries=["SOL", "USDC"])
@@ -239,7 +240,7 @@ def test_fetch_dex_universe_top_pairs_mock_empty():
 
 def test_fetch_dex_universe_bootstrap_when_solana_returns_zero():
     """When Solana API returns 0 accepted pairs, fetch returns [] (bootstrap is config-only in _get_universe_pairs)."""
-    with patch("dex_poll_to_sqlite.requests.get") as m:
+    with patch("poll.requests.get") as m:
         m.return_value.json.return_value = {"pairs": []}
         m.return_value.raise_for_status = MagicMock()
         out = fetch_dex_universe_top_pairs(chain_id="solana", page_size=10, min_liquidity_usd=0, min_vol_h24=0, queries=["SOL", "USDC"])
@@ -254,7 +255,7 @@ def test_fetch_dex_universe_top_pairs_mock_filter():
             {"chainId": "ethereum", "pairAddress": "addr2", "baseToken": {"symbol": "ETH"}, "quoteToken": {"symbol": "USDC"}, "liquidity": {"usd": 500000}, "volume": {"h24": 700000}},
         ]
     }
-    with patch("dex_poll_to_sqlite.requests.get") as m:
+    with patch("poll.requests.get") as m:
         m.return_value.json.return_value = payload
         m.return_value.raise_for_status = MagicMock()
         out = fetch_dex_universe_top_pairs(chain_id="solana", page_size=50, min_liquidity_usd=250000, min_vol_h24=500000, queries=["USDC"])
@@ -275,7 +276,7 @@ def test_load_universe_config_defaults():
 
 def test_fetch_dex_search_pairs_mock():
     """fetch_dex_search_pairs returns list of pair dicts from API response."""
-    with patch("dex_poll_to_sqlite.requests.get") as m:
+    with patch("poll.requests.get") as m:
         m.return_value.json.return_value = {
             "pairs": [
                 {"chainId": "solana", "pairAddress": "addr1", "baseToken": {"symbol": "SOL"}, "quoteToken": {"symbol": "USDC"}},
@@ -314,7 +315,7 @@ def test_relaxed_thresholds_accept_when_strict_rejects():
             {"chainId": "solana", "pairAddress": "addr1", "baseToken": {"symbol": "SOL"}, "quoteToken": {"symbol": "USDC"}, "liquidity": {"usd": relaxed_floor}, "volume": {"h24": relaxed_floor}},
         ]
     }
-    with patch("dex_poll_to_sqlite.requests.get") as m:
+    with patch("poll.requests.get") as m:
         m.return_value.json.return_value = payload
         m.return_value.raise_for_status = MagicMock()
         strict = fetch_dex_universe_top_pairs(chain_id="solana", page_size=10, min_liquidity_usd=500_000, min_vol_h24=500_000, queries=["USDC"])

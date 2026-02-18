@@ -1,169 +1,228 @@
-# Crypto-Analyzer
+# Crypto Quantitative Research Platform
 
-Systematic digital-asset research platform for factor modeling, regime detection, and robust validation. **Research-only:** no execution, no trading keys, no broker/exchange connectivity, no order routing.
+A Python research engine that collects real-time cryptocurrency data from decentralized exchanges, applies institutional-grade statistical analysis, and produces validated trading signals, backtests, and interactive dashboards -- all running locally with zero infrastructure.
+
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-18%20suites-brightgreen.svg)](#testing)
+
+> **Research-only.** This tool analyzes data and produces reports. It does not execute trades, hold API keys, or connect to any broker.
 
 ---
 
-## 1. System Overview
+## About
 
-Crypto-Analyzer is a cross-asset quantitative research engine built on DEX snapshot ingestion, deterministic bar materialization, factor modeling (BTC/ETH beta + residuals), cross-sectional signal validation, portfolio research with cost modeling, and governance/reproducibility controls. It operates under institutional research constraints: auditability, stability, and statistical discipline.
+Crypto Quantitative Research Platform ingests live DEX (decentralized exchange) and spot price data, builds normalized OHLCV bars, and runs a full quantitative research pipeline: factor modeling, signal discovery, portfolio construction, backtesting, and regime detection. It applies the same statistical rigor used at institutional equity desks -- factor decomposition, walk-forward validation, and overfitting controls -- to the crypto ecosystem.
+
+Everything runs from a single SQLite file. No cloud services, no paid APIs, no infrastructure to manage.
 
 ---
 
-## 2. High-Level Architecture
+## Main Features
+
+- **Automated data collection** from Dexscreener, Coinbase, and Kraken (no API keys needed) with automatic universe discovery of the most liquid DEX pairs
+- **Factor modeling** that decomposes every asset's returns into a market component (BTC/ETH beta) and an idiosyncratic residual, answering the question: *"Is this asset actually outperforming, or is it just moving with Bitcoin?"*
+- **Signal validation** using Information Coefficient (rank correlation vs future returns), IC decay analysis, and signal orthogonalization to separate real predictive power from noise
+- **Portfolio construction** with volatility targeting, beta-neutral weighting, capacity-aware sizing, and realistic cost modeling (fees + liquidity-based slippage)
+- **Walk-forward backtesting** with strict no-lookahead train/test splits, deflated Sharpe ratios, and probability-of-overfitting estimates -- because a backtest that doesn't guard against overfitting is just curve-fitting
+- **Regime detection** that classifies market conditions (risk-off, high dispersion, beta compression) and breaks down performance by regime, so you know *when* a strategy works, not just *whether* it works
+- **Reproducibility and governance** with run manifests that record git commit, environment, data window, and SHA256 hashes of every output artifact
+- **Interactive Streamlit dashboard** with 10+ pages: leaderboard, scanner, backtester, market structure, signal journal, research, and governance views
+
+---
+
+## What Makes This Different
+
+| Typical Retail Crypto Tools | This Platform |
+|---|---|
+| Show price charts and moving averages | Decomposes returns into factor exposure + idiosyncratic alpha via OLS regression |
+| Backtest on a single asset with no overfitting checks | Walk-forward validation with deflated Sharpe, PBO proxy, and block bootstrap confidence intervals |
+| Treat all crypto as independent | Models cross-sectional structure: correlation, dispersion, beta compression across the full universe |
+| Use correlation as a proxy for factor exposure | Uses OLS beta decomposition that produces residuals with zero factor exposure by construction |
+| No cost modeling or liquidity awareness | Fees (bps) + liquidity-dependent slippage proxy + capacity-constrained position sizing |
+| No audit trail | Every run logs a manifest with git commit, env fingerprint, data window, and output file hashes |
+
+**The core idea:** Most tokens move with BTC. If you don't strip out that market beta first, you can't tell whether a "signal" is real alpha or just noise correlated with Bitcoin. This platform does that decomposition systematically across every asset in the universe.
+
+---
+
+## Architecture
 
 ```
-            +----------------------+
-            |  dex_poll_to_sqlite  |
-            |  (snapshot ingestion)|
-            +----------+-----------+
-                       |
-                       v
-            +----------------------+
-            |     SQLite DB        |
-            |  snapshots + bars    |
-            +----------+-----------+
-                       |
-         +-------------+--------------+
-         |                            |
-         v                            v
-+------------------+        +--------------------+
-| materialize_bars |        | data / features    |
-| (5m/1h/1D OHLC)  |        | returns, vol, DD   |
-+------------------+        +--------------------+
-         |                            |
-         +------------+---------------+
-                      |
-                      v
-    +-----------------+----------------------+
-    | Research / Backtests / Reports / UI    |
-    | scan • backtest • walkforward • v2     |
-    +----------------------------------------+
+ Ingestion          Storage             Materialization       Research & Visualization
+┌──────────┐      ┌──────────────┐      ┌──────────────┐      ┌───────────────────────┐
+│ DEX APIs │─────▶│   SQLite DB  │─────▶│  OHLCV Bars  │─────▶│  Factor Models        │
+│ Spot APIs│      │  (snapshots) │      │ 5m/15m/1h/1D │      │  Regime Detection     │
+└──────────┘      └──────────────┘      └──────────────┘      │  Signal Validation    │
+                                                               │  Portfolio Research   │
+                                                               │  Streamlit Dashboard  │
+                                                               └───────────────────────┘
 ```
 
-- **Single source of truth:** `dex_data.sqlite`. All analytics consume the same normalized bars and factor series.
-- **Configuration:** `config.yaml` + `config.py` (DB path, universe, filters).
-- See **ARCHITECTURE.md** for module-level diagram and responsibility table.
+**Single source of truth:** All analytics consume the same SQLite database. Bar construction is deterministic and idempotent -- rerunning on the same data always produces identical output.
 
 ---
 
-## 3. Data Flow
+## Quickstart
 
-**Ingestion** — `dex_poll_to_sqlite.py` polls DEX + spot data into SQLite.
+```bash
+# Clone and set up
+git clone <repo-url> && cd crypto-analyzer
+python -m venv .venv && .venv/Scripts/activate   # Windows
+pip install -r requirements.txt
 
-**Materialization** — `materialize_bars.py` builds deterministic OHLC bars (5min, 15min, 1h, 1D).
-
-**Features** — `crypto_analyzer.features` (returns, vol, drawdown, regime). Downstream: `dex_analyze.py`, `dex_scan.py`, `backtest.py`, `backtest_walkforward.py`, `research_report.py`, `research_report_v2.py`, `app.py` (Streamlit). All use the same DB and config.
-
----
-
-## 4. Core Research Modules
-
-Factor modeling (BTC beta, residuals, beta compression). Regime classification (vol, dispersion, beta state). Signals (momentum, residual momentum, dispersion extremes) — research only, no execution. Cross-sectional research (Spearman IC, IC decay, turnover, regime-conditioned IC). Portfolio research (vol targeting, risk parity, beta neutrality, cost modeling). Overfitting controls (walk-forward, block bootstrap, deflated Sharpe, PBO proxy, experiment logging).
-
----
-
-## 5. Validation Framework
-
-Strict no-lookahead; walk-forward train/test separation; frequency-consistent annualization. Optional **strict integrity** (`--strict-integrity`, `--strict-integrity-pct`) exits with code 4 if bad row rate exceeds threshold. Default is warn-only; strict mode is opt-in for pipelines.
-
----
-
-## 6. Quickstart
-
-From repo root (use helper script so venv is used):
-
-```powershell
+# Verify installation
 .\scripts\run.ps1 doctor
-.\scripts\run.ps1 universe-poll --universe --universe-chain solana --interval 60 --universe-debug 5
+
+# Collect data (auto-discovers top DEX pairs on Solana)
+.\scripts\run.ps1 universe-poll --universe --universe-chain solana --interval 60
+
+# Build OHLCV bars from raw snapshots
 .\scripts\run.ps1 materialize --freq 1h
+
+# Generate research report (IC, decay, portfolio, overfitting checks)
 .\scripts\run.ps1 reportv2 --freq 1h --out-dir reports
+
+# Launch interactive dashboard
 .\scripts\run.ps1 streamlit
 ```
 
-**Commands:** `poll`, `universe-poll`, `materialize`, `report`, `reportv2`, `streamlit`, `doctor`, `test`. Confirm universe logs show `Dex pairs: X (universe_mode=True)` and `Universe refreshed: N pairs`. If `universe_mode=False`, you did not pass `--universe`.
+<details>
+<summary><strong>Full CLI Reference</strong></summary>
+
+| Command | Description |
+|---------|-------------|
+| `doctor` | Preflight checks: environment, dependencies, DB schema, pipeline smoke test |
+| `poll` | Single-pair data poller (60s interval) |
+| `universe-poll --universe ...` | Multi-asset universe discovery and polling |
+| `materialize` | Build deterministic OHLCV bars (5min, 15min, 1h, 1D) |
+| `analyze` | Leaderboard analysis with factor decomposition |
+| `scan` | Multi-mode opportunity scanner (momentum, residual, vol breakout, mean reversion) |
+| `report` | Cross-sectional research report (IC, decay, portfolio simulation) |
+| `reportv2` | Advanced report (signal orthogonalization, PBO, deflated Sharpe) |
+| `daily` | Daily market structure and signal report |
+| `backtest` | Single-asset backtest (trend following, volatility breakout) |
+| `walkforward` | Walk-forward backtest with out-of-sample fold stitching |
+| `streamlit` | Interactive research dashboard (10+ pages) |
+| `test` | Run full pytest suite (18 test files) |
+
+All commands are run as `.\scripts\run.ps1 <command> [args...]`
+
+</details>
 
 ---
 
-## 7. Universe Mode (Multi-Asset)
+## Project Structure
 
-Universe discovery uses Dexscreener public search: multi-query, merge by pair address, deterministic ranking (liquidity, volume, label, address). Quality filters: liquidity/24h volume, reject same-symbol and stable/stable, quote allowlist (default USDC/USDT). **Stability:** `max_churn_pct` (0.20), `min_persistence_refreshes` (2). **Audit tables:** `universe_allowlist`, `universe_churn_log`, `universe_persistence`. Verify with `python check_universe.py`. Operator sanity: 3+ allowlist refreshes, stable N, minimal churn (0–1 add/remove typical).
-
----
-
-## 8. Streamlit Interface
-
-`.\scripts\run.ps1 streamlit` — Overview, Scanner, Backtest, Walk-Forward, Market Structure, Signals, Research, Institutional Research, Runtime / Health, Governance. UI degrades when asset count &lt; 3.
-
----
-
-## 9. Reports & Artifacts
-
-Reports write to `reports/` (csv/, charts/, manifests/, health/). Each run writes a manifest (commit, env fingerprint, artifact SHAs). Strict integrity: `.\scripts\run.ps1 reportv2 --strict-integrity --strict-integrity-pct 1`.
-
----
-
-## 10. Governance & Reproducibility
-
-Doctor, run manifests, health summary, deterministic universe selection, persistence + churn logging, optional strict integrity. Designed for institutional audit trails.
-
----
-
-## 11. Troubleshooting
-
-**ModuleNotFoundError** — Run outside venv. Use `.\scripts\run.ps1 <command>` or `.\.venv\Scripts\python.exe <script>.py`.
-
----
-
-## 12. Limitations
-
-DEX API data quality; short histories → unstable Sharpe; slippage model is a proxy; no execution layer.
-
----
-
-## 13. Research-Only Disclaimer
-
-This repository is strictly for research. It does not execute trades, connect to brokers, manage positions, or sign transactions. All analytics and backtests are theoretical estimates.
-
----
-
-## 14. Project Layout
-
-| Path | Purpose |
-|------|--------|
-| **Entrypoints** | |
-| `dex_poll_to_sqlite.py` | Poller (single-pair or universe) |
-| `materialize_bars.py` | Bar builder |
-| `dex_analyze.py` | Leaderboard |
-| `dex_scan.py` | Scanner |
-| `backtest.py`, `backtest_walkforward.py` | Backtests |
-| `report_daily.py`, `research_report.py`, `research_report_v2.py` | Reports |
-| `app.py` | Streamlit UI |
-| **Helpers** | |
-| `check_universe.py` | Universe allowlist/churn verification |
-| `sanity_check.py`, `sanity_check_m5.py` | System health checks |
-| `scripts/run.ps1` | Venv-backed runner (primary CLI) |
-| `config.yaml` | DB, universe, filters |
-| **Package** | |
-| `crypto_analyzer/` | Core package |
-| `tests/` | Pytest suite |
-
-Legacy/optional scripts in root (see docs): `dashboard.py`, `check_db.py`, `clear_db_data.py`, `analyze_from_sqlite.py`, `dex_discover.py`. Prefer `app.py`, `doctor`, and `.\scripts\run.ps1` for primary workflows.
+```
+├── config.yaml                  # Database, universe, and filter settings
+├── requirements.txt             # Pinned dependencies
+│
+├── crypto_analyzer/             # Core library (21 modules)
+│   ├── config.py                #   Configuration loader (YAML + env overrides)
+│   ├── data.py                  #   Data loading (snapshots, bars, spot prices)
+│   ├── features.py              #   Returns, volatility, drawdown, momentum, beta
+│   ├── factors.py               #   OLS factor regression and residual computation
+│   ├── regimes.py               #   Market regime classification
+│   ├── signals.py               #   Signal detection and journal logging
+│   ├── portfolio.py             #   Vol targeting, risk parity, beta neutralization
+│   ├── portfolio_advanced.py    #   Constrained optimization with capacity filters
+│   ├── walkforward.py           #   Walk-forward train/test split engine
+│   ├── alpha_research.py        #   Information coefficient, signal builders, decay
+│   ├── signals_xs.py            #   Cross-sectional z-score and orthogonalization
+│   ├── risk_model.py            #   Covariance estimation (EWMA, Ledoit-Wolf)
+│   ├── statistics.py            #   Block bootstrap and confidence intervals
+│   ├── multiple_testing.py      #   Deflated Sharpe, PBO proxy
+│   ├── evaluation.py            #   Regime-conditioned performance, lead/lag
+│   ├── research_universe.py     #   Universe builder with quality filters
+│   ├── governance.py            #   Run manifests, git tracking, env fingerprint
+│   ├── integrity.py             #   Data quality checks (monotonicity, positivity)
+│   ├── artifacts.py             #   Artifact I/O and SHA256 hashing
+│   ├── diagnostics.py           #   Stability, fragility, and health scoring
+│   └── doctor.py                #   Preflight system checks
+│
+├── cli/                         # Command-line entry points
+│   ├── app.py                   #   Streamlit dashboard (10+ pages)
+│   ├── poll.py                  #   Data ingestion poller
+│   ├── materialize.py           #   OHLCV bar builder
+│   ├── scan.py                  #   Opportunity scanner
+│   ├── analyze.py               #   Leaderboard with factor decomposition
+│   ├── backtest.py              #   Single-asset backtester
+│   ├── backtest_walkforward.py  #   Walk-forward backtest runner
+│   ├── research_report.py       #   Cross-sectional research report
+│   ├── research_report_v2.py    #   Advanced report (orthogonalization, PBO)
+│   ├── report_daily.py          #   Daily signal and market structure report
+│   └── dashboard.py             #   Bloomberg-style terminal dashboard
+│
+├── tools/                       # Utility and maintenance scripts
+├── scripts/                     # PowerShell runners and service configs
+├── tests/                       # 18 pytest suites
+└── docs/                        # Architecture, deployment, and methodology
+```
 
 ---
 
-## 15. Documentation
+## Data Pipeline
 
-- **docs/INSTITUTIONAL.md** — Institutional research principles
-- **CONTRIBUTING.md** — Code style, testing, commit messages, research-only boundary
-- **DEPLOY.md** — Deploying the dashboard
-- **WINDOWS_24_7.md** — Running the poller 24/7
-- **HANDOFF_AUTOPOLLING.md** — Poller and NSSM (Windows)
-- **docs/CLEANUP_SUMMARY.md** — Past cleanup notes (status: historical)
-- **docs/FOUNDERS_AUDIT.md** — First-impression checklist, entrypoints, minimal demo, GitHub About/topics
+**Ingestion** -- The poller collects data every 60 seconds from two sources: DEX pair data (price, liquidity, volume) from the Dexscreener public API, and spot reference prices (BTC, ETH, SOL) from Coinbase/Kraken. In universe mode, it automatically discovers and ranks the top liquid pairs with configurable quality filters and churn controls.
+
+**Materialization** -- Raw snapshots are aggregated into deterministic OHLCV bars at four frequencies (5min, 15min, 1h, 1D). The process is idempotent: same input always produces the same output.
+
+**Governance** -- Every research run writes a manifest recording the git commit, Python environment, data window, output SHA256 hashes, and computed metrics, creating a complete audit trail.
 
 ---
 
-## 16. License
+<details>
+<summary><strong>Engineering Decisions (for the technically curious)</strong></summary>
 
-MIT License. See LICENSE.
+| Decision | Why |
+|----------|-----|
+| **SQLite over Postgres** | Zero-config, single-file portability. Research-scale data (millions of rows) doesn't need a server database. |
+| **Log returns throughout** | Additive across time, symmetric, mathematically correct for multi-period aggregation. Arithmetic returns only at display time. |
+| **OLS regression for factor decomposition** | Produces residuals with exactly zero factor exposure by construction. Correlation alone can't decompose returns. |
+| **Walk-forward over k-fold** | Time series has autocorrelation. Walk-forward with strict train/test separation prevents lookahead bias. |
+| **Spearman rank IC for signal evaluation** | Robust to the fat-tailed distributions that are ubiquitous in crypto. Linear regression IC would be dominated by outliers. |
+| **Block bootstrap for confidence intervals** | Preserves serial correlation structure in financial returns. Standard i.i.d. bootstrap produces overconfident intervals. |
+
+</details>
+
+---
+
+## Testing
+
+```bash
+.\scripts\run.ps1 test
+```
+
+18 test suites covering: return computation correctness, factor decomposition, portfolio construction, walk-forward split generation (no lookahead), statistical methods (bootstrap, IC), universe management (churn control, deterministic ranking), governance (manifests, hashing), and data integrity assertions.
+
+---
+
+## Technology Stack
+
+| Layer | Technology |
+|-------|------------|
+| **Core** | Python 3.10+, pandas, NumPy |
+| **Storage** | SQLite (zero-config, single-file) |
+| **Visualization** | Streamlit, Plotly, Matplotlib |
+| **Statistics** | scikit-learn (optional: Ledoit-Wolf shrinkage) |
+| **Data Sources** | Dexscreener, Coinbase, Kraken (no API keys) |
+| **Testing** | pytest (18 suites) |
+| **Deployment** | NSSM Windows service (optional 24/7 polling) |
+
+---
+
+## Documentation
+
+| Document | Contents |
+|----------|----------|
+| [Architecture](docs/architecture.md) | Module-level diagram and responsibility matrix |
+| [Contributing](docs/contributing.md) | Code style, testing, and research-only boundary |
+| [Deployment](docs/deployment.md) | Windows service setup for 24/7 operation |
+| [Institutional Principles](docs/institutional.md) | Research standards and validation methodology |
+
+---
+
+## License
+
+MIT License. See [LICENSE](LICENSE).

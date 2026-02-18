@@ -42,19 +42,25 @@ if ($runDoctorFirst) {
 }
 
 switch ($Command) {
-    "poll"           { & $py dex_poll_to_sqlite.py --interval 60 @filtered; exit $LASTEXITCODE }
-    "universe-poll"  { & $py dex_poll_to_sqlite.py --universe @filtered; exit $LASTEXITCODE }
-    "materialize"    { & $py materialize_bars.py @filtered; exit $LASTEXITCODE }
-    "report"         { & $py research_report.py @filtered; exit $LASTEXITCODE }
-    "reportv2"       { & $py research_report_v2.py @filtered; exit $LASTEXITCODE }
-    "streamlit"      { & $py -m streamlit run app.py @filtered; exit $LASTEXITCODE }
+    "poll"           { & $py cli/poll.py --interval 60 @filtered; exit $LASTEXITCODE }
+    "universe-poll"  { & $py cli/poll.py --universe @filtered; exit $LASTEXITCODE }
+    "materialize"    { & $py cli/materialize.py @filtered; exit $LASTEXITCODE }
+    "analyze"        { & $py cli/analyze.py @filtered; exit $LASTEXITCODE }
+    "scan"           { & $py cli/scan.py @filtered; exit $LASTEXITCODE }
+    "report"         { & $py cli/research_report.py @filtered; exit $LASTEXITCODE }
+    "reportv2"       { & $py cli/research_report_v2.py @filtered; exit $LASTEXITCODE }
+    "daily"          { & $py cli/report_daily.py @filtered; exit $LASTEXITCODE }
+    "backtest"       { & $py cli/backtest.py @filtered; exit $LASTEXITCODE }
+    "walkforward"    { & $py cli/backtest_walkforward.py @filtered; exit $LASTEXITCODE }
+    "streamlit"      { & $py -m streamlit run cli/app.py @filtered; exit $LASTEXITCODE }
     "doctor"         { & $py -m crypto_analyzer.doctor @filtered; exit $LASTEXITCODE }
     "test"           { & $py -m pytest tests/ @filtered; exit $LASTEXITCODE }
     default          {
         if ($Command) { & $py $Command @filtered; exit $LASTEXITCODE } else {
             Write-Host "Usage: .\scripts\run.ps1 [-SkipDoctor] <command> [args...]"
-            Write-Host "Commands: poll, universe-poll, materialize, report, reportv2, streamlit, doctor, test"
-            Write-Host "  -SkipDoctor  Skip pre-flight doctor (default: run doctor before poll, materialize, report, reportv2, streamlit)"
+            Write-Host "Commands: poll, universe-poll, materialize, analyze, scan, report, reportv2,"
+            Write-Host "          daily, backtest, walkforward, streamlit, doctor, test"
+            Write-Host "  -SkipDoctor  Skip pre-flight doctor (default: run doctor before most commands)"
             exit 1
         }
     }

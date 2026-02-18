@@ -24,9 +24,8 @@ def test_import_doctor_without_runtime():
 
 def test_import_app_without_streamlit_run():
     """Import app module without starting Streamlit (ensures no inline import shadowing)."""
-    # Avoid actually running streamlit; we only need the module to load without UnboundLocalError
     import importlib.util
-    spec = importlib.util.spec_from_file_location("app", ROOT / "app.py")
+    spec = importlib.util.spec_from_file_location("app", ROOT / "cli" / "app.py")
     assert spec is not None and spec.loader is not None
     app = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(app)

@@ -4,12 +4,13 @@ from pathlib import Path
 
 _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
+sys.path.insert(0, str(_root / "cli"))
 
 
 def test_residual_momentum_mode_returns_dataframe():
     """run_scan with mode=residual_momentum returns (DataFrame, float, float, list)."""
     import pandas as pd
-    from dex_scan import run_scan
+    from scan import run_scan
     try:
         res, disp_l, disp_z, reasons = run_scan(
             db="dex_data.sqlite",
@@ -26,7 +27,7 @@ def test_residual_momentum_mode_returns_dataframe():
 
 def test_residual_momentum_mode_has_residual_columns_in_contract():
     """When run_scan(mode=residual_momentum) returns non-empty df, it must include residual_return_24h (contract)."""
-    from dex_scan import scan_residual_momentum
+    from scan import scan_residual_momentum
     import pandas as pd
     import numpy as np
     # Minimal bars and returns_df with factor columns so residual_momentum can run

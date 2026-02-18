@@ -77,12 +77,14 @@ def run_walkforward_backtest(
     Returns: (stitched_equity_series, per_fold_metrics_list).
     stitched_equity: concatenated equity from each test fold (no overlap).
     """
-    # Import here to avoid circular import; backtest is at root
     import sys
     from pathlib import Path
     _root = Path(__file__).resolve().parent.parent
+    _cli = _root / "cli"
     if str(_root) not in sys.path:
         sys.path.insert(0, str(_root))
+    if str(_cli) not in sys.path:
+        sys.path.insert(0, str(_cli))
     from backtest import run_trend_strategy, run_vol_breakout_strategy, metrics as backtest_metrics
 
     params = params or {}

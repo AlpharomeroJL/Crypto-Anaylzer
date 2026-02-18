@@ -6,8 +6,9 @@ from pathlib import Path
 
 _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
+sys.path.insert(0, str(_root / "cli"))
 
-from dex_scan import _add_capacity_slippage_tradable, DEFAULT_MAX_POS_LIQ_PCT, DEFAULT_MAX_SLIPPAGE_BPS_TRADABLE
+from scan import _add_capacity_slippage_tradable, DEFAULT_MAX_POS_LIQ_PCT, DEFAULT_MAX_SLIPPAGE_BPS_TRADABLE
 
 
 def test_capacity_usd_scales_with_liquidity():

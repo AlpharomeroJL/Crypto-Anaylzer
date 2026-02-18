@@ -177,7 +177,8 @@ def _warn_universe_zero_if_enabled() -> None:
             return
         import sys
         sys.path.insert(0, str(_REPO_ROOT))
-        from dex_poll_to_sqlite import fetch_dex_universe_top_pairs, load_universe_config
+        sys.path.insert(0, str(_REPO_ROOT / "cli"))
+        from poll import fetch_dex_universe_top_pairs, load_universe_config
         cfg = load_universe_config(str(_REPO_ROOT / "config.yaml"))
         chain = cfg.get("chain_id", "solana")
         queries = cfg.get("queries") or ["USDC", "USDT", "SOL"]
