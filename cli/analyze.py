@@ -32,7 +32,10 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from data import append_spot_returns_to_returns_df, get_factor_returns, load_spot_price_resampled
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from crypto_analyzer.data import append_spot_returns_to_returns_df, get_factor_returns, load_spot_price_resampled
 from crypto_analyzer.factors import (
     build_factor_matrix,
     compute_ols_betas,
@@ -40,7 +43,7 @@ from crypto_analyzer.factors import (
     compute_residual_lookback_return,
     compute_residual_vol,
 )
-from features import (
+from crypto_analyzer.features import (
     annualize_sharpe,
     classify_beta_state,
     classify_vol_regime,

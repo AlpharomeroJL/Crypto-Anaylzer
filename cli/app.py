@@ -20,19 +20,20 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-# Add project root
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+_here = Path(__file__).resolve().parent
+sys.path.insert(0, str(_here.parent))
+sys.path.insert(0, str(_here))
 
-from config import (
+from crypto_analyzer.config import (
     db_path,
     default_freq,
     min_bars as config_min_bars,
     min_liquidity_usd as config_min_liq,
     min_vol_h24 as config_min_vol,
 )
-from data import append_spot_returns_to_returns_df, get_factor_returns, load_bars, load_snapshots, load_spot_price_resampled
+from crypto_analyzer.data import append_spot_returns_to_returns_df, get_factor_returns, load_bars, load_snapshots, load_spot_price_resampled
 from report_daily import run_momentum_scan, run_risk_snapshot, run_vol_scan
-from dex_scan import run_scan as dex_run_scan
+from scan import run_scan as dex_run_scan
 from crypto_analyzer.ui import _safe_df as _safe_df, st_df, st_plot, streamlit_compatibility_caption
 from crypto_analyzer.artifacts import df_to_download_bytes
 from crypto_analyzer.governance import load_manifests
@@ -66,7 +67,7 @@ from crypto_analyzer.multiple_testing import deflated_sharpe_ratio, reality_chec
 from crypto_analyzer.evaluation import conditional_metrics
 from crypto_analyzer.experiments import load_experiments
 from backtest import metrics as backtest_metrics, run_trend_strategy, run_vol_breakout_strategy
-from features import (
+from crypto_analyzer.features import (
     bars_per_year,
     classify_beta_state,
     classify_vol_regime,

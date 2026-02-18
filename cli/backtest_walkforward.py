@@ -7,15 +7,13 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-_root = Path(__file__).resolve().parent
-if str(_root) not in sys.path:
-    sys.path.insert(0, str(_root))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import argparse
 import numpy as np
 
-from config import db_path, default_freq, min_bars as config_min_bars
-from data import load_bars
+from crypto_analyzer.config import db_path, default_freq, min_bars as config_min_bars
+from crypto_analyzer.data import load_bars
 from crypto_analyzer.walkforward import bars_per_day, run_walkforward_backtest
 
 

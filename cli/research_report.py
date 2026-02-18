@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 import sys
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from crypto_analyzer.config import db_path
 from crypto_analyzer.research_universe import get_research_assets

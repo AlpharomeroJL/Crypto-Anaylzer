@@ -14,8 +14,8 @@ import sqlite3
 import sys
 
 # Same path as dashboard and poller (when run from repo root)
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(SCRIPT_DIR, "dex_data.sqlite")
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DB_PATH = os.path.join(REPO_ROOT, "dex_data.sqlite")
 
 SOL_MONITOR_TABLE = "sol_monitor_snapshots"
 SPOT_TABLE = "spot_price_snapshots"

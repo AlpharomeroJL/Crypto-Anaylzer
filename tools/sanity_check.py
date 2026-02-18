@@ -13,7 +13,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
 
 # Tables we care about for row counts
 BAR_TABLES = ["bars_5min", "bars_15min", "bars_1h", "bars_1D"]
@@ -22,12 +23,12 @@ ALL_COUNT_TABLES = BAR_TABLES + OTHER_TABLES
 
 # Critical CLI commands: (name, [argv])
 CRITICAL_COMMANDS = [
-    ("materialize_bars.py", [sys.executable, "materialize_bars.py"]),
-    ("dex_analyze.py --freq 1h --window 24", [sys.executable, "dex_analyze.py", "--freq", "1h", "--window", "24"]),
-    ("dex_scan.py --mode momentum --freq 1h --top 5", [sys.executable, "dex_scan.py", "--mode", "momentum", "--freq", "1h", "--top", "5"]),
-    ("report_daily.py", [sys.executable, "report_daily.py"]),
-    ("research_report.py --freq 1h", [sys.executable, "research_report.py", "--freq", "1h"]),
-    ("research_report_v2.py --freq 1h", [sys.executable, "research_report_v2.py", "--freq", "1h"]),
+    ("cli/materialize.py", [sys.executable, "cli/materialize.py"]),
+    ("cli/analyze.py --freq 1h --window 24", [sys.executable, "cli/analyze.py", "--freq", "1h", "--window", "24"]),
+    ("cli/scan.py --mode momentum --freq 1h --top 5", [sys.executable, "cli/scan.py", "--mode", "momentum", "--freq", "1h", "--top", "5"]),
+    ("cli/report_daily.py", [sys.executable, "cli/report_daily.py"]),
+    ("cli/research_report.py --freq 1h", [sys.executable, "cli/research_report.py", "--freq", "1h"]),
+    ("cli/research_report_v2.py --freq 1h", [sys.executable, "cli/research_report_v2.py", "--freq", "1h"]),
     ("pytest tests/ -q", [sys.executable, "-m", "pytest", "tests/", "-q"]),
 ]
 

@@ -9,11 +9,14 @@ import argparse
 from datetime import datetime, timezone
 from pathlib import Path
 
+import sys
 import numpy as np
 import pandas as pd
 
-from config import db_path, default_freq, min_bars as config_min_bars
-from data import append_spot_returns_to_returns_df, get_factor_returns, load_bars, load_snapshots, load_spot_price_resampled
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from crypto_analyzer.config import db_path, default_freq, min_bars as config_min_bars
+from crypto_analyzer.data import append_spot_returns_to_returns_df, get_factor_returns, load_bars, load_snapshots, load_spot_price_resampled
 from crypto_analyzer.factors import (
     build_factor_matrix,
     compute_ols_betas,
@@ -23,7 +26,7 @@ from crypto_analyzer.factors import (
 )
 from crypto_analyzer.regimes import classify_market_regime, explain_regime
 from crypto_analyzer.signals import detect_signals, ensure_signals_table, load_signals, log_signals
-from features import (
+from crypto_analyzer.features import (
     annualize_sharpe,
     classify_beta_state,
     classify_vol_regime,

@@ -15,7 +15,9 @@ from typing import List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from config import (
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from crypto_analyzer.config import (
     STABLE_SYMBOLS,
     db_path,
     exclude_stable_pairs,
@@ -23,7 +25,7 @@ from config import (
     min_liquidity_usd as config_min_liq,
     min_vol_h24 as config_min_vol,
 )
-from data import append_spot_returns_to_returns_df, get_factor_returns, load_bars, load_snapshots
+from crypto_analyzer.data import append_spot_returns_to_returns_df, get_factor_returns, load_bars, load_snapshots
 from crypto_analyzer.factors import (
     build_factor_matrix,
     compute_ols_betas,
@@ -31,7 +33,7 @@ from crypto_analyzer.factors import (
     compute_residual_lookback_return,
     compute_residual_vol,
 )
-from features import (
+from crypto_analyzer.features import (
     annualize_sharpe,
     bars_for_lookback_hours,
     classify_beta_state,
@@ -85,7 +87,7 @@ def _get_bars_or_from_snapshots(
     )
     if snap.empty:
         return snap
-    from features import cumulative_returns_log
+    from crypto_analyzer.features import cumulative_returns_log
 
     window = 24 if freq == "1h" else 288
     rows = []

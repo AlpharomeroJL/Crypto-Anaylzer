@@ -13,9 +13,12 @@ from typing import Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from config import db_path, default_freq, default_window, min_bars as config_min_bars
-from data import load_bars
-from features import bars_per_year, ema, log_returns, rolling_volatility
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from crypto_analyzer.config import db_path, default_freq, default_window, min_bars as config_min_bars
+from crypto_analyzer.data import load_bars
+from crypto_analyzer.features import bars_per_year, ema, log_returns, rolling_volatility
 
 
 # Default fees and slippage (documented in README)

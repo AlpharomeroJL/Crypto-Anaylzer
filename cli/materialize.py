@@ -13,9 +13,12 @@ from typing import Optional
 
 import pandas as pd
 
-from config import bars_freqs, db_path
-from data import load_bars, load_snapshots
-from features import cumulative_returns_log, log_returns, rolling_volatility
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from crypto_analyzer.config import bars_freqs, db_path
+from crypto_analyzer.data import load_bars, load_snapshots
+from crypto_analyzer.features import cumulative_returns_log, log_returns, rolling_volatility
 
 
 def _bars_table_schema(table: str) -> str:
