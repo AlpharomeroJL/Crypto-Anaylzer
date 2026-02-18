@@ -66,6 +66,22 @@ Everything runs from a single SQLite file. No cloud services, no paid APIs, no i
 
 ---
 
+## Quick Demo
+
+One command does everything: preflight, data collection (if needed), bar materialization, research report, and experiment recording.
+
+```powershell
+git clone <repo-url> && cd crypto-analyzer
+python -m venv .venv && .venv/Scripts/activate
+pip install -r requirements.txt
+
+.\scripts\run.ps1 demo
+```
+
+This creates/uses `dex_data.sqlite`, writes a report to `reports/`, records an experiment with a `dataset_id`, and prints next-step commands for the API and dashboard.
+
+---
+
 ## Quickstart
 
 ```bash
@@ -108,7 +124,9 @@ pip install -r requirements.txt
 | `walkforward` | Walk-forward backtest with out-of-sample fold stitching |
 | `streamlit` | Interactive research dashboard (12 pages) |
 | `api` | Local read-only research API (FastAPI, default localhost:8000) |
-| `test` | Run full pytest suite (26 test files) |
+| `demo` | One-command demo: doctor, poll (if needed), materialize, reportv2, next steps |
+| `check-dataset` | Print dataset_id, table summaries, and integrity stats |
+| `test` | Run full pytest suite |
 
 All commands are run as `.\scripts\run.ps1 <command> [args...]`
 
@@ -149,6 +167,7 @@ All commands are run as `.\scripts\run.ps1 <command> [args...]`
 │   ├── integrity.py             #   Data quality checks (monotonicity, positivity)
 │   ├── artifacts.py             #   Artifact I/O and SHA256 hashing
 │   ├── diagnostics.py           #   Stability, fragility, and health scoring
+│   ├── dataset.py               #   Dataset fingerprinting and versioning (dataset_id)
 │   └── doctor.py                #   Preflight system checks
 │
 ├── cli/                         # Command-line entry points
@@ -163,6 +182,7 @@ All commands are run as `.\scripts\run.ps1 <command> [args...]`
 │   ├── research_report_v2.py    #   Advanced report (orthogonalization, PBO, QP)
 │   ├── report_daily.py          #   Daily signal and market structure report
 │   ├── api.py                   #   Local research API launcher (uvicorn)
+│   ├── demo.py                  #   One-command demo (doctor + poll + materialize + report)
 │   └── dashboard.py             #   Bloomberg-style terminal dashboard
 │
 ├── tools/                       # Utility and maintenance scripts
@@ -181,6 +201,8 @@ All commands are run as `.\scripts\run.ps1 <command> [args...]`
 **Materialization** -- Raw snapshots are aggregated into deterministic OHLCV bars at four frequencies (5min, 15min, 1h, 1D). The process is idempotent: same input always produces the same output.
 
 **Governance** -- Every research run writes a manifest recording the git commit, Python environment, data window, output SHA256 hashes, and computed metrics, creating a complete audit trail. Additionally, runs are recorded in a SQLite experiment registry (`reports/experiments.db`) for cross-run metric comparison via the Streamlit "Experiments" page.
+
+**Dataset versioning** -- Each research run computes a `dataset_id`: a deterministic SHA-256 hash of the database fingerprint (table row counts, timestamp ranges, integrity stats). The same data always produces the same `dataset_id`, making it easy to tell whether two experiments ran against identical data. `.\scripts\run.ps1 doctor` prints the current `dataset_id`, and every experiment row in the registry includes it for reproducibility.
 
 **Quick demo:**
 ```powershell

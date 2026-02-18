@@ -168,6 +168,33 @@ def check_pipeline_smoke() -> bool:
     return True
 
 
+def check_dataset_id() -> None:
+    """Print dataset_id and compact summary when DB exists."""
+    db = _get_db_path()
+    if not os.path.isfile(db):
+        return
+    try:
+        from .dataset import compute_dataset_fingerprint, dataset_id_from_fingerprint
+        fp = compute_dataset_fingerprint(db)
+        did = dataset_id_from_fingerprint(fp)
+        # Build compact summary
+        parts = []
+        min_ts = None
+        max_ts = None
+        for t in fp.tables:
+            short = t.table.replace("sol_monitor_", "").replace("_snapshots", "snap").replace("spot_price_snapshots", "spot_snap")
+            parts.append(f"{short}={t.row_count}")
+            if t.min_ts and (min_ts is None or t.min_ts < min_ts):
+                min_ts = t.min_ts
+            if t.max_ts and (max_ts is None or t.max_ts > max_ts):
+                max_ts = t.max_ts
+        window = f"window={min_ts}..{max_ts}" if min_ts and max_ts else "window=?"
+        rows_str = "  ".join(parts) if parts else "no tables"
+        print(f"[OK] dataset_id {did}  {window}  rows: {rows_str}")
+    except Exception as e:
+        print(f"[WARN] dataset_id: {e}")
+
+
 def _warn_universe_zero_if_enabled() -> None:
     """If universe.enabled, run one-shot fetch; warn if 0 pairs accepted."""
     try:
@@ -206,6 +233,7 @@ def main() -> int:
         if not check_db():
             return 3
         check_integrity()
+        check_dataset_id()
         _warn_universe_zero_if_enabled()
         if not check_pipeline_smoke():
             return 4

@@ -54,6 +54,7 @@ from crypto_analyzer.artifacts import ensure_dir, snapshot_outputs, write_json, 
 from crypto_analyzer.governance import make_run_manifest, save_manifest, get_git_commit, get_env_fingerprint, now_utc_iso, stable_run_id
 from crypto_analyzer.diagnostics import build_health_summary, rolling_ic_stability
 from crypto_analyzer.statistics import safe_nanmean
+from crypto_analyzer.dataset import compute_dataset_fingerprint, dataset_id_from_fingerprint, fingerprint_to_json
 
 MIN_ASSETS = 3
 DEFAULT_TOP_K = 3
@@ -92,7 +93,7 @@ def main() -> int:
     ap.add_argument("--strict-integrity-pct", dest="strict_integrity_pct", type=float, default=5.0, help="Max allowed bad row %% (default 5); used with --strict-integrity")
     ap.add_argument("--hypothesis", default=None, help="Hypothesis text for experiment registry")
     ap.add_argument("--tags", default=None, help="Comma-separated tags for experiment registry")
-    ap.add_argument("--dataset-id", default=None, help="Dataset identifier for experiment registry")
+    ap.add_argument("--dataset-id", default=None, help="Explicit dataset ID (overrides computed)")
     args = ap.parse_args()
 
     db = args.db or (db_path() if callable(db_path) else db_path())
@@ -451,6 +452,11 @@ def main() -> int:
         params_dict = {"freq": args.freq, "signals": args.signals, "portfolio": args.portfolio, "cov_method": args.cov_method}
         if "sharpe" not in canonical_metrics:
             params_dict["sharpe_unavailable_reason"] = "insufficient_assets_or_no_valid_pnl"
+        # Dataset versioning
+        _db = str(db)
+        _fp = compute_dataset_fingerprint(_db)
+        _computed_dataset_id = dataset_id_from_fingerprint(_fp)
+        params_dict["dataset_fingerprint"] = fingerprint_to_json(_fp)
         experiment_row = {
             "run_id": run_id,
             "ts_utc": ts_now,
@@ -464,7 +470,7 @@ def main() -> int:
             "env_fingerprint": env_fp,
             "hypothesis": getattr(args, "hypothesis", None) or "",
             "tags_json": tags_list,
-            "dataset_id": getattr(args, "dataset_id", None) or "",
+            "dataset_id": getattr(args, "dataset_id", None) or _computed_dataset_id,
             "params_json": params_dict,
         }
 

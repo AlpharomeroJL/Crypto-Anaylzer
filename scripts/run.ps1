@@ -2,7 +2,7 @@
 # Doctor-first: runs crypto_analyzer.doctor before most commands unless -SkipDoctor is passed.
 # Must run from repo root, or script will cd to repo root (parent of scripts/).
 # Usage: .\scripts\run.ps1 [-SkipDoctor] <command> [args...]
-# Commands: poll, universe-poll, materialize, report, reportv2, streamlit, doctor, test
+# Commands: poll, universe-poll, materialize, report, reportv2, streamlit, doctor, test, demo, check-dataset
 param(
     [switch]$SkipDoctor,
     [Parameter(Position = 0)]$Command,
@@ -28,7 +28,7 @@ if ($Passthrough) {
 }
 
 $runDoctorFirst = $false
-if ($Command -and $Command -ne 'doctor' -and $Command -ne 'test' -and (-not $SkipDoctor)) {
+if ($Command -and $Command -ne 'doctor' -and $Command -ne 'test' -and $Command -ne 'demo' -and (-not $SkipDoctor)) {
     $runDoctorFirst = $true
 }
 
@@ -56,11 +56,14 @@ switch ($Command) {
     "api"            { & $py cli/api.py @filtered; exit $LASTEXITCODE }
     "doctor"         { & $py -m crypto_analyzer.doctor @filtered; exit $LASTEXITCODE }
     "test"           { & $py -m pytest tests/ @filtered; exit $LASTEXITCODE }
+    "demo"           { & $py cli/demo.py @filtered; exit $LASTEXITCODE }
+    "check-dataset"  { & $py tools/check_dataset.py @filtered; exit $LASTEXITCODE }
     default          {
         if ($Command) { & $py $Command @filtered; exit $LASTEXITCODE } else {
             Write-Host "Usage: .\scripts\run.ps1 [-SkipDoctor] <command> [args...]"
             Write-Host "Commands: poll, universe-poll, materialize, analyze, scan, report, reportv2,"
-            Write-Host "          daily, backtest, walkforward, streamlit, api, doctor, test"
+            Write-Host "          daily, backtest, walkforward, streamlit, api, doctor, test,"
+            Write-Host "          demo, check-dataset"
             Write-Host "  -SkipDoctor  Skip pre-flight doctor (default: run doctor before most commands)"
             exit 1
         }

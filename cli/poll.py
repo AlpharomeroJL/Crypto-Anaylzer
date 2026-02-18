@@ -966,6 +966,7 @@ def main() -> int:
     parser.add_argument("--universe-query", dest="universe_query", action="append", default=None, metavar="Q", help="Search query for universe (repeatable); e.g. USDC, USDT. Overrides config queries.")
     parser.add_argument("--universe-max-churn-pct", dest="universe_max_churn_pct", type=float, default=None, metavar="PCT", help="Max fraction of allowlist replaceable per refresh (0-1; default from config 0.20; 1.0 = no churn limit)")
     parser.add_argument("--universe-min-persistence-refreshes", dest="universe_min_persistence_refreshes", type=int, default=None, metavar="K", help="Require pair to fail selection K refreshes before removal (default from config 2; 0 = disable)")
+    parser.add_argument("--run-seconds", type=int, default=None, metavar="N", help="Stop polling after N seconds (default: run forever)")
     args = parser.parse_args()
     interval_sec = args.interval
 
@@ -1114,8 +1115,14 @@ def main() -> int:
     _log(f"Price feed: Coinbase (primary) / Kraken (fallback)")
     _log(f"Poll every {interval_sec}s. Pair delay {args.pair_delay}s. Stop with Ctrl+C.\n")
 
+    _poll_start = time.time()
+    _run_seconds = getattr(args, "run_seconds", None)
+
     try:
         while True:
+            if _run_seconds is not None and (time.time() - _poll_start) >= _run_seconds:
+                _log(f"Reached --run-seconds={_run_seconds}. Stopping.")
+                break
             if universe_enabled:
                 u = _get_universe_pairs(conn)
                 if u:
