@@ -53,6 +53,7 @@ from crypto_analyzer.integrity import assert_monotonic_time_index, assert_no_neg
 from crypto_analyzer.artifacts import ensure_dir, snapshot_outputs, write_json, timestamped_filename, compute_file_sha256
 from crypto_analyzer.governance import make_run_manifest, save_manifest, get_git_commit, get_env_fingerprint, now_utc_iso, stable_run_id
 from crypto_analyzer.diagnostics import build_health_summary, rolling_ic_stability
+from crypto_analyzer.statistics import safe_nanmean
 
 MIN_ASSETS = 3
 DEFAULT_TOP_K = 3
@@ -397,7 +398,9 @@ def main() -> int:
             "universe_size": float(n_assets),
         }
         if pnl_sharpes:
-            canonical_metrics["sharpe"] = float(np.nanmean(list(pnl_sharpes.values())))
+            _sharpe_agg = safe_nanmean(list(pnl_sharpes.values()))
+            if _sharpe_agg is not None:
+                canonical_metrics["sharpe"] = _sharpe_agg
         for k, v in pnl_sharpes.items():
             canonical_metrics[f"sharpe_{k}"] = v
 
@@ -421,7 +424,9 @@ def main() -> int:
         if portfolio_pnls:
             turnover_vals = []
             for k in portfolio_pnls:
-                sig = signals_dict.get(k) or (orth_dict.get(k) if orth_dict else None)
+                sig = signals_dict.get(k)
+                if sig is None and orth_dict:
+                    sig = orth_dict.get(k)
                 if sig is not None and not sig.empty:
                     r = rank_signal_df(sig)
                     w = long_short_from_ranks(r, args.top_k, args.bottom_k, gross_leverage=1.0)
@@ -444,6 +449,8 @@ def main() -> int:
         from crypto_analyzer.experiments import parse_tags
         tags_list = parse_tags(args.tags) if getattr(args, "tags", None) else []
         params_dict = {"freq": args.freq, "signals": args.signals, "portfolio": args.portfolio, "cov_method": args.cov_method}
+        if "sharpe" not in canonical_metrics:
+            params_dict["sharpe_unavailable_reason"] = "insufficient_assets_or_no_valid_pnl"
         experiment_row = {
             "run_id": run_id,
             "ts_utc": ts_now,
@@ -456,9 +463,9 @@ def main() -> int:
             "config_hash": config_hash,
             "env_fingerprint": env_fp,
             "hypothesis": getattr(args, "hypothesis", None) or "",
-            "tags": tags_list,
+            "tags_json": tags_list,
             "dataset_id": getattr(args, "dataset_id", None) or "",
-            "params": params_dict,
+            "params_json": params_dict,
         }
 
         artifacts_for_db = [

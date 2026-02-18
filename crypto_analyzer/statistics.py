@@ -126,3 +126,17 @@ def significance_summary(
         "sharpe_ci_95_lo": lo,
         "sharpe_ci_95_hi": hi,
     }
+
+
+def safe_nanmean(values) -> Optional[float]:
+    """Return float nanmean, or None when *values* is empty / all-NaN.
+
+    Avoids the numpy RuntimeWarning 'Mean of empty slice' that fires when
+    every element is NaN or the input is length-zero.
+    """
+    if values is None:
+        return None
+    arr = np.asarray(values, dtype=float)
+    if arr.size == 0 or np.all(np.isnan(arr)):
+        return None
+    return float(np.nanmean(arr))

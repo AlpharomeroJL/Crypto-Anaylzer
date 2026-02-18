@@ -1019,8 +1019,14 @@ def main():
                                 r[m["metric_name"]] = m["metric_value"]
                         preview_rows.append(r)
                     display_df = pd.DataFrame(preview_rows)
+                    if "sharpe" in display_df.columns:
+                        display_df["sharpe"] = display_df["sharpe"].apply(
+                            lambda v: "N/A" if v is None or (isinstance(v, float) and np.isnan(v)) else v
+                        )
                     show_cols = [c for c in ["run_id", "ts_utc", "git_commit", "spec_version", "hypothesis", "tags_json"] + [c for c in display_df.columns if c not in ("run_id", "ts_utc", "git_commit", "spec_version", "out_dir", "notes", "data_start", "data_end", "config_hash", "env_fingerprint", "hypothesis", "tags_json", "dataset_id", "params_json")] if c in display_df.columns]
                     st_df(display_df[show_cols])
+                    if "sharpe" in display_df.columns and (display_df["sharpe"] == "N/A").any():
+                        st.caption("Sharpe shows N/A when the optimizer cannot construct a valid portfolio PnL (often due to small universe or missing bars).")
 
             with tab_compare:
                 st.subheader("Compare two runs")
@@ -1043,7 +1049,7 @@ def main():
                         ma = metrics_a.set_index("metric_name")["metric_value"].rename("A") if not metrics_a.empty else pd.Series(dtype=float, name="A")
                         mb = metrics_b.set_index("metric_name")["metric_value"].rename("B") if not metrics_b.empty else pd.Series(dtype=float, name="B")
                         diff = pd.concat([ma, mb], axis=1).fillna(float("nan"))
-                        diff["delta"] = diff["B"] - diff["A"]
+                        diff["delta"] = pd.to_numeric(diff["B"], errors="coerce") - pd.to_numeric(diff["A"], errors="coerce")
                         diff = diff.reset_index().rename(columns={"index": "metric_name"})
                         st_df(diff.round(6))
 
