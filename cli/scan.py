@@ -604,7 +604,7 @@ def run_scan(
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="DEX scanner: top opportunities")
-    ap.add_argument("--mode", choices=["momentum", "residual_momentum", "volatility_breakout", "mean_reversion"], default="momentum")
+    ap.add_argument("--mode", choices=["momentum", "residual_momentum", "volatility_breakout", "mean_reversion", "cs_multifactor"], default="momentum")
     ap.add_argument("--db", default=None, help="SQLite path")
     ap.add_argument("--freq", default="1h", help="Bar frequency (5min, 15min, 1h, 1D)")
     ap.add_argument("--top", type=int, default=20)
@@ -687,6 +687,28 @@ def main() -> int:
         res = scan_residual_momentum(bars, args.freq, args.top, returns_df=returns_df, lookback_bars=ret_lookback_bars, factor_returns=factor_ret, beta_compress_threshold=getattr(args, "beta_compress_threshold", 0.15))
     elif args.mode == "volatility_breakout":
         res = scan_volatility_breakout(bars, args.freq, args.top, z_threshold=args.z)
+    elif args.mode == "cs_multifactor":
+        try:
+            from crypto_analyzer.cs_factors import build_cs_factor_frame
+            from crypto_analyzer.cs_model import combine_factors
+            cs_df = build_cs_factor_frame(bars, args.freq, lookback=ret_lookback_bars)
+            if cs_df.empty:
+                res = pd.DataFrame()
+            else:
+                sig_df = combine_factors(cs_df)
+                sig_df = sig_df.sort_values(["ts_utc", "signal"], ascending=[False, False])
+                latest_ts = sig_df["ts_utc"].max()
+                latest = sig_df[sig_df["ts_utc"] == latest_ts].head(args.top).copy()
+                parts = latest["pair_key"].str.split(":", n=1, expand=True)
+                latest["chain_id"] = parts[0]
+                latest["pair_address"] = parts[1]
+                label_map = {f"{r['chain_id']}:{r['pair_address']}": f"{r.get('base_symbol', '')}/" f"{r.get('quote_symbol', '')}" for _, r in bars.drop_duplicates(["chain_id", "pair_address"]).iterrows()} if not bars.empty else {}
+                latest["label"] = latest["pair_key"].map(label_map).fillna(latest["pair_key"])
+                latest["return_24h"] = np.nan
+                res = latest[["chain_id", "pair_address", "label", "signal", "return_24h"]].reset_index(drop=True)
+        except Exception as e:
+            print(f"cs_multifactor scan error: {e}", file=sys.stderr)
+            res = pd.DataFrame()
     else:
         res = scan_mean_reversion(bars, args.freq, args.top, z_threshold=-abs(args.z))
 

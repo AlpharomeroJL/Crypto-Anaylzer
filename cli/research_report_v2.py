@@ -73,7 +73,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="M4 research report: signals hygiene, advanced portfolio, deflated Sharpe, PBO, regime")
     ap.add_argument("--freq", default="1h")
     ap.add_argument("--signals", default="clean_momentum,value_vs_beta", help="Comma-separated signal names")
-    ap.add_argument("--portfolio", choices=["simple", "advanced"], default="advanced")
+    ap.add_argument("--portfolio", choices=["simple", "advanced", "qp_ls"], default="advanced")
     ap.add_argument("--cov-method", choices=["ewma", "lw", "shrink"], default="ewma")
     ap.add_argument("--n-trials", type=int, default=50, help="For deflated Sharpe")
     ap.add_argument("--out-dir", default="reports")
@@ -89,6 +89,9 @@ def main() -> int:
     ap.add_argument("--db", default=None)
     ap.add_argument("--strict-integrity", dest="strict_integrity", action="store_true", help="Exit 4 if bad row rate exceeds threshold")
     ap.add_argument("--strict-integrity-pct", dest="strict_integrity_pct", type=float, default=5.0, help="Max allowed bad row %% (default 5); used with --strict-integrity")
+    ap.add_argument("--hypothesis", default=None, help="Hypothesis text for experiment registry")
+    ap.add_argument("--tags", default=None, help="Comma-separated tags for experiment registry")
+    ap.add_argument("--dataset-id", default=None, help="Dataset identifier for experiment registry")
     args = ap.parse_args()
 
     db = args.db or (db_path() if callable(db_path) else db_path())
@@ -438,6 +441,9 @@ def main() -> int:
         run_id = stable_run_id(run_payload)
 
         experiment_db_path = os.environ.get("EXPERIMENT_DB_PATH", str(out_dir / "experiments.db"))
+        from crypto_analyzer.experiments import parse_tags
+        tags_list = parse_tags(args.tags) if getattr(args, "tags", None) else []
+        params_dict = {"freq": args.freq, "signals": args.signals, "portfolio": args.portfolio, "cov_method": args.cov_method}
         experiment_row = {
             "run_id": run_id,
             "ts_utc": ts_now,
@@ -449,6 +455,10 @@ def main() -> int:
             "data_end": str(returns_df.index.max()) if not returns_df.empty else "",
             "config_hash": config_hash,
             "env_fingerprint": env_fp,
+            "hypothesis": getattr(args, "hypothesis", None) or "",
+            "tags": tags_list,
+            "dataset_id": getattr(args, "dataset_id", None) or "",
+            "params": params_dict,
         }
 
         artifacts_for_db = [

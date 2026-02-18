@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import argparse
 import sqlite3
+import sys
+from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 
-import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from crypto_analyzer.config import bars_freqs, db_path

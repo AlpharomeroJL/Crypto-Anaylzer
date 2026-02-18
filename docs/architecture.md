@@ -41,7 +41,12 @@ Data flow: poll → SQLite → materialize bars → research / backtests / repor
 | **crypto_analyzer.data** | Load snapshots, bars, spot series; append spot returns; get factor returns. |
 | **crypto_analyzer.features** | Returns, vol, drawdown, momentum, beta/corr, dispersion, vol/beta regime, lookback helpers. |
 | **crypto_analyzer.factors** | Multi-factor OLS (BTC/ETH spot), rolling regression (`rolling_multifactor_ols`), residual returns/vol/lookback. Falls back to BTC-only when ETH is unavailable. |
-| **crypto_analyzer.experiments** | SQLite experiment registry: persists run metadata, metrics, and artifact hashes for cross-run comparison. |
+| **crypto_analyzer.cs_factors** | Cross-sectional factor construction: size (log liquidity), volume (log vol_h24), momentum (lookback return). Per-timestamp winsorized z-scores across assets. |
+| **crypto_analyzer.cs_model** | Cross-sectional signal combiner: linear weighted sum or rank_sum aggregation of factor scores into composite signal. Default weights: size 0.2, liquidity 0.2, momentum 0.6. |
+| **crypto_analyzer.optimizer** | Constrained QP portfolio optimizer using scipy SLSQP. Handles gross leverage, net exposure, max weight, and long-only constraints. Falls back to rank-based equal weight on failure. |
+| **crypto_analyzer.experiments** | SQLite experiment registry: persists run metadata, hypothesis, tags, metrics, and artifact hashes for cross-run comparison. Supports filtering by tag and hypothesis. |
+| **crypto_analyzer.experiment_store** | Pluggable experiment persistence: SQLiteExperimentStore (default) or PostgresExperimentStore (via EXPERIMENT_DB_DSN env var). Factory `get_experiment_store()` auto-selects backend. |
+| **crypto_analyzer.api** | Read-only REST research API (FastAPI): /health, /latest/allowlist, /experiments/recent, /experiments/{run_id}, /metrics/{name}/history, /reports/latest. |
 | **crypto_analyzer.regimes** | Classify regime from dispersion_z, vol_regime, beta_state; explain_regime. |
 | **crypto_analyzer.signals** | signals_log table; detect_signals (beta compression, dispersion extreme, residual momentum); log_signals. |
 | **crypto_analyzer.ui** | safe_for_streamlit_df, format_percent/float/bps, apply_rounding. |

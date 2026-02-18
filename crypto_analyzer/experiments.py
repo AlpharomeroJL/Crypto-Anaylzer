@@ -31,7 +31,11 @@ CREATE TABLE IF NOT EXISTS experiments (
     data_start      TEXT,
     data_end        TEXT,
     config_hash     TEXT,
-    env_fingerprint TEXT
+    env_fingerprint TEXT,
+    hypothesis      TEXT,
+    tags_json       TEXT,
+    dataset_id      TEXT,
+    params_json     TEXT
 );
 
 CREATE TABLE IF NOT EXISTS experiment_metrics (
@@ -52,9 +56,27 @@ CREATE TABLE IF NOT EXISTS experiment_artifacts (
 """
 
 
+_MIGRATION_COLUMNS = [
+    ("hypothesis", "TEXT"),
+    ("tags_json", "TEXT"),
+    ("dataset_id", "TEXT"),
+    ("params_json", "TEXT"),
+]
+
+
+def _migrate_experiment_tables(conn: sqlite3.Connection) -> None:
+    """Add new columns to older experiment databases that lack them."""
+    for col_name, col_type in _MIGRATION_COLUMNS:
+        try:
+            conn.execute(f"ALTER TABLE experiments ADD COLUMN {col_name} {col_type}")
+        except sqlite3.OperationalError:
+            pass
+
+
 def ensure_experiment_tables(conn: sqlite3.Connection) -> None:
     """Create experiment registry tables if they do not exist."""
     conn.executescript(_SCHEMA_SQL)
+    _migrate_experiment_tables(conn)
 
 
 # ---------------------------------------------------------------------------
@@ -82,11 +104,20 @@ def record_experiment_run(
     with sqlite3.connect(db_path) as conn:
         ensure_experiment_tables(conn)
 
+        tags_raw = experiment_row.get("tags_json")
+        if isinstance(tags_raw, list):
+            tags_raw = json.dumps(tags_raw)
+
+        params_raw = experiment_row.get("params_json")
+        if isinstance(params_raw, dict):
+            params_raw = json.dumps(params_raw)
+
         conn.execute(
             """INSERT OR REPLACE INTO experiments
                (run_id, ts_utc, git_commit, spec_version, out_dir, notes,
-                data_start, data_end, config_hash, env_fingerprint)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                data_start, data_end, config_hash, env_fingerprint,
+                hypothesis, tags_json, dataset_id, params_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 run_id,
                 experiment_row.get("ts_utc", ""),
@@ -98,6 +129,10 @@ def record_experiment_run(
                 experiment_row.get("data_end", ""),
                 experiment_row.get("config_hash", ""),
                 experiment_row.get("env_fingerprint", ""),
+                experiment_row.get("hypothesis"),
+                tags_raw,
+                experiment_row.get("dataset_id"),
+                params_raw,
             ),
         )
 
@@ -211,6 +246,46 @@ def load_distinct_metric_names(db_path: str | Path) -> List[str]:
             return [row[0] for row in cur.fetchall()]
     except Exception:
         return []
+
+
+# ---------------------------------------------------------------------------
+# Helpers – tag parsing and filtered loading
+# ---------------------------------------------------------------------------
+
+def parse_tags(s: str) -> list[str]:
+    """Split a comma-separated tag string into a cleaned list."""
+    if not s:
+        return []
+    return [t.strip() for t in s.split(",") if t.strip()]
+
+
+def load_experiments_filtered(
+    db_path: str | Path,
+    tag: Optional[str] = None,
+    search: Optional[str] = None,
+    limit: int = 200,
+) -> pd.DataFrame:
+    """Load experiments with optional tag / hypothesis filters."""
+    db_path = str(db_path)
+    if not os.path.isfile(db_path):
+        return pd.DataFrame()
+    try:
+        with sqlite3.connect(db_path) as conn:
+            ensure_experiment_tables(conn)
+            clauses: list[str] = []
+            params: list[Any] = []
+            if tag:
+                clauses.append("tags_json LIKE ?")
+                params.append(f'%"{tag}"%')
+            if search:
+                clauses.append("hypothesis LIKE ?")
+                params.append(f"%{search}%")
+            where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+            query = f"SELECT * FROM experiments{where} ORDER BY ts_utc DESC LIMIT ?"
+            params.append(limit)
+            return pd.read_sql_query(query, conn, params=params)
+    except Exception:
+        return pd.DataFrame()
 
 
 # ---------------------------------------------------------------------------

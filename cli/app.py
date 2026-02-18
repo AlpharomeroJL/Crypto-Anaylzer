@@ -990,12 +990,23 @@ def main():
                 load_experiment_metrics as load_exp_metrics,
                 load_metric_history as load_mhist,
                 load_distinct_metric_names as load_mnames,
+                load_experiments_filtered as load_exp_filtered,
             )
             tab_runs, tab_compare, tab_hist = st.tabs(["Run List", "Compare Runs", "Metric History"])
 
             with tab_runs:
                 st.subheader("Recent experiment runs")
-                df_runs = load_exp_db(exp_db, limit=200)
+                col_tag, col_search = st.columns(2)
+                with col_tag:
+                    filter_tag = st.text_input("Filter by tag", value="", key="exp_tag_filter")
+                with col_search:
+                    filter_search = st.text_input("Search hypothesis", value="", key="exp_hyp_search")
+                tag_val = filter_tag.strip() if filter_tag.strip() else None
+                search_val = filter_search.strip() if filter_search.strip() else None
+                if tag_val or search_val:
+                    df_runs = load_exp_filtered(exp_db, tag=tag_val, search=search_val, limit=200)
+                else:
+                    df_runs = load_exp_db(exp_db, limit=200)
                 if df_runs.empty:
                     st.info("No experiments recorded yet. Run `reportv2` to create entries.")
                 else:
@@ -1008,7 +1019,7 @@ def main():
                                 r[m["metric_name"]] = m["metric_value"]
                         preview_rows.append(r)
                     display_df = pd.DataFrame(preview_rows)
-                    show_cols = [c for c in ["run_id", "ts_utc", "git_commit", "spec_version"] + [c for c in display_df.columns if c not in ("run_id", "ts_utc", "git_commit", "spec_version", "out_dir", "notes", "data_start", "data_end", "config_hash", "env_fingerprint")] if c in display_df.columns]
+                    show_cols = [c for c in ["run_id", "ts_utc", "git_commit", "spec_version", "hypothesis", "tags_json"] + [c for c in display_df.columns if c not in ("run_id", "ts_utc", "git_commit", "spec_version", "out_dir", "notes", "data_start", "data_end", "config_hash", "env_fingerprint", "hypothesis", "tags_json", "dataset_id", "params_json")] if c in display_df.columns]
                     st_df(display_df[show_cols])
 
             with tab_compare:

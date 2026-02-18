@@ -4,7 +4,7 @@ A Python research engine that collects real-time cryptocurrency data from decent
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-20%20suites-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-26%20suites-brightgreen.svg)](#testing)
 
 > **Research-only.** This tool analyzes data and produces reports. It does not execute trades, hold API keys, or connect to any broker.
 
@@ -22,12 +22,14 @@ Everything runs from a single SQLite file. No cloud services, no paid APIs, no i
 
 - **Automated data collection** from Dexscreener, Coinbase, and Kraken (no API keys needed) with automatic universe discovery of the most liquid DEX pairs
 - **Multi-factor modeling** that decomposes every asset's returns into systematic factor exposure (BTC + ETH) and an idiosyncratic residual via rolling OLS regression, answering the question: *"Is this asset actually outperforming, or is it just moving with Bitcoin?"* Falls back gracefully to BTC-only when ETH spot data is unavailable.
+- **Cross-sectional multi-factor model** scoring assets per timestamp using size (liquidity), volume, and momentum factors with configurable weights and winsorized z-scores
 - **Signal validation** using Information Coefficient (rank correlation vs future returns), IC decay analysis, and signal orthogonalization to separate real predictive power from noise
-- **Portfolio construction** with volatility targeting, beta-neutral weighting, capacity-aware sizing, and realistic cost modeling (fees + liquidity-based slippage)
+- **Portfolio construction** with volatility targeting, beta-neutral weighting, constrained QP optimization (scipy), capacity-aware sizing, and realistic cost modeling (fees + liquidity-based slippage)
+- **Local research API** (FastAPI) exposing health, experiments, metrics history, and latest reports over REST — no auth, read-only
 - **Walk-forward backtesting** with strict no-lookahead train/test splits, deflated Sharpe ratios, and probability-of-overfitting estimates -- because a backtest that doesn't guard against overfitting is just curve-fitting
 - **Regime detection** that classifies market conditions (risk-off, high dispersion, beta compression) and breaks down performance by regime, so you know *when* a strategy works, not just *whether* it works
 - **Reproducibility and governance** with run manifests that record git commit, environment, data window, and SHA256 hashes of every output artifact
-- **Experiment registry** backed by SQLite that persists run metadata, metrics, and artifacts so runs can be compared over time — with a dedicated Streamlit "Experiments" page for run comparison and metric history charts
+- **Experiment registry** backed by SQLite (with optional Postgres backend) that persists run metadata, hypothesis, tags, metrics, and artifacts so runs can be compared over time — with a dedicated Streamlit "Experiments" page supporting tag/hypothesis filtering, run comparison, and metric history charts
 - **Interactive Streamlit dashboard** with 12 pages: leaderboard, scanner, backtester, market structure, signal journal, research, experiments, and governance views
 
 ---
@@ -98,14 +100,15 @@ pip install -r requirements.txt
 | `universe-poll --universe ...` | Multi-asset universe discovery and polling |
 | `materialize` | Build deterministic OHLCV bars (5min, 15min, 1h, 1D) |
 | `analyze` | Leaderboard analysis with factor decomposition |
-| `scan` | Multi-mode opportunity scanner (momentum, residual, vol breakout, mean reversion) |
+| `scan` | Multi-mode opportunity scanner (momentum, residual, vol breakout, mean reversion, cs_multifactor) |
 | `report` | Cross-sectional research report (IC, decay, portfolio simulation) |
-| `reportv2` | Advanced report (signal orthogonalization, PBO, deflated Sharpe) |
+| `reportv2` | Advanced report (orthogonalization, PBO, deflated Sharpe, QP optimizer, hypothesis/tags) |
 | `daily` | Daily market structure and signal report |
 | `backtest` | Single-asset backtest (trend following, volatility breakout) |
 | `walkforward` | Walk-forward backtest with out-of-sample fold stitching |
-| `streamlit` | Interactive research dashboard (10+ pages) |
-| `test` | Run full pytest suite (18 test files) |
+| `streamlit` | Interactive research dashboard (12 pages) |
+| `api` | Local read-only research API (FastAPI, default localhost:8000) |
+| `test` | Run full pytest suite (26 test files) |
 
 All commands are run as `.\scripts\run.ps1 <command> [args...]`
 
@@ -119,12 +122,17 @@ All commands are run as `.\scripts\run.ps1 <command> [args...]`
 ├── config.yaml                  # Database, universe, and filter settings
 ├── requirements.txt             # Pinned dependencies
 │
-├── crypto_analyzer/             # Core library (21 modules)
+├── crypto_analyzer/             # Core library (27 modules)
 │   ├── config.py                #   Configuration loader (YAML + env overrides)
 │   ├── data.py                  #   Data loading (snapshots, bars, spot prices)
 │   ├── features.py              #   Returns, volatility, drawdown, momentum, beta
 │   ├── factors.py               #   Multi-factor OLS (BTC/ETH), rolling regression, residuals
-│   ├── experiments.py           #   SQLite experiment registry for cross-run comparison
+│   ├── cs_factors.py            #   Cross-sectional factor construction (size, liquidity, momentum)
+│   ├── cs_model.py              #   Cross-sectional signal combiner (linear, rank_sum)
+│   ├── optimizer.py             #   Constrained QP portfolio optimizer (scipy SLSQP)
+│   ├── experiments.py           #   SQLite experiment registry with hypothesis/tags
+│   ├── experiment_store.py      #   Pluggable store: SQLite (default) or Postgres backend
+│   ├── api.py                   #   Read-only REST research API (FastAPI)
 │   ├── regimes.py               #   Market regime classification
 │   ├── signals.py               #   Signal detection and journal logging
 │   ├── portfolio.py             #   Vol targeting, risk parity, beta neutralization
@@ -152,13 +160,15 @@ All commands are run as `.\scripts\run.ps1 <command> [args...]`
 │   ├── backtest.py              #   Single-asset backtester
 │   ├── backtest_walkforward.py  #   Walk-forward backtest runner
 │   ├── research_report.py       #   Cross-sectional research report
-│   ├── research_report_v2.py    #   Advanced report (orthogonalization, PBO)
+│   ├── research_report_v2.py    #   Advanced report (orthogonalization, PBO, QP)
 │   ├── report_daily.py          #   Daily signal and market structure report
+│   ├── api.py                   #   Local research API launcher (uvicorn)
 │   └── dashboard.py             #   Bloomberg-style terminal dashboard
 │
 ├── tools/                       # Utility and maintenance scripts
 ├── scripts/                     # PowerShell runners and service configs
-├── tests/                       # 18 pytest suites
+├── tests/                       # 26 pytest suites
+├── pyproject.toml               # Package metadata; pip install -e . / -e ".[api,postgres]"
 └── docs/                        # Architecture, deployment, and methodology
 ```
 
@@ -177,8 +187,52 @@ All commands are run as `.\scripts\run.ps1 <command> [args...]`
 .\scripts\run.ps1 doctor
 .\scripts\run.ps1 universe-poll --universe --universe-chain solana --interval 60
 .\scripts\run.ps1 materialize --freq 1h
-.\scripts\run.ps1 reportv2 --freq 1h --out-dir reports
+.\scripts\run.ps1 reportv2 --freq 1h --out-dir reports --hypothesis "baseline momentum" --tags "v1,momentum"
 .\scripts\run.ps1 streamlit
+```
+
+---
+
+## Install
+
+```bash
+pip install -e .              # core (numpy, pandas, streamlit, plotly)
+pip install -e ".[api]"       # + FastAPI / uvicorn for local research API
+pip install -e ".[postgres]"  # + SQLAlchemy / psycopg2 for Postgres experiment backend
+pip install -e ".[dev]"       # + pytest
+```
+
+Or use `requirements.txt` for a fully pinned environment.
+
+---
+
+## Local Research API
+
+```bash
+.\scripts\run.ps1 api                        # start on localhost:8000
+# or: python cli/api.py --host 0.0.0.0 --port 8000
+
+curl http://localhost:8000/health
+curl http://localhost:8000/experiments/recent?limit=5
+curl http://localhost:8000/metrics/sharpe/history
+```
+
+Endpoints: `/health`, `/latest/allowlist`, `/experiments/recent`, `/experiments/{run_id}`, `/metrics/{name}/history`, `/reports/latest`. All read-only, no auth.
+
+---
+
+## Experiment Registry
+
+Experiments are recorded automatically by `reportv2`. Use `--hypothesis` and `--tags` for queryable metadata:
+
+```powershell
+.\scripts\run.ps1 reportv2 --freq 1h --hypothesis "test residual momentum" --tags "momentum,v2"
+```
+
+Set `EXPERIMENT_DB_DSN` to a Postgres connection string for cloud-backed storage (optional; SQLite is the default):
+
+```bash
+export EXPERIMENT_DB_DSN="postgresql://user:pass@host:5432/experiments"
 ```
 
 ---
@@ -205,7 +259,7 @@ All commands are run as `.\scripts\run.ps1 <command> [args...]`
 .\scripts\run.ps1 test
 ```
 
-20 test suites covering: return computation correctness, multi-factor OLS decomposition, experiment registry (SQLite), portfolio construction, walk-forward split generation (no lookahead), statistical methods (bootstrap, IC), universe management (churn control, deterministic ranking), governance (manifests, hashing), and data integrity assertions.
+26 test suites covering: return computation correctness, multi-factor OLS decomposition, cross-sectional factor model, constrained QP optimizer, experiment registry (SQLite + metadata/tagging), experiment store (SQLite/Postgres), REST API smoke tests, console entrypoints, portfolio construction, walk-forward split generation (no lookahead), statistical methods (bootstrap, IC), universe management (churn control, deterministic ranking), governance (manifests, hashing), and data integrity assertions.
 
 ---
 
@@ -213,12 +267,13 @@ All commands are run as `.\scripts\run.ps1 <command> [args...]`
 
 | Layer | Technology |
 |-------|------------|
-| **Core** | Python 3.10+, pandas, NumPy |
-| **Storage** | SQLite (zero-config, single-file) |
+| **Core** | Python 3.10+, pandas, NumPy, SciPy |
+| **Storage** | SQLite (default), Postgres (optional via `EXPERIMENT_DB_DSN`) |
+| **API** | FastAPI + Uvicorn (optional `[api]` extra) |
 | **Visualization** | Streamlit, Plotly, Matplotlib |
-| **Statistics** | scikit-learn (optional: Ledoit-Wolf shrinkage) |
+| **Statistics** | SciPy (QP optimizer), scikit-learn (optional: Ledoit-Wolf) |
 | **Data Sources** | Dexscreener, Coinbase, Kraken (no API keys) |
-| **Testing** | pytest (20 suites) |
+| **Testing** | pytest (26 suites) |
 | **Deployment** | NSSM Windows service (optional 24/7 polling) |
 
 ---

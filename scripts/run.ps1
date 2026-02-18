@@ -53,13 +53,14 @@ switch ($Command) {
     "backtest"       { & $py cli/backtest.py @filtered; exit $LASTEXITCODE }
     "walkforward"    { & $py cli/backtest_walkforward.py @filtered; exit $LASTEXITCODE }
     "streamlit"      { & $py -m streamlit run cli/app.py @filtered; exit $LASTEXITCODE }
+    "api"            { & $py cli/api.py @filtered; exit $LASTEXITCODE }
     "doctor"         { & $py -m crypto_analyzer.doctor @filtered; exit $LASTEXITCODE }
     "test"           { & $py -m pytest tests/ @filtered; exit $LASTEXITCODE }
     default          {
         if ($Command) { & $py $Command @filtered; exit $LASTEXITCODE } else {
             Write-Host "Usage: .\scripts\run.ps1 [-SkipDoctor] <command> [args...]"
             Write-Host "Commands: poll, universe-poll, materialize, analyze, scan, report, reportv2,"
-            Write-Host "          daily, backtest, walkforward, streamlit, doctor, test"
+            Write-Host "          daily, backtest, walkforward, streamlit, api, doctor, test"
             Write-Host "  -SkipDoctor  Skip pre-flight doctor (default: run doctor before most commands)"
             exit 1
         }

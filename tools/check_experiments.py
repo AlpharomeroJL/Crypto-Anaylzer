@@ -24,8 +24,14 @@ def main() -> int:
     ap.add_argument("--db", default=os.environ.get("EXPERIMENT_DB_PATH", "reports/experiments.db"))
     args = ap.parse_args()
 
+    dsn = os.environ.get("EXPERIMENT_DB_DSN")
     db = args.db
-    if not os.path.isfile(db):
+    if dsn:
+        host_part = dsn.split("@")[-1].split("/")[0] if "@" in dsn else dsn[:40]
+        print(f"Backend: Postgres (host={host_part})")
+    else:
+        print(f"Backend: SQLite")
+    if not os.path.isfile(db) and not dsn:
         print(f"No experiment DB at {db}. Run reportv2 first.")
         return 0
 
