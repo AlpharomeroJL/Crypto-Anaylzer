@@ -44,6 +44,8 @@ def st_df(df: pd.DataFrame, **kwargs: Any) -> Any:
     safe = safe_for_streamlit_df(df)
     width_kw = _streamlit_width_kwargs()
     width_kw.update(kwargs)
+    if "width" in width_kw:
+        width_kw.pop("use_container_width", None)
     import streamlit as st
     return st.dataframe(safe, **width_kw)
 
@@ -52,6 +54,8 @@ def st_plot(fig: Any, **kwargs: Any) -> Any:
     """Display Plotly figure with width-compatible kwargs. Use instead of st.plotly_chart."""
     width_kw = _streamlit_width_kwargs()
     width_kw.update(kwargs)
+    if "width" in width_kw:
+        width_kw.pop("use_container_width", None)
     import streamlit as st
     return st.plotly_chart(fig, **width_kw)
 

@@ -6,6 +6,11 @@ Param(
   [string]$OutDir = "reports"
 )
 
+# If you see WinError 10048 (address already in use), kill the existing server:
+#   netstat -ano | findstr :<Port>   # find the PID
+#   taskkill /F /PID <pid>           # kill it
+# Or simply pass a different port: .\tools\triage_api.ps1 -Port 8001
+
 $ErrorActionPreference = "Stop"
 
 function Test-PortFree {
@@ -73,3 +78,4 @@ Write-Host ""
 Write-Host "Done."
 Write-Host "API should be running at: http://$HostAddr`:$freePort"
 Write-Host "Tip: If /experiments/recent is still [], the API and reportv2 may be pointing at different EXPERIMENT_DB_PATH values."
+Write-Host "Tip: If you see WinError 10048, a server is already running on that port. Use netstat/taskkill or change -Port."

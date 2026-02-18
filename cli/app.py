@@ -3,7 +3,7 @@
 Crypto quant monitoring + research dashboard.
 Pages: Overview (leaderboard), Pair detail, Scanner, Backtest.
 Run: streamlit run app.py
-Uses use_container_width=True for dataframe/chart width (width='stretch' can error in some Streamlit versions).
+Width handled by crypto_analyzer.ui helpers (width='stretch' on Streamlit >= 1.40, use_container_width fallback for older).
 """
 from __future__ import annotations
 
