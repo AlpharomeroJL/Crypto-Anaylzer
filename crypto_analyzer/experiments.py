@@ -1,15 +1,221 @@
 """
-Lightweight local experiment logging. Research-only.
+Experiment registry backed by SQLite. Persists run metadata, metrics, and artifacts
+so runs can be compared over time. Complements (does not replace) JSON manifest flow.
+Research-only.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
+
+# ---------------------------------------------------------------------------
+# Schema
+# ---------------------------------------------------------------------------
+
+_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS experiments (
+    run_id          TEXT PRIMARY KEY,
+    ts_utc          TEXT NOT NULL,
+    git_commit      TEXT,
+    spec_version    TEXT,
+    out_dir         TEXT,
+    notes           TEXT,
+    data_start      TEXT,
+    data_end        TEXT,
+    config_hash     TEXT,
+    env_fingerprint TEXT
+);
+
+CREATE TABLE IF NOT EXISTS experiment_metrics (
+    run_id       TEXT NOT NULL,
+    metric_name  TEXT NOT NULL,
+    metric_value REAL,
+    PRIMARY KEY (run_id, metric_name),
+    FOREIGN KEY (run_id) REFERENCES experiments(run_id)
+);
+
+CREATE TABLE IF NOT EXISTS experiment_artifacts (
+    run_id        TEXT NOT NULL,
+    artifact_path TEXT NOT NULL,
+    sha256        TEXT,
+    PRIMARY KEY (run_id, artifact_path),
+    FOREIGN KEY (run_id) REFERENCES experiments(run_id)
+);
+"""
+
+
+def ensure_experiment_tables(conn: sqlite3.Connection) -> None:
+    """Create experiment registry tables if they do not exist."""
+    conn.executescript(_SCHEMA_SQL)
+
+
+# ---------------------------------------------------------------------------
+# Write
+# ---------------------------------------------------------------------------
+
+def record_experiment_run(
+    db_path: str | Path,
+    experiment_row: Dict[str, Any],
+    metrics_dict: Optional[Dict[str, float]] = None,
+    artifacts_list: Optional[List[Dict[str, str]]] = None,
+) -> str:
+    """
+    Insert (or upsert) one experiment run with its metrics and artifacts.
+
+    experiment_row must contain at least ``run_id`` and ``ts_utc``.
+    metrics_dict: {metric_name: metric_value}
+    artifacts_list: [{"artifact_path": ..., "sha256": ...}, ...]
+
+    Returns the run_id.
+    """
+    db_path = str(db_path)
+    run_id = experiment_row["run_id"]
+
+    with sqlite3.connect(db_path) as conn:
+        ensure_experiment_tables(conn)
+
+        conn.execute(
+            """INSERT OR REPLACE INTO experiments
+               (run_id, ts_utc, git_commit, spec_version, out_dir, notes,
+                data_start, data_end, config_hash, env_fingerprint)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                run_id,
+                experiment_row.get("ts_utc", ""),
+                experiment_row.get("git_commit", ""),
+                experiment_row.get("spec_version", ""),
+                experiment_row.get("out_dir", ""),
+                experiment_row.get("notes", ""),
+                experiment_row.get("data_start", ""),
+                experiment_row.get("data_end", ""),
+                experiment_row.get("config_hash", ""),
+                experiment_row.get("env_fingerprint", ""),
+            ),
+        )
+
+        if metrics_dict:
+            for mname, mval in metrics_dict.items():
+                try:
+                    val = float(mval) if mval is not None else None
+                except (TypeError, ValueError):
+                    val = None
+                conn.execute(
+                    """INSERT OR REPLACE INTO experiment_metrics
+                       (run_id, metric_name, metric_value) VALUES (?, ?, ?)""",
+                    (run_id, str(mname), val),
+                )
+
+        if artifacts_list:
+            for art in artifacts_list:
+                conn.execute(
+                    """INSERT OR REPLACE INTO experiment_artifacts
+                       (run_id, artifact_path, sha256) VALUES (?, ?, ?)""",
+                    (run_id, art.get("artifact_path", ""), art.get("sha256", "")),
+                )
+
+    return run_id
+
+
+# ---------------------------------------------------------------------------
+# Read
+# ---------------------------------------------------------------------------
+
+def load_experiments(db_or_dir: str | Path, limit: int = 200) -> pd.DataFrame:
+    """
+    Load experiment rows.
+
+    If db_or_dir is a directory, falls back to legacy CSV loading (experiments.csv).
+    If db_or_dir is a .db / .sqlite file, reads from the SQLite registry.
+    """
+    p = str(db_or_dir)
+    if os.path.isdir(p):
+        csv_path = os.path.join(p, "experiments.csv")
+        if not os.path.isfile(csv_path):
+            return pd.DataFrame()
+        return pd.read_csv(csv_path)
+    if not os.path.isfile(p):
+        return pd.DataFrame()
+    try:
+        with sqlite3.connect(p) as conn:
+            ensure_experiment_tables(conn)
+            df = pd.read_sql_query(
+                "SELECT * FROM experiments ORDER BY ts_utc DESC LIMIT ?",
+                conn,
+                params=(limit,),
+            )
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
+def load_experiment_metrics(db_path: str | Path, run_id: str) -> pd.DataFrame:
+    """Load metrics for a single run_id."""
+    db_path = str(db_path)
+    if not os.path.isfile(db_path):
+        return pd.DataFrame()
+    try:
+        with sqlite3.connect(db_path) as conn:
+            ensure_experiment_tables(conn)
+            df = pd.read_sql_query(
+                "SELECT * FROM experiment_metrics WHERE run_id = ?",
+                conn,
+                params=(run_id,),
+            )
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
+def load_metric_history(
+    db_path: str | Path, metric_name: str, limit: int = 500
+) -> pd.DataFrame:
+    """Load metric_value over time for a given metric_name across all runs."""
+    db_path = str(db_path)
+    if not os.path.isfile(db_path):
+        return pd.DataFrame()
+    try:
+        with sqlite3.connect(db_path) as conn:
+            ensure_experiment_tables(conn)
+            df = pd.read_sql_query(
+                """SELECT m.run_id, e.ts_utc, m.metric_name, m.metric_value
+                   FROM experiment_metrics m
+                   JOIN experiments e ON m.run_id = e.run_id
+                   WHERE m.metric_name = ?
+                   ORDER BY e.ts_utc DESC
+                   LIMIT ?""",
+                conn,
+                params=(metric_name, limit),
+            )
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
+def load_distinct_metric_names(db_path: str | Path) -> List[str]:
+    """Return sorted list of distinct metric names in the registry."""
+    db_path = str(db_path)
+    if not os.path.isfile(db_path):
+        return []
+    try:
+        with sqlite3.connect(db_path) as conn:
+            ensure_experiment_tables(conn)
+            cur = conn.execute("SELECT DISTINCT metric_name FROM experiment_metrics ORDER BY metric_name")
+            return [row[0] for row in cur.fetchall()]
+    except Exception:
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Legacy compatibility – keep log_experiment / load_experiments(dir) working
+# ---------------------------------------------------------------------------
 
 def _git_hash() -> Optional[str]:
     try:
@@ -34,8 +240,8 @@ def log_experiment(
     out_dir: str = "reports/experiments",
 ) -> str:
     """
-    Write experiment JSON (timestamp, git hash, config, metrics) and append a row to experiments.csv.
-    Returns path to the written JSON file.
+    Legacy experiment logger: writes JSON + appends to experiments.csv.
+    Kept for backward compatibility with existing callers.
     """
     os.makedirs(out_dir, exist_ok=True)
     ts = datetime.now(timezone.utc).isoformat()
@@ -48,7 +254,7 @@ def log_experiment(
         "metrics": metrics_dict,
         "artifacts": list(artifacts_paths or []),
     }
-    # Safe JSON (non-serializable -> str)
+
     def _enc(o: Any) -> Any:
         if isinstance(o, dict):
             return {str(k): _enc(v) for k, v in o.items()}
@@ -71,7 +277,6 @@ def log_experiment(
     path = os.path.join(out_dir, fname)
     with open(path, "w") as f:
         json.dump(payload_enc, f, indent=2)
-    # Append to experiments.csv
     csv_path = os.path.join(out_dir, "experiments.csv")
     row = {
         "run_name": run_name,
@@ -85,11 +290,3 @@ def log_experiment(
     else:
         df_row.to_csv(csv_path, mode="w", header=True, index=False)
     return path
-
-
-def load_experiments(out_dir: str = "reports/experiments") -> pd.DataFrame:
-    """Load experiments table from experiments.csv."""
-    csv_path = os.path.join(out_dir, "experiments.csv")
-    if not os.path.isfile(csv_path):
-        return pd.DataFrame()
-    return pd.read_csv(csv_path)

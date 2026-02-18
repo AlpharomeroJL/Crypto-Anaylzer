@@ -40,7 +40,8 @@ Data flow: poll → SQLite → materialize bars → research / backtests / repor
 | **crypto_analyzer.config** | DB path, table, price column, filters, defaults; YAML + env overrides. |
 | **crypto_analyzer.data** | Load snapshots, bars, spot series; append spot returns; get factor returns. |
 | **crypto_analyzer.features** | Returns, vol, drawdown, momentum, beta/corr, dispersion, vol/beta regime, lookback helpers. |
-| **crypto_analyzer.factors** | Factor matrix (BTC/ETH spot), OLS betas, residual returns/vol/lookback. |
+| **crypto_analyzer.factors** | Multi-factor OLS (BTC/ETH spot), rolling regression (`rolling_multifactor_ols`), residual returns/vol/lookback. Falls back to BTC-only when ETH is unavailable. |
+| **crypto_analyzer.experiments** | SQLite experiment registry: persists run metadata, metrics, and artifact hashes for cross-run comparison. |
 | **crypto_analyzer.regimes** | Classify regime from dispersion_z, vol_regime, beta_state; explain_regime. |
 | **crypto_analyzer.signals** | signals_log table; detect_signals (beta compression, dispersion extreme, residual momentum); log_signals. |
 | **crypto_analyzer.ui** | safe_for_streamlit_df, format_percent/float/bps, apply_rounding. |

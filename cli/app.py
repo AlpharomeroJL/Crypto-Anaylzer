@@ -8,6 +8,7 @@ Uses use_container_width=True for dataframe/chart width (width='stretch' can err
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -65,7 +66,14 @@ from crypto_analyzer.portfolio_advanced import optimize_long_short_portfolio
 from crypto_analyzer.risk_model import estimate_covariance
 from crypto_analyzer.multiple_testing import deflated_sharpe_ratio, reality_check_warning, pbo_proxy_walkforward
 from crypto_analyzer.evaluation import conditional_metrics
-from crypto_analyzer.experiments import load_experiments
+from crypto_analyzer.experiments import (
+    load_experiments as load_experiments_legacy,
+    load_experiments as _load_exp_sqlite,
+    load_experiment_metrics,
+    load_metric_history,
+    load_distinct_metric_names,
+    ensure_experiment_tables,
+)
 from backtest import metrics as backtest_metrics, run_trend_strategy, run_vol_breakout_strategy
 from crypto_analyzer.features import (
     bars_per_year,
@@ -166,7 +174,7 @@ def main():
     st.title("Crypto Quant Monitoring & Research")
 
     db_path_str = st.sidebar.text_input("DB path", value=get_db_path())
-    page = st.sidebar.radio("Page", ["Overview", "Pair detail", "Scanner", "Backtest", "Walk-Forward", "Market Structure", "Signals", "Research", "Institutional Research", "Runtime / Health", "Governance"])
+    page = st.sidebar.radio("Page", ["Overview", "Pair detail", "Scanner", "Backtest", "Walk-Forward", "Market Structure", "Signals", "Research", "Institutional Research", "Experiments", "Runtime / Health", "Governance"])
 
     if page == "Overview":
         st.header("Overview")
@@ -954,10 +962,10 @@ def main():
                 except Exception as e:
                     st.error(str(e))
         with tab_exp:
-            st.subheader("Experiments (past runs)")
+            st.subheader("Experiments (past runs — legacy CSV)")
             try:
                 exp_dir = Path("reports/experiments")
-                df_exp = load_experiments(str(exp_dir))
+                df_exp = load_experiments_legacy(str(exp_dir))
                 if df_exp.empty:
                     st.info("No experiments logged. Run research_report_v2.py to log.")
                 else:
@@ -967,6 +975,93 @@ def main():
                         st.json(df_exp[df_exp["run_name"].astype(str) == str(sel_run)].iloc[0].to_dict())
             except Exception as e:
                 st.error(str(e))
+
+    elif page == "Experiments":
+        st.header("Experiments (SQLite registry)")
+        exp_db = os.environ.get("EXPERIMENT_DB_PATH", str(Path("reports") / "experiments.db"))
+        st.sidebar.text_input("Experiment DB", value=exp_db, key="exp_db_path")
+        exp_db = st.session_state.get("exp_db_path", exp_db)
+
+        if not os.path.isfile(exp_db):
+            st.info("No experiment database found. Run `reportv2` first to record experiments.")
+        else:
+            from crypto_analyzer.experiments import (
+                load_experiments as load_exp_db,
+                load_experiment_metrics as load_exp_metrics,
+                load_metric_history as load_mhist,
+                load_distinct_metric_names as load_mnames,
+            )
+            tab_runs, tab_compare, tab_hist = st.tabs(["Run List", "Compare Runs", "Metric History"])
+
+            with tab_runs:
+                st.subheader("Recent experiment runs")
+                df_runs = load_exp_db(exp_db, limit=200)
+                if df_runs.empty:
+                    st.info("No experiments recorded yet. Run `reportv2` to create entries.")
+                else:
+                    preview_rows = []
+                    for _, row in df_runs.iterrows():
+                        r = row.to_dict()
+                        metrics = load_exp_metrics(exp_db, row["run_id"])
+                        if not metrics.empty:
+                            for _, m in metrics.head(5).iterrows():
+                                r[m["metric_name"]] = m["metric_value"]
+                        preview_rows.append(r)
+                    display_df = pd.DataFrame(preview_rows)
+                    show_cols = [c for c in ["run_id", "ts_utc", "git_commit", "spec_version"] + [c for c in display_df.columns if c not in ("run_id", "ts_utc", "git_commit", "spec_version", "out_dir", "notes", "data_start", "data_end", "config_hash", "env_fingerprint")] if c in display_df.columns]
+                    st_df(display_df[show_cols])
+
+            with tab_compare:
+                st.subheader("Compare two runs")
+                df_runs = load_exp_db(exp_db, limit=200)
+                if df_runs.empty or len(df_runs) < 1:
+                    st.info("Need at least 1 experiment run to compare.")
+                else:
+                    run_ids = df_runs["run_id"].tolist()
+                    run_labels = [f"{r} ({t})" for r, t in zip(df_runs["run_id"], df_runs["ts_utc"])]
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        idx_a = st.selectbox("Run A", range(len(run_ids)), format_func=lambda i: run_labels[i], key="cmp_a")
+                    with col_b:
+                        idx_b = st.selectbox("Run B", range(len(run_ids)), index=min(1, len(run_ids) - 1), format_func=lambda i: run_labels[i], key="cmp_b")
+                    metrics_a = load_exp_metrics(exp_db, run_ids[idx_a])
+                    metrics_b = load_exp_metrics(exp_db, run_ids[idx_b])
+                    if metrics_a.empty and metrics_b.empty:
+                        st.info("No metrics for selected runs.")
+                    else:
+                        ma = metrics_a.set_index("metric_name")["metric_value"].rename("A") if not metrics_a.empty else pd.Series(dtype=float, name="A")
+                        mb = metrics_b.set_index("metric_name")["metric_value"].rename("B") if not metrics_b.empty else pd.Series(dtype=float, name="B")
+                        diff = pd.concat([ma, mb], axis=1).fillna(float("nan"))
+                        diff["delta"] = diff["B"] - diff["A"]
+                        diff = diff.reset_index().rename(columns={"index": "metric_name"})
+                        st_df(diff.round(6))
+
+            with tab_hist:
+                st.subheader("Metric history across runs")
+                mnames = load_mnames(exp_db)
+                if not mnames:
+                    st.info("No metrics in registry.")
+                else:
+                    sel_metric = st.selectbox("Metric", mnames, key="hist_metric")
+                    hist_df = load_mhist(exp_db, sel_metric, limit=500)
+                    if hist_df.empty:
+                        st.info(f"No data for {sel_metric}.")
+                    else:
+                        hist_df["ts_utc"] = pd.to_datetime(hist_df["ts_utc"], errors="coerce")
+                        hist_df = hist_df.sort_values("ts_utc")
+                        fig_hist = go.Figure()
+                        fig_hist.add_trace(go.Scatter(
+                            x=hist_df["ts_utc"], y=hist_df["metric_value"],
+                            mode="lines+markers", name=sel_metric,
+                        ))
+                        fig_hist.update_layout(
+                            title=f"{sel_metric} over time",
+                            xaxis_title="Run time (UTC)",
+                            yaxis_title=sel_metric,
+                            height=400,
+                        )
+                        st_plot(fig_hist, use_container_width=True)
+                        st_df(hist_df[["run_id", "ts_utc", "metric_value"]].round(6))
 
     elif page == "Runtime / Health":
         st.header("Runtime / Health")

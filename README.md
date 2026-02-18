@@ -4,7 +4,7 @@ A Python research engine that collects real-time cryptocurrency data from decent
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-18%20suites-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-20%20suites-brightgreen.svg)](#testing)
 
 > **Research-only.** This tool analyzes data and produces reports. It does not execute trades, hold API keys, or connect to any broker.
 
@@ -21,13 +21,14 @@ Everything runs from a single SQLite file. No cloud services, no paid APIs, no i
 ## Main Features
 
 - **Automated data collection** from Dexscreener, Coinbase, and Kraken (no API keys needed) with automatic universe discovery of the most liquid DEX pairs
-- **Factor modeling** that decomposes every asset's returns into a market component (BTC/ETH beta) and an idiosyncratic residual, answering the question: *"Is this asset actually outperforming, or is it just moving with Bitcoin?"*
+- **Multi-factor modeling** that decomposes every asset's returns into systematic factor exposure (BTC + ETH) and an idiosyncratic residual via rolling OLS regression, answering the question: *"Is this asset actually outperforming, or is it just moving with Bitcoin?"* Falls back gracefully to BTC-only when ETH spot data is unavailable.
 - **Signal validation** using Information Coefficient (rank correlation vs future returns), IC decay analysis, and signal orthogonalization to separate real predictive power from noise
 - **Portfolio construction** with volatility targeting, beta-neutral weighting, capacity-aware sizing, and realistic cost modeling (fees + liquidity-based slippage)
 - **Walk-forward backtesting** with strict no-lookahead train/test splits, deflated Sharpe ratios, and probability-of-overfitting estimates -- because a backtest that doesn't guard against overfitting is just curve-fitting
 - **Regime detection** that classifies market conditions (risk-off, high dispersion, beta compression) and breaks down performance by regime, so you know *when* a strategy works, not just *whether* it works
 - **Reproducibility and governance** with run manifests that record git commit, environment, data window, and SHA256 hashes of every output artifact
-- **Interactive Streamlit dashboard** with 10+ pages: leaderboard, scanner, backtester, market structure, signal journal, research, and governance views
+- **Experiment registry** backed by SQLite that persists run metadata, metrics, and artifacts so runs can be compared over time — with a dedicated Streamlit "Experiments" page for run comparison and metric history charts
+- **Interactive Streamlit dashboard** with 12 pages: leaderboard, scanner, backtester, market structure, signal journal, research, experiments, and governance views
 
 ---
 
@@ -40,7 +41,7 @@ Everything runs from a single SQLite file. No cloud services, no paid APIs, no i
 | Treat all crypto as independent | Models cross-sectional structure: correlation, dispersion, beta compression across the full universe |
 | Use correlation as a proxy for factor exposure | Uses OLS beta decomposition that produces residuals with zero factor exposure by construction |
 | No cost modeling or liquidity awareness | Fees (bps) + liquidity-dependent slippage proxy + capacity-constrained position sizing |
-| No audit trail | Every run logs a manifest with git commit, env fingerprint, data window, and output file hashes |
+| No audit trail | Every run logs a manifest with git commit, env fingerprint, data window, output file hashes; plus a SQLite experiment registry for cross-run comparison |
 
 **The core idea:** Most tokens move with BTC. If you don't strip out that market beta first, you can't tell whether a "signal" is real alpha or just noise correlated with Bitcoin. This platform does that decomposition systematically across every asset in the universe.
 
@@ -122,7 +123,8 @@ All commands are run as `.\scripts\run.ps1 <command> [args...]`
 │   ├── config.py                #   Configuration loader (YAML + env overrides)
 │   ├── data.py                  #   Data loading (snapshots, bars, spot prices)
 │   ├── features.py              #   Returns, volatility, drawdown, momentum, beta
-│   ├── factors.py               #   OLS factor regression and residual computation
+│   ├── factors.py               #   Multi-factor OLS (BTC/ETH), rolling regression, residuals
+│   ├── experiments.py           #   SQLite experiment registry for cross-run comparison
 │   ├── regimes.py               #   Market regime classification
 │   ├── signals.py               #   Signal detection and journal logging
 │   ├── portfolio.py             #   Vol targeting, risk parity, beta neutralization
@@ -168,7 +170,16 @@ All commands are run as `.\scripts\run.ps1 <command> [args...]`
 
 **Materialization** -- Raw snapshots are aggregated into deterministic OHLCV bars at four frequencies (5min, 15min, 1h, 1D). The process is idempotent: same input always produces the same output.
 
-**Governance** -- Every research run writes a manifest recording the git commit, Python environment, data window, output SHA256 hashes, and computed metrics, creating a complete audit trail.
+**Governance** -- Every research run writes a manifest recording the git commit, Python environment, data window, output SHA256 hashes, and computed metrics, creating a complete audit trail. Additionally, runs are recorded in a SQLite experiment registry (`reports/experiments.db`) for cross-run metric comparison via the Streamlit "Experiments" page.
+
+**Quick demo:**
+```powershell
+.\scripts\run.ps1 doctor
+.\scripts\run.ps1 universe-poll --universe --universe-chain solana --interval 60
+.\scripts\run.ps1 materialize --freq 1h
+.\scripts\run.ps1 reportv2 --freq 1h --out-dir reports
+.\scripts\run.ps1 streamlit
+```
 
 ---
 
@@ -194,7 +205,7 @@ All commands are run as `.\scripts\run.ps1 <command> [args...]`
 .\scripts\run.ps1 test
 ```
 
-18 test suites covering: return computation correctness, factor decomposition, portfolio construction, walk-forward split generation (no lookahead), statistical methods (bootstrap, IC), universe management (churn control, deterministic ranking), governance (manifests, hashing), and data integrity assertions.
+20 test suites covering: return computation correctness, multi-factor OLS decomposition, experiment registry (SQLite), portfolio construction, walk-forward split generation (no lookahead), statistical methods (bootstrap, IC), universe management (churn control, deterministic ranking), governance (manifests, hashing), and data integrity assertions.
 
 ---
 
@@ -207,7 +218,7 @@ All commands are run as `.\scripts\run.ps1 <command> [args...]`
 | **Visualization** | Streamlit, Plotly, Matplotlib |
 | **Statistics** | scikit-learn (optional: Ledoit-Wolf shrinkage) |
 | **Data Sources** | Dexscreener, Coinbase, Kraken (no API keys) |
-| **Testing** | pytest (18 suites) |
+| **Testing** | pytest (20 suites) |
 | **Deployment** | NSSM Windows service (optional 24/7 polling) |
 
 ---

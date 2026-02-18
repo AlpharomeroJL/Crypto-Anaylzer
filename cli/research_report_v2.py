@@ -7,6 +7,7 @@ Research-only. Does not replace research_report.py.
 from __future__ import annotations
 
 import argparse
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -46,10 +47,11 @@ from crypto_analyzer.portfolio_advanced import optimize_long_short_portfolio
 from crypto_analyzer.risk_model import estimate_covariance
 from crypto_analyzer.evaluation import conditional_metrics, stability_report, lead_lag_analysis
 from crypto_analyzer.multiple_testing import deflated_sharpe_ratio, reality_check_warning, pbo_proxy_walkforward
-from crypto_analyzer.experiments import log_experiment, load_experiments
+from crypto_analyzer.experiments import log_experiment, load_experiments, record_experiment_run
+from crypto_analyzer.factors import build_factor_matrix, rolling_multifactor_ols
 from crypto_analyzer.integrity import assert_monotonic_time_index, assert_no_negative_or_zero_prices, validate_alignment, count_non_positive_prices, bad_row_rate
-from crypto_analyzer.artifacts import ensure_dir, snapshot_outputs, write_json, timestamped_filename
-from crypto_analyzer.governance import make_run_manifest, save_manifest
+from crypto_analyzer.artifacts import ensure_dir, snapshot_outputs, write_json, timestamped_filename, compute_file_sha256
+from crypto_analyzer.governance import make_run_manifest, save_manifest, get_git_commit, get_env_fingerprint, now_utc_iso, stable_run_id
 from crypto_analyzer.diagnostics import build_health_summary, rolling_ic_stability
 
 MIN_ASSETS = 3
@@ -330,7 +332,24 @@ def main() -> int:
     except Exception as e:
         print("Health summary skip:", e)
 
-    # Experiment log
+    # ---- Multi-factor OLS summary metrics ----
+    mf_metrics: dict = {}
+    try:
+        factor_matrix = build_factor_matrix(returns_df)
+        if not factor_matrix.empty:
+            betas_dict, r2_mf, resid_mf = rolling_multifactor_ols(
+                returns_df, factor_matrix, window=72, min_obs=24
+            )
+            if "BTC_spot" in betas_dict and not betas_dict["BTC_spot"].empty:
+                mf_metrics["beta_btc_mean"] = float(betas_dict["BTC_spot"].mean(skipna=True).mean())
+            if "ETH_spot" in betas_dict and not betas_dict["ETH_spot"].empty:
+                mf_metrics["beta_eth_mean"] = float(betas_dict["ETH_spot"].mean(skipna=True).mean())
+            if not r2_mf.empty:
+                mf_metrics["r2_mean"] = float(r2_mf.mean(skipna=True).mean())
+    except Exception as e:
+        print("Multi-factor OLS skip:", e)
+
+    # Experiment log (legacy JSON/CSV)
     try:
         log_experiment(
             run_name=f"research_v2_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}",
@@ -364,6 +383,88 @@ def main() -> int:
             save_manifest(str(out_dir), manifest)
         except Exception as e:
             print("Manifest skip:", e)
+
+    # ---- SQLite experiment registry ----
+    try:
+        from crypto_analyzer.spec import RESEARCH_SPEC_VERSION
+        import hashlib as _hl, json as _js
+
+        pnl_sharpes = {k: float(v.mean() / v.std()) if v.std() and v.std() > 0 else float("nan") for k, v in portfolio_pnls.items()}
+        canonical_metrics: dict = {
+            "universe_size": float(n_assets),
+        }
+        if pnl_sharpes:
+            canonical_metrics["sharpe"] = float(np.nanmean(list(pnl_sharpes.values())))
+        for k, v in pnl_sharpes.items():
+            canonical_metrics[f"sharpe_{k}"] = v
+
+        if portfolio_pnls:
+            for k, pnl in portfolio_pnls.items():
+                eq = (1 + pnl).cumprod()
+                dd = (eq.cummax() - eq) / eq.cummax()
+                canonical_metrics[f"max_drawdown_{k}"] = float(dd.max()) if not dd.empty else float("nan")
+            canonical_metrics["max_drawdown"] = float(np.nanmax([canonical_metrics.get(f"max_drawdown_{k}", float("nan")) for k in portfolio_pnls]))
+
+        if signals_dict:
+            fwd1 = compute_forward_returns(returns_df, 1)
+            for sname, sig in signals_dict.items():
+                ic_ts = information_coefficient(sig, fwd1, method="spearman")
+                if not ic_ts.empty and ic_ts.notna().any():
+                    canonical_metrics[f"mean_ic_{sname}"] = float(ic_ts.mean())
+            ic_vals = [canonical_metrics[k] for k in canonical_metrics if k.startswith("mean_ic_")]
+            if ic_vals:
+                canonical_metrics["mean_ic"] = float(np.nanmean(ic_vals))
+
+        if portfolio_pnls:
+            turnover_vals = []
+            for k in portfolio_pnls:
+                sig = signals_dict.get(k) or (orth_dict.get(k) if orth_dict else None)
+                if sig is not None and not sig.empty:
+                    r = rank_signal_df(sig)
+                    w = long_short_from_ranks(r, args.top_k, args.bottom_k, gross_leverage=1.0)
+                    t = turnover_from_weights(w)
+                    turnover_vals.append(float(t.mean()))
+            if turnover_vals:
+                canonical_metrics["turnover"] = float(np.nanmean(turnover_vals))
+
+        canonical_metrics.update(mf_metrics)
+
+        config_blob = _js.dumps({"freq": args.freq, "signals": args.signals, "portfolio": args.portfolio, "cov_method": args.cov_method}, sort_keys=True)
+        config_hash = _hl.sha256(config_blob.encode()).hexdigest()[:16]
+        env_fp = str(get_env_fingerprint())
+
+        ts_now = now_utc_iso()
+        run_payload = {"name": "research_report_v2", "ts_utc": ts_now, "config_hash": config_hash}
+        run_id = stable_run_id(run_payload)
+
+        experiment_db_path = os.environ.get("EXPERIMENT_DB_PATH", str(out_dir / "experiments.db"))
+        experiment_row = {
+            "run_id": run_id,
+            "ts_utc": ts_now,
+            "git_commit": get_git_commit(),
+            "spec_version": RESEARCH_SPEC_VERSION,
+            "out_dir": str(out_dir),
+            "notes": getattr(args, "notes", "") or "",
+            "data_start": str(returns_df.index.min()) if not returns_df.empty else "",
+            "data_end": str(returns_df.index.max()) if not returns_df.empty else "",
+            "config_hash": config_hash,
+            "env_fingerprint": env_fp,
+        }
+
+        artifacts_for_db = [
+            {"artifact_path": p, "sha256": compute_file_sha256(p)}
+            for p in output_paths
+        ]
+
+        record_experiment_run(
+            db_path=experiment_db_path,
+            experiment_row=experiment_row,
+            metrics_dict=canonical_metrics,
+            artifacts_list=artifacts_for_db,
+        )
+        print(f"Experiment recorded: {run_id} -> {experiment_db_path}")
+    except Exception as e:
+        print("SQLite experiment registry skip:", e)
 
     return 0
 
