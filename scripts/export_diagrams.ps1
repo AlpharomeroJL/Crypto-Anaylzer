@@ -1,4 +1,7 @@
 # Export PlantUML .puml -> SVG and PNG. Requires: Java (on PATH or in Program Files), tools from setup_diagram_tools.ps1.
+# Embeds git commit hash in each SVG <title> for traceability.
+# -Quiet: suppress per-file and "Exporting..." output (e.g. when called from verify).
+param([switch]$Quiet)
 $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
@@ -27,10 +30,25 @@ if (-not $javaExe) { throw "Java not found. Install a JRE/JDK (e.g. https://adop
 
 $env:GRAPHVIZ_DOT = (Join-Path $graphvizBin "dot.exe")
 
-Write-Host "Exporting PlantUML diagrams from $diagramPath"
+# Git commit hash for diagram stamping (traceable to code revision)
+$gitHash = $null
+try {
+  $gitHash = (git -C $root rev-parse --short HEAD 2>$null)
+} catch {}
+if (-not $gitHash) { $gitHash = "unknown" }
+
+if (-not $Quiet) { Write-Host "Diagrams:"; Write-Host "Exporting PlantUML from $diagramPath (stamp: $gitHash)" }
 Get-ChildItem $diagramPath -Filter *.puml -Recurse | ForEach-Object {
-  Write-Host " - $($_.FullName)"
+  if (-not $Quiet) { Write-Host " - $($_.Name)" }
   & $javaExe -jar $plantumlJar -tsvg $_.FullName
   & $javaExe -jar $plantumlJar -tpng $_.FullName
+  $baseName = [System.IO.Path]::GetFileNameWithoutExtension($_.Name)
+  $svgPath = Join-Path $diagramPath "$baseName.svg"
+  if (Test-Path $svgPath) {
+    $content = Get-Content -Path $svgPath -Raw -Encoding UTF8
+    # Append git hash to existing <title> for traceability to code revision
+    $content = $content -replace "(<title>[^<]*)(</title>)", "`$1 ($gitHash)`$2"
+    Set-Content -Path $svgPath -Value $content -NoNewline -Encoding UTF8
+  }
 }
-Write-Host "Done."
+if (-not $Quiet) { Write-Host "Done." }

@@ -22,20 +22,30 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
-# Provider architecture imports
+# Use package ingest API only (no direct db/providers imports)
 _here = Path(__file__).resolve().parent
 sys.path.insert(0, str(_here.parent))
 
-from crypto_analyzer.db.health import ProviderHealthStore
-from crypto_analyzer.db.migrations import run_migrations
-from crypto_analyzer.db.writer import DbWriter
-from crypto_analyzer.providers.base import ProviderStatus
-from crypto_analyzer.providers.defaults import create_default_registry, create_dex_chain, create_spot_chain
+from crypto_analyzer import ingest
 
 logger = logging.getLogger(__name__)
 
 # When --log-file is set, all output is also appended here (for Windows service).
 _log_file: Optional[Any] = None
+
+
+class _DualStreamHandler(logging.Handler):
+    """Emits to stdout and optionally to _log_file (for Windows service)."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        msg = self.format(record)
+        print(msg, flush=True)
+        if _log_file is not None:
+            try:
+                _log_file.write(msg + "\n")
+                _log_file.flush()
+            except Exception:
+                pass
 
 
 def _log(msg: str) -> None:
@@ -1244,140 +1254,84 @@ def main() -> int:
                 _log(f"  {i}. {p.get('label', '?')}  {p.get('pair_address', '')}")
         return universe_cache[0] or []
 
-    conn = sqlite3.connect(DB_PATH)
-    run_migrations(conn)
+    with ingest.get_poll_context(DB_PATH) as ctx:
+        conn = ctx.conn
 
-    # Initialize provider chains
-    registry = create_default_registry()
-    spot_chain = create_spot_chain(registry)
-    dex_chain = create_dex_chain(registry)
-    db_writer = DbWriter(conn)
-    health_store = ProviderHealthStore(conn)
+        # Route ingest logger to stdout (and _log_file when set) so operator sees cycle output
+        _ingest_logger = logging.getLogger("crypto_analyzer.ingest")
+        _ingest_logger.handlers.clear()
+        _h = _DualStreamHandler()
+        _h.setFormatter(logging.Formatter("%(message)s"))
+        _ingest_logger.addHandler(_h)
+        _ingest_logger.setLevel(logging.INFO)
+        _ingest_logger.propagate = False
 
-    # Build dex_pairs list (universe mode needs conn for persist + churn)
-    dex_pairs: List[Dict[str, Any]] = []
-    if universe_enabled:
-        dex_pairs = _get_universe_pairs(conn)
-    if not dex_pairs and args.pairs_from_config:
-        dex_pairs = load_dex_pairs_from_config(args.config)
-    if not dex_pairs:
-        dex_pairs = list(DEFAULT_DEX_PAIRS)
-    for raw in args.pair:
-        if ":" in raw:
-            cid, addr = raw.split(":", 1)
-            dex_pairs.append(
-                {
-                    "chain_id": cid.strip(),
-                    "pair_address": addr.strip(),
-                    "label": f"{cid.strip()}/{addr.strip()[:8]}",
-                }
-            )
+        # Build dex_pairs list (universe mode needs conn for persist + churn)
+        dex_pairs = []
+        if universe_enabled:
+            dex_pairs = _get_universe_pairs(conn)
+        if not dex_pairs and args.pairs_from_config:
+            dex_pairs = load_dex_pairs_from_config(args.config)
+        if not dex_pairs:
+            dex_pairs = list(DEFAULT_DEX_PAIRS)
+        for raw in args.pair:
+            if ":" in raw:
+                cid, addr = raw.split(":", 1)
+                dex_pairs.append(
+                    {
+                        "chain_id": cid.strip(),
+                        "pair_address": addr.strip(),
+                        "label": f"{cid.strip()}/{addr.strip()[:8]}",
+                    }
+                )
 
-    if getattr(args, "log_file", None):
-        log_path = getattr(args, "log_file")
-        os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
-        _log_file = open(log_path, "a", encoding="utf-8")
+        if getattr(args, "log_file", None):
+            log_path = getattr(args, "log_file")
+            os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
+            _log_file = open(log_path, "a", encoding="utf-8")
 
-    # Mutable ref so universe mode can refresh the list each cycle
-    current_dex_pairs: List[List[Dict[str, str]]] = [dex_pairs]
-    spot_priority = ", ".join(p.provider_name for p in spot_chain._providers)
-    _log(f"Writing to SQLite: {DB_PATH}")
-    _log(f"Dex pairs: {len(dex_pairs)}  (universe_mode={universe_enabled})")
-    _log(f"Spot assets: {[s[0] for s in SPOT_ASSETS]}")
-    _log(f"Spot provider chain: [{spot_priority}]")
-    _log(f"DEX provider chain: [{', '.join(p.provider_name for p in dex_chain._providers)}]")
-    _log(f"Poll every {interval_sec}s. Pair delay {args.pair_delay}s. Stop with Ctrl+C.\n")
+        # Mutable ref so universe mode can refresh the list each cycle
+        current_dex_pairs: List[List[Dict[str, str]]] = [dex_pairs]
+        spot_priority = ", ".join(p.provider_name for p in ctx.spot_chain._providers)
+        _log(f"Writing to SQLite: {DB_PATH}")
+        _log(f"Dex pairs: {len(dex_pairs)}  (universe_mode={universe_enabled})")
+        _log(f"Spot assets: {[s[0] for s in ingest.SPOT_ASSETS]}")
+        _log(f"Spot provider chain: [{spot_priority}]")
+        _log(f"DEX provider chain: [{', '.join(p.provider_name for p in ctx.dex_chain._providers)}]")
+        _log(f"Poll every {interval_sec}s. Pair delay {args.pair_delay}s. Stop with Ctrl+C.\n")
 
-    _poll_start = time.time()
-    _run_seconds = getattr(args, "run_seconds", None)
+        _poll_start = time.time()
+        _run_seconds = getattr(args, "run_seconds", None)
 
-    try:
-        while True:
-            if _run_seconds is not None and (time.time() - _poll_start) >= _run_seconds:
-                _log(f"Reached --run-seconds={_run_seconds}. Stopping.")
-                break
-            if universe_enabled:
-                u = _get_universe_pairs(conn)
-                if u:
-                    current_dex_pairs[0] = u
-            dex_pairs_this_cycle = current_dex_pairs[0]
-            ts = utc_now_iso()
-            try:
-                # A) Spot polling via provider chain (Coinbase -> Kraken fallback)
-                spot_quotes = []
-                for symbol, _cb_product, _kraken_pair in SPOT_ASSETS:
-                    try:
-                        quote = spot_chain.get_spot(symbol)
-                        spot_quotes.append(quote)
-                    except Exception as e:
-                        _log(f"WARN spot {symbol}: all providers failed: {e}")
-
-                # Write spot prices with provenance
-                sol_price = spot_quotes[0].price_usd if spot_quotes else 0.0
-                for quote in spot_quotes:
-                    db_writer.write_spot_price(ts, quote)
-
-                # Log which provider served each quote
-                spot_details = []
-                for q in spot_quotes:
-                    provider_tag = q.provider_name
-                    if q.status != ProviderStatus.OK:
-                        provider_tag += f"({q.status.value})"
-                    spot_details.append(f"{q.symbol}={q.price_usd:.2f}[{provider_tag}]")
-
-                # B) DEX pairs via provider chain
-                dex_summaries: List[str] = []
-                for i, p in enumerate(dex_pairs_this_cycle):
-                    chain_id = p["chain_id"]
-                    pair_addr = p["pair_address"]
-                    label = p.get("label", "")
-                    try:
-                        snapshot = dex_chain.get_snapshot(chain_id, pair_addr)
-                        db_writer.write_dex_snapshot(
-                            ts,
-                            snapshot,
-                            sol_price,
-                            spot_source=spot_quotes[0].provider_name if spot_quotes else "unknown",
-                        )
-                        liq = snapshot.liquidity_usd
-                        vol = snapshot.vol_h24
-                        lbl = label or f"{snapshot.base_symbol}/{snapshot.quote_symbol}"
-                        dex_summaries.append(f"[{lbl} liq={liq} vol24={vol}]")
-                    except Exception as e:
-                        _log(f"WARN dex {chain_id}:{pair_addr}: all providers failed: {e}")
-                    if i < len(dex_pairs_this_cycle) - 1 and args.pair_delay > 0:
-                        time.sleep(args.pair_delay)
-
-                db_writer.commit()
-
-                # Persist provider health
+        try:
+            while True:
+                if _run_seconds is not None and (time.time() - _poll_start) >= _run_seconds:
+                    _log(f"Reached --run-seconds={_run_seconds}. Stopping.")
+                    break
+                if universe_enabled:
+                    u = _get_universe_pairs(conn)
+                    if u:
+                        current_dex_pairs[0] = u
+                dex_pairs_this_cycle = current_dex_pairs[0]
                 try:
-                    health_store.upsert_all(spot_chain.get_health())
-                    health_store.upsert_all(dex_chain.get_health())
+                    ingest.run_one_cycle(
+                        ctx,
+                        dex_pairs_this_cycle,
+                        pair_delay=args.pair_delay,
+                    )
+                except Exception as e:
+                    _log(f"{utc_now_iso()}  ERR  {e}")
+
+                time.sleep(interval_sec)
+
+        except KeyboardInterrupt:
+            _log("\nStopped.")
+        finally:
+            if _log_file is not None:
+                try:
+                    _log_file.close()
                 except Exception:
                     pass
-
-                spot_str = "  ".join(spot_details)
-                dex_str = (
-                    f"  dex_pairs={len(dex_pairs_this_cycle)} " + " ".join(dex_summaries)
-                    if dex_summaries
-                    else f"  dex_pairs={len(dex_pairs_this_cycle)} (no ok)"
-                )
-                _log(f"{ts}  OK  {spot_str}{dex_str}")
-            except Exception as e:
-                _log(f"{ts}  ERR  {e}")
-
-            time.sleep(interval_sec)
-
-    except KeyboardInterrupt:
-        _log("\nStopped.")
-    finally:
-        if _log_file is not None:
-            try:
-                _log_file.close()
-            except Exception:
-                pass
-        conn.close()
 
     return 0
 

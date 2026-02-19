@@ -1,0 +1,36 @@
+# Run full verify (doctor, pytest, ruff, diagrams) on every push.
+# Enforces deterministic CI and design governance.
+name: Verify
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Java (for diagram export)
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Create venv and install dependencies
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\pip install -r requirements.txt
+
+      - name: Install diagram tools (PlantUML, Graphviz)
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup_diagram_tools.ps1
+
+      - name: Run verify
+        run: .\scripts\run.ps1 verify

@@ -1,71 +1,103 @@
-# Phase 1 — Commit message and PR description (copy/paste)
+# Phase 1 — Production-grade commit and PR description (copy/paste)
 
-Use the sections below when cutting the Phase 1 merge. Replace `*(PR link)*` in `implementation_ledger.md` with your actual PR URL after the PR is created.
+Replace `*(PR link)*` in `implementation_ledger.md` with your PR URL after merge.
 
----
-
-## 1. Before committing
-
-- Ensure `tmp_rerun_1/` and `tmp_rerun_2/` are not staged (they are in `.gitignore`).
-- Run: `.\scripts\run.ps1 verify` and confirm all steps pass.
+**Before committing:** Ensure `tmp_rerun_1/` and `tmp_rerun_2/` are not staged; run `.\scripts\run.ps1 verify` and confirm all steps pass.
 
 ---
 
-## 2. Conventional commit
+## 1. Conventional commit (production-grade)
 
-**Title (one line):**
-
-```
-feat(spec): Phase 1 — causal residualizer, ValidationBundle, deterministic rerun, ExecutionCostModel
-```
-
-**Body:**
+**Title (72 chars or fewer):**
 
 ```
-Implement Phase 1 of the Architecture Review and Integration Plan: eliminate
-full-sample beta leakage in signal_residual_momentum_24h via causal
-residualization (as_of_lag_bars=1); add ValidationBundle contract and
-reportv2 per-signal emission; add deterministic rerun integration test
-(CRYPTO_ANALYZER_DETERMINISTIC_TIME); unify cost logic in ExecutionCostModel
-used by portfolio.py and cli/backtest.py. No SQLite schema changes.
+feat(spec): Phase 1 — causal residualizer, ValidationBundle, determinism, ExecutionCostModel
+```
+
+**Body (wrap ~72 chars):**
+
+```
+Implement Phase 1 of the Architecture Review and Integration Plan.
+
+- Leakage: Replace full-sample OLS in signal_residual_momentum_24h with
+  causal residualization (as_of_lag_bars=1). Lookahead path quarantined
+  behind allow_lookahead=True; not used by report flows.
+- ValidationBundle: Dataclass contract; reportv2 emits per-signal bundle
+  JSON + IC/decay/turnover CSVs (relative paths, stable hashing).
+- Determinism: CRYPTO_ANALYZER_DETERMINISTIC_TIME stabilizes run_id and
+  manifest; write_json_sorted and stable CSV writer for byte-identical
+  artifacts. Integration test: test_deterministic_rerun_identical_bundle_and_manifest.
+- Cost model: Single ExecutionCostModel (crypto_analyzer/execution_cost.py)
+  used by portfolio.apply_costs_to_portfolio and cli/backtest strategies.
+
+No SQLite schema changes. Backward compatible CLI flags.
+```
+
+**Footer (optional):**
+
+```
+Verification: .\scripts\run.ps1 verify (doctor, pytest, ruff, research-only, diagrams).
+Refs: docs/spec/master_architecture_spec.md, docs/spec/implementation_ledger.md.
 ```
 
 ---
 
-## 3. PR description (paste into GitHub PR body)
+## 2. PR description (paste into GitHub PR body)
 
-**Title:** Same as commit title, or shorten to: `Phase 1: leakage fix, ValidationBundle, determinism, unified cost model`
+**PR title:** `feat(spec): Phase 1 — causal residualizer, ValidationBundle, determinism, ExecutionCostModel`
 
-**Body:**
+**PR body (markdown):**
 
-### Summary
+```markdown
+## Summary
 
-Phase 1 of the Architecture Review and Integration Plan: leakage hardening, ValidationBundle contract, deterministic rerun test, and unified ExecutionCostModel. No SQLite schema changes.
+Phase 1 of the Architecture Review and Integration Plan: leakage hardening, ValidationBundle contract, deterministic rerun guarantees, and unified execution cost model. No SQLite schema changes; CLI interfaces remain backward compatible.
 
-### Evidence bullets
+---
 
-- **Leakage fix:** signal_residual_momentum_24h now uses causal residualization with as_of_lag_bars=1; lookahead path quarantined behind allow_lookahead=True and not used by report flows.
+## Scope
 
-- **Determinism:** CRYPTO_ANALYZER_DETERMINISTIC_TIME stabilizes run_id + manifest timestamps; write_json_sorted + stable CSV writer produce byte-identical artifacts under deterministic mode.
+| Area | Change |
+|------|--------|
+| **Leakage fix** | `signal_residual_momentum_24h` uses causal residualization (`as_of_lag_bars=1`). Full-sample path quarantined behind `allow_lookahead=True` (default `False`); report/reportv2 never use it. |
+| **Determinism** | `CRYPTO_ANALYZER_DETERMINISTIC_TIME` stabilizes `run_id` and manifest timestamps. `write_json_sorted` + stable CSV writer produce byte-identical artifacts. |
+| **ValidationBundle** | New `crypto_analyzer/validation_bundle.py`; reportv2 emits per-signal bundle JSON + IC series/decay/turnover CSVs (relative paths, stable hashing). |
+| **Cost model** | New `crypto_analyzer/execution_cost.py`; `portfolio.apply_costs_to_portfolio` and `cli/backtest` both delegate to `ExecutionCostModel`. |
 
-- **ValidationBundle:** reportv2 emits per-signal ValidationBundle JSON referencing IC/decay/turnover artifacts (relative paths) with stable hashing.
+---
 
-- **Cost model unification:** single ExecutionCostModel used by both portfolio.py and cli/backtest.py.
+## Evidence
 
-- **Verification:** `.\scripts\run.ps1 verify` passes (doctor, pytest, ruff, research-only, diagrams).
+- **Leakage:** Causal residual momentum does not exploit future factor info; sentinel test `test_causal_residual_momentum_no_abnormal_ic` enforces. Lookahead path gated by `allow_lookahead=True`.
+- **Determinism:** With `CRYPTO_ANALYZER_DETERMINISTIC_TIME` set, two reportv2 runs yield identical `run_id`, path-normalized manifest, byte-identical ValidationBundle JSON, and matching artifact SHA256 (`test_deterministic_rerun_identical_bundle_and_manifest`).
+- **ValidationBundle:** Schema: `run_id`, `dataset_id`, `signal_name`, `freq`, `horizons`, `ic_summary_by_horizon`, `ic_decay_table`, `meta`, artifact paths (relative).
+- **Cost model:** Unit tests: same inputs → identical net returns; higher turnover → higher costs; missing liquidity → conservative fallback (50 bps). Portfolio and backtest share one implementation.
 
-### Commands run
+---
+
+## Verification
 
 | Command | Result |
 |---------|--------|
 | `.\scripts\run.ps1 verify` | doctor → pytest → ruff → research-only → diagrams (all pass) |
 
-### Risk / rollback
+---
 
-Rollback: revert the merge; no schema migrations. Watch: reportv2 and backtest use the same CLI flags; cost behavior is unchanged and now centralized in ExecutionCostModel.
+## Files changed (key)
+
+- **New:** `crypto_analyzer/timeutils.py`, `crypto_analyzer/execution_cost.py`, `crypto_analyzer/validation_bundle.py`; `tests/test_leakage_sentinel.py`, `tests/test_reportv2_deterministic_rerun.py`, `tests/test_execution_cost.py`, `tests/test_ingest_context.py`; `docs/spec/*` (ledger, phase1 PR, components).
+- **Modified:** `crypto_analyzer/factors.py` (causal_residual_returns), `crypto_analyzer/alpha_research.py` (signal_residual_momentum_24h causal by default), `crypto_analyzer/portfolio.py` (delegate to ExecutionCostModel), `cli/backtest.py` (use ExecutionCostModel), `cli/research_report_v2.py` (ValidationBundle per signal, early run_id/dataset_id, write_json_sorted); `crypto_analyzer/artifacts.py`, `crypto_analyzer/governance.py`, `crypto_analyzer/ingest/__init__.py`; `pyproject.toml`, `scripts/run.ps1`, `.gitignore`.
 
 ---
 
-## 4. After the PR is merged
+## Risk and rollback
 
-In `docs/spec/implementation_ledger.md`, replace each `*(PR link)*` in the four Phase 1 rows with your actual PR URL (e.g. `https://github.com/AlpharomeroJL/Crypto-Anaylzer/pull/123`).
+- **Rollback:** Revert merge; no schema migrations. No data migration required.
+- **Watch:** reportv2 and backtest retain same CLI flags; cost behavior is unchanged and now centralized. If cost semantics ever need to diverge, extend `ExecutionCostModel` config rather than forking logic.
+```
+
+---
+
+## 3. After merge
+
+In `docs/spec/implementation_ledger.md`, replace each `*(PR link)*` in the four Phase 1 rows with your PR URL.

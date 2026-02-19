@@ -447,6 +447,19 @@ All commands: `.\scripts\run.ps1 <command> [args...]`
 | [Architecture](docs/architecture.md) | Module responsibility matrix |
 | [Deployment](docs/deployment.md) | Windows service setup for 24/7 operation |
 | [Institutional Principles](docs/institutional.md) | Research standards and validation methodology |
+| [Private Conversion Plan](docs/private_conversion.md) | Using OSS as dependency for a private execution layer |
+
+### Architecture Diagrams
+
+All diagrams are maintained in `docs/diagrams/` as PlantUML. See the [diagram index](docs/diagrams/README.md) for a curated list.
+
+To regenerate SVG and PNG outputs:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\export_diagrams.ps1
+```
+
+SVG and PNG outputs are committed for portability.
 
 ---
 

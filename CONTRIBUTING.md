@@ -125,7 +125,11 @@ This platform is strictly research-only. The following are prohibited:
 - Connection to any broker or execution venue
 - Position management or risk management for live capital
 
-The `spec.py` module enforces this boundary by scanning for forbidden keywords.
+**Enforced in CI:** `.\scripts\run.ps1 verify` runs a research-only guardrail that scans source for forbidden keywords (order, submit, broker, exchange account, api key, secret, withdraw, etc.). Any match fails verify with a clear message. See `crypto_analyzer.spec.validate_research_only_boundary` and the keyword list in `spec.py`.
+
+## Private conversion (research → trading bot)
+
+The repo is designed so a **private** execution layer can consume it as a dependency (submodule or vendored) without forking. The OSS code defines the execution boundary (`OrderIntent`, `signal_to_order_intent`) but never submits orders or holds keys. See [Private Conversion Plan](docs/private_conversion.md) for layout and responsibilities.
 
 ## Commit Messages
 

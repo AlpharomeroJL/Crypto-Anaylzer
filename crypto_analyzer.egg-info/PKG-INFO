@@ -1,0 +1,25 @@
+Metadata-Version: 2.4
+Name: crypto-analyzer
+Version: 0.3.0
+Summary: Crypto quantitative research platform
+Requires-Python: >=3.10
+License-File: LICENSE
+Requires-Dist: numpy
+Requires-Dist: pandas
+Requires-Dist: scipy>=1.10.0
+Requires-Dist: PyYAML
+Requires-Dist: plotly
+Requires-Dist: streamlit
+Requires-Dist: requests
+Requires-Dist: matplotlib
+Requires-Dist: pyarrow
+Provides-Extra: api
+Requires-Dist: fastapi>=0.100; extra == "api"
+Requires-Dist: uvicorn[standard]>=0.20; extra == "api"
+Provides-Extra: postgres
+Requires-Dist: sqlalchemy>=2.0; extra == "postgres"
+Requires-Dist: psycopg2-binary>=2.9; extra == "postgres"
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"
+Requires-Dist: ruff>=0.6; extra == "dev"
+Dynamic: license-file

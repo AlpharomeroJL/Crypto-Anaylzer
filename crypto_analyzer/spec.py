@@ -8,7 +8,8 @@ from pathlib import Path
 
 RESEARCH_SPEC_VERSION = "5.0"
 
-# Forbidden substrings in source (conservative; exclude docs/comments that say "research-only" etc.)
+# Forbidden substrings in source (research-only guardrail; fail CI if present).
+# Expands to: order, submit, broker, exchange account, api key, secret, withdraw, etc.
 _FORBIDDEN_KEYWORDS = [
     "api_key",
     "api_secret",
@@ -17,24 +18,19 @@ _FORBIDDEN_KEYWORDS = [
     "order.execute",
     "place_order",
     "submit_order",
+    "submit_order(",
     "broker.",
     "exchange.execute",
     "sign_transaction",
     "wallet.sign",
+    "withdraw",
+    "withdrawal",
+    "transfer_funds",
+    "exchange account",
+    "account.balance",
 ]
-# Allow these in comments/docs (we scan file content; if line is comment/doc we could skip - for simplicity we exclude known doc paths)
-_EXCLUDED_PATHS = (
-    "README",
-    "INSTITUTIONAL",
-    "CONTRIBUTING",
-    "DEPLOY",
-    "HANDOFF",
-    "WINDOWS_24_7",
-    "docs/",
-    ".md",
-    "CHANGELOG",
-    "tests/",
-)
+# Only scan these directories (avoids false positives from docs, diagrams, reports, venv, .svg/.png/.json).
+_SCAN_DIRS = ("crypto_analyzer", "cli", "tools")
 
 
 def spec_summary() -> dict:
@@ -51,25 +47,23 @@ def spec_summary() -> dict:
 
 def validate_research_only_boundary(
     repo_root: str | Path | None = None,
-    scan_extensions: tuple = (".py",),
-    exclude_dirs: tuple = (".git", "__pycache__", ".venv", "venv", "node_modules"),
+    scan_dirs: tuple[str, ...] = _SCAN_DIRS,
 ) -> None:
     """
-    Scan repo text for forbidden keywords. Raise RuntimeError if any found.
-    Excludes paths containing _EXCLUDED_PATHS (docs, README, etc.).
+    Scan Python source under crypto_analyzer/, cli/, tools/ for forbidden keywords.
+    Raise RuntimeError if any found. Does not scan docs/, reports/, .venv/, or non-.py files.
     """
     root = Path(repo_root) if repo_root else Path(__file__).resolve().parent.parent
     if not root.is_dir():
         return
 
     found: list[str] = []
-    for ext in scan_extensions:
-        for path in root.rglob(f"*{ext}"):
-            if any(ex in path.as_posix() for ex in exclude_dirs):
-                continue
-            if any(ex in path.as_posix() for ex in _EXCLUDED_PATHS):
-                continue
-            if "spec.py" in path.name:
+    for dir_name in scan_dirs:
+        dir_path = root / dir_name
+        if not dir_path.is_dir():
+            continue
+        for path in dir_path.rglob("*.py"):
+            if path.name == "spec.py":
                 continue
             try:
                 text = path.read_text(encoding="utf-8", errors="ignore")

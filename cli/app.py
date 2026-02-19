@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import sys
 import traceback
 from pathlib import Path
@@ -30,6 +29,8 @@ from backtest import metrics as backtest_metrics
 from backtest import run_trend_strategy, run_vol_breakout_strategy
 from report_daily import run_momentum_scan, run_risk_snapshot, run_vol_scan
 from scan import run_scan as dex_run_scan
+
+from crypto_analyzer import ingest, read_api
 
 # Aliases avoid UI variable shadowing (UnboundLocalError for rank_signal_df / signal_momentum_24h).
 from crypto_analyzer.alpha_research import (
@@ -118,22 +119,7 @@ def get_db_path() -> str:
 
 def load_latest_universe_allowlist(db_path_override: str, limit: int = 20) -> pd.DataFrame:
     """Load top N rows from universe_allowlist for latest ts_utc (label, chain_id, pair_address, liquidity_usd, vol_h24, source)."""
-    try:
-        with sqlite3.connect(db_path_override) as con:
-            df = pd.read_sql_query(
-                """
-                SELECT label, chain_id, pair_address, liquidity_usd, vol_h24, source
-                FROM universe_allowlist
-                WHERE ts_utc = (SELECT MAX(ts_utc) FROM universe_allowlist)
-                ORDER BY liquidity_usd DESC
-                LIMIT ?
-                """,
-                con,
-                params=(limit,),
-            )
-        return df
-    except (sqlite3.OperationalError, Exception):
-        return pd.DataFrame()
+    return read_api.load_latest_universe_allowlist(db_path_override, limit=limit)
 
 
 def load_leaderboard(freq: str, min_liq: float, min_vol: float, min_bars_count: int):
@@ -1523,11 +1509,7 @@ def main():
         # Provider Health Dashboard
         st.subheader("Provider Health")
         try:
-            from crypto_analyzer.db.health import ProviderHealthStore
-
-            with sqlite3.connect(db_path_str_r) as con_h:
-                health_store = ProviderHealthStore(con_h)
-                provider_healths = health_store.load_all()
+            provider_healths = ingest.get_provider_health(db_path_str_r)
             if provider_healths:
                 health_rows = []
                 for h in provider_healths:
@@ -1567,36 +1549,20 @@ def main():
 
             # Spot price provenance (latest records)
             st.subheader("Latest Spot Prices (with provenance)")
-            with sqlite3.connect(db_path_str_r) as con_s:
-                try:
-                    spot_recent = pd.read_sql_query(
-                        """SELECT ts_utc, symbol, spot_price_usd, spot_source,
-                                  provider_name, fetch_status
-                           FROM spot_price_snapshots
-                           ORDER BY id DESC LIMIT 15""",
-                        con_s,
-                    )
-                    if not spot_recent.empty:
-                        st_df(spot_recent)
-                    else:
-                        st.caption("No spot data yet.")
-                except Exception:
-                    st.caption("Spot provenance columns not yet populated. Run the updated poller.")
+            try:
+                spot_recent = read_api.load_spot_snapshots_recent(db_path_str_r, limit=15)
+                if not spot_recent.empty:
+                    st_df(spot_recent)
+                else:
+                    st.caption("No spot data yet.")
+            except Exception:
+                st.caption("Spot provenance columns not yet populated. Run the updated poller.")
         except Exception as e:
             st.caption(f"Provider health not available: {e}")
 
         st.subheader("Universe allowlist")
         try:
-            with sqlite3.connect(db_path_str_r) as con:
-                cur = con.execute("SELECT MAX(ts_utc), COUNT(DISTINCT ts_utc) FROM universe_allowlist")
-                row = cur.fetchone()
-                latest_ts = row[0] if row and row[0] else None
-                n_refreshes = row[1] if row and row[1] else 0
-                if latest_ts:
-                    cur = con.execute("SELECT COUNT(*) FROM universe_allowlist WHERE ts_utc = ?", (latest_ts,))
-                    universe_size = cur.fetchone()[0]
-                else:
-                    universe_size = 0
+            latest_ts, universe_size, n_refreshes = read_api.load_universe_allowlist_stats(db_path_str_r)
         except Exception:
             latest_ts = None
             n_refreshes = 0
@@ -1634,15 +1600,7 @@ def main():
             language="sql",
         )
         try:
-            with sqlite3.connect(db_path_str_r) as con:
-                allowlist_ver = pd.read_sql_query(
-                    "SELECT ts_utc, COUNT(*) AS n, MIN(source) AS sources_hint FROM universe_allowlist GROUP BY ts_utc ORDER BY ts_utc DESC LIMIT 5",
-                    con,
-                )
-                churn_ver = pd.read_sql_query(
-                    "SELECT action, reason, COUNT(*) AS n FROM universe_churn_log WHERE ts_utc = (SELECT MAX(ts_utc) FROM universe_churn_log) GROUP BY action, reason ORDER BY n DESC",
-                    con,
-                )
+            allowlist_ver, churn_ver = read_api.load_universe_churn_verification(db_path_str_r)
             if not allowlist_ver.empty:
                 st.caption("Allowlist (last 5 refreshes)")
                 st_df(allowlist_ver)
