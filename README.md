@@ -118,7 +118,7 @@ Everything lives in a single SQLite file. No infrastructure to manage, no cloud 
 ### Installation
 
 ```bash
-git clone <repo-url> && cd crypto-analyzer
+git clone https://github.com/AlpharomeroJL/Crypto-Anaylzer.git && cd Crypto-Anaylzer
 python -m venv .venv
 
 # Windows
@@ -392,13 +392,18 @@ No tests make live network calls. All HTTP interactions are mocked.
 | `poll` | Single-pair data poller (provider-based with fallback) |
 | `universe-poll --universe ...` | Multi-asset universe discovery with churn controls |
 | `materialize` | Build deterministic OHLCV bars (5min, 15min, 1h, 1D) |
+| `analyze` | Legacy single-pair analysis (momentum, vol) |
 | `scan` | Multi-mode scanner (momentum, residual, vol breakout, mean reversion) |
+| `report` | Research report (v1, single-factor) |
 | `reportv2` | Research report with IC, orthogonalization, PBO, QP, experiment logging |
+| `daily` | Daily market structure report |
 | `backtest` | Single-asset backtest (trend following, volatility breakout) |
 | `walkforward` | Walk-forward backtest with out-of-sample fold stitching |
 | `streamlit` | Interactive dashboard (12 pages including provider health) |
 | `api` | Local read-only research API (FastAPI) |
 | `demo` | One-command demo: doctor → poll → materialize → report |
+| `test` | Run the full pytest suite |
+| `check-dataset` | Inspect dataset fingerprints and row counts |
 
 All commands: `.\scripts\run.ps1 <command> [args...]`
 
