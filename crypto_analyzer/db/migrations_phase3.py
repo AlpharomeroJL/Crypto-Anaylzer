@@ -4,6 +4,10 @@ Phase 3 schema migrations: regime_runs, regime_states.
 NOT applied by default. Call run_migrations_phase3(conn, db_path) only when
 CRYPTO_ANALYZER_ENABLE_REGIMES=1 and the caller explicitly opts in.
 Do not import this module from run_migrations() or run_migrations_v2().
+
+Backup/restore: same discipline as v2 (shutil.copy2 before apply, restore on
+failure). Version numbers are in a phase3-only namespace (1, 2, 3) tracked in
+schema_migrations_phase3; idempotent CREATE TABLE IF NOT EXISTS and version check.
 See docs/spec/components/schema_plan.md.
 """
 
@@ -52,9 +56,7 @@ def _phase3_migration_002_regime_runs(conn: sqlite3.Connection) -> None:
         );
         """
     )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_regime_runs_dataset_freq ON regime_runs(dataset_id, freq);"
-    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_regime_runs_dataset_freq ON regime_runs(dataset_id, freq);")
     conn.commit()
 
 
@@ -71,9 +73,7 @@ def _phase3_migration_003_regime_states(conn: sqlite3.Connection) -> None:
         );
         """
     )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_regime_states_ts ON regime_states(regime_run_id, ts_utc);"
-    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_regime_states_ts ON regime_states(regime_run_id, ts_utc);")
     conn.commit()
 
 
@@ -85,9 +85,7 @@ MIGRATIONS_PHASE3: List[Migration] = [
 
 
 def _schema_migrations_phase3_exists(conn: sqlite3.Connection) -> bool:
-    cur = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations_phase3'"
-    )
+    cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations_phase3'")
     return cur.fetchone() is not None
 
 

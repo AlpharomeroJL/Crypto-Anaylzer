@@ -8,25 +8,27 @@ and docs/spec/components/risk_audit.md (filter-only, no smoothing in test).
 
 from __future__ import annotations
 
-import os
-
-
-def is_regimes_enabled() -> bool:
-    """
-    True iff CRYPTO_ANALYZER_ENABLE_REGIMES is set to a truthy value (1, true, yes).
-
-    Read at call time so modules remain importable with flag OFF.
-    """
-    v = os.environ.get("CRYPTO_ANALYZER_ENABLE_REGIMES", "0").strip().lower()
-    return v in ("1", "true", "yes")
-
-
+from ._flags import is_regimes_enabled
+from .legacy import (
+    REGIME_CHOP,
+    REGIME_DISPERSION,
+    REGIME_MACRO_BETA,
+    REGIME_RISK_OFF,
+    classify_market_regime,
+    explain_regime,
+)
 from .regime_detector import RegimeConfig, RegimeModel, RegimeStateSeries, fit_regime_detector, predict_regime
 from .regime_features import RegimeFeatureConfig, build_regime_features
-from .regime_materialize import materialize_regime_run
+from .regime_materialize import RegimeMaterializeConfig, materialize_regime_run
 
 __all__ = [
     "is_regimes_enabled",
+    "classify_market_regime",
+    "explain_regime",
+    "REGIME_CHOP",
+    "REGIME_DISPERSION",
+    "REGIME_MACRO_BETA",
+    "REGIME_RISK_OFF",
     "RegimeConfig",
     "RegimeModel",
     "RegimeStateSeries",
@@ -34,5 +36,6 @@ __all__ = [
     "predict_regime",
     "RegimeFeatureConfig",
     "build_regime_features",
+    "RegimeMaterializeConfig",
     "materialize_regime_run",
 ]

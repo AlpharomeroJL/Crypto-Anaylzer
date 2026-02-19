@@ -1,5 +1,6 @@
 """
-Market regime: combine dispersion_z, vol_regime, beta_state into a single label.
+Legacy market regime: combine dispersion_z, vol_regime, beta_state into a single label.
+Kept for backward compatibility; Phase 3 uses regime_detector + regime_features.
 Research-only; no execution.
 """
 
@@ -9,7 +10,7 @@ from typing import Optional
 
 import numpy as np
 
-# Regime labels
+# Regime labels (legacy)
 REGIME_MACRO_BETA = "macro_beta"
 REGIME_DISPERSION = "dispersion"
 REGIME_RISK_OFF = "risk_off"
@@ -35,23 +36,14 @@ def classify_market_regime(
     vol = (vol_regime or "").strip().lower()
     beta = (beta_state or "").strip().lower()
 
-    # Risk-off: rising vol and (compressed beta or very low dispersion)
     if vol == "rising" and (beta == "compressed" or (dz is not None and dz < -1)):
         return REGIME_RISK_OFF
-
-    # Low dispersion => macro beta
     if dz is not None and dz < -1:
         return REGIME_MACRO_BETA
-
-    # High dispersion => dispersion (relative value)
     if dz is not None and dz > 1:
         return REGIME_DISPERSION
-
-    # Chop: stable vol and stable beta
     if vol == "stable" and beta == "stable":
         return REGIME_CHOP
-
-    # Default by dispersion
     if dz is not None:
         return REGIME_MACRO_BETA if dz <= 0 else REGIME_DISPERSION
     return REGIME_CHOP

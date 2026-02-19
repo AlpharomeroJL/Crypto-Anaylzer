@@ -3,8 +3,8 @@ title Internal Architecture — Four Stages, One Database
 
 database "SQLite\n(dex_data.sqlite)" as DB
 
-package "Ingestion" {
-  component "Poller\n(60s cycle)" as Poller
+package "Ingestion\n(ingest API only for poll)" {
+  component "cli/poll → ingest\n(get_poll_context,\nrun_one_cycle)" as Poller
   component "Spot chain\n(Coinbase → Kraken)" as SpotChain
   component "DEX chain\n(Dexscreener)" as DexChain
   component "DbWriter" as DbWriter
@@ -16,12 +16,16 @@ package "Ingestion" {
 }
 
 package "Materialization" {
-  component "Bar builder\n(materialize_bars)" as BarBuilder
-  BarBuilder --> DB : read snapshots\nwrite bars_5min, 1h, 1D
+  component "Bar builder\n(bars_{freq})" as BarBuilder
+  component "factor_materialize\n(opt)" as FactorMat
+  component "regime_materialize\n(opt, Phase 3)" as RegimeMat
+  BarBuilder --> DB : read snapshots\nwrite bars_*
+  FactorMat --> DB : factor_model_runs,\nresidual_returns
+  RegimeMat --> DB : regime_runs,\nregime_states
 }
 
 package "Modeling" {
-  component "data / features\nfactors / signals" as Model
+  component "data / features\nfactors / regimes\nsignals" as Model
   component "optimizer\nwalk_forward" as Opt
   component "experiments\nregistry" as Exp
   Model --> DB : read bars, spot
@@ -31,7 +35,7 @@ package "Modeling" {
 
 package "Presentation" {
   component "Reports\n(report_*.py)" as Reports
-  component "Streamlit\n(dashboard)" as UI
+  component "Streamlit\n(read_api + ingest\n.get_provider_health)" as UI
   component "REST API\n(FastAPI)" as API
   Reports --> DB
   UI --> DB
