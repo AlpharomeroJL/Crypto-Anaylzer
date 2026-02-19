@@ -22,6 +22,9 @@ from crypto_analyzer.alpha_research import (
     compute_dispersion_series,
     compute_forward_returns,
     dispersion_zscore_series,
+    ic_decay,
+    ic_summary,
+    information_coefficient,
     rank_signal_df,
     signal_momentum_24h,
 )
@@ -30,7 +33,9 @@ from crypto_analyzer.artifacts import (
     ensure_dir,
     snapshot_outputs,
     timestamped_filename,
+    write_df_csv_stable,
     write_json,
+    write_json_sorted,
 )
 from crypto_analyzer.config import db_path
 from crypto_analyzer.data import get_factor_returns
@@ -70,8 +75,10 @@ from crypto_analyzer.signals_xs import (
     value_vs_beta,
 )
 from crypto_analyzer.statistics import safe_nanmean
+from crypto_analyzer.validation_bundle import ValidationBundle
 
 MIN_ASSETS = 3
+VALIDATION_HORIZONS = [1, 4, 12]
 DEFAULT_TOP_K = 3
 DEFAULT_BOTTOM_K = 3
 DISPERSION_WINDOW = 24
@@ -237,8 +244,26 @@ def main() -> int:
     lines.append(f"Mode: {args.portfolio}. Fee: {args.fee_bps} bps, Slippage: {args.slippage_bps} bps.")
     lines.append("")
 
+    # Compute run_id and dataset_id once for ValidationBundles and deterministic paths
+    import hashlib as _hl
+    import json as _js
+
+    config_blob_early = _js.dumps(
+        {"freq": args.freq, "signals": args.signals, "portfolio": args.portfolio, "cov_method": args.cov_method},
+        sort_keys=True,
+    )
+    config_hash_early = _hl.sha256(config_blob_early.encode()).hexdigest()[:16]
+    ts_now_early = now_utc_iso()
+    run_id_early = stable_run_id(
+        {"name": "research_report_v2", "ts_utc": ts_now_early, "config_hash": config_hash_early}
+    )
+    _fp_early = compute_dataset_fingerprint(str(db))
+    _computed_dataset_id_early = dataset_id_from_fingerprint(_fp_early)
+    deterministic_time_used = bool(os.environ.get("CRYPTO_ANALYZER_DETERMINISTIC_TIME", "").strip())
+
     portfolio_pnls = {}
     walk_forward_rows = []
+    bundle_output_paths: list[str] = []
 
     for name, sig_df in (orth_dict or signals_dict).items():
         if sig_df is None or sig_df.empty:
@@ -288,6 +313,58 @@ def main() -> int:
                     else np.nan,
                 }
             )
+
+        # ValidationBundle per signal: IC by horizon, decay table, artifact paths (relative to out_dir for determinism)
+        try:
+            csv_dir = out_dir / "csv"
+            ensure_dir(csv_dir)
+            horizons = VALIDATION_HORIZONS
+            ic_summary_by_horizon: dict = {}
+            ic_series_path_by_horizon: dict = {}
+            for h in horizons:
+                fwd = compute_forward_returns(returns_df, h)
+                ic_ts = information_coefficient(sig_df, fwd, method="spearman")
+                ic_summary_by_horizon[h] = ic_summary(ic_ts)
+                path_ic = csv_dir / f"ic_series_{name}_h{h}_{run_id_early}.csv"
+                write_df_csv_stable(ic_ts.to_frame(name="ic"), path_ic)
+                ic_series_path_by_horizon[h] = str(path_ic.relative_to(out_dir))
+                bundle_output_paths.append(str(path_ic))
+            decay_df = ic_decay(sig_df, returns_df, horizons, method="spearman")
+            ic_decay_table = decay_df.to_dict(orient="records") if not decay_df.empty else []
+            path_decay = csv_dir / f"ic_decay_{name}_{run_id_early}.csv"
+            if not decay_df.empty:
+                write_df_csv_stable(decay_df, path_decay)
+                bundle_output_paths.append(str(path_decay))
+            path_turnover = csv_dir / f"turnover_{name}_{run_id_early}.csv"
+            write_df_csv_stable(turnover_ser.to_frame(name="turnover"), path_turnover)
+            bundle_output_paths.append(str(path_turnover))
+            meta = {
+                "config_hash": config_hash_early,
+                "git_commit": get_git_commit(),
+                "engine_version": None,
+                "as_of_lag_bars": 1,
+                "deterministic_time_used": deterministic_time_used,
+            }
+            bundle = ValidationBundle(
+                run_id=run_id_early,
+                dataset_id=getattr(args, "dataset_id", None) or _computed_dataset_id_early,
+                signal_name=name,
+                freq=args.freq,
+                horizons=horizons,
+                ic_summary_by_horizon=ic_summary_by_horizon,
+                ic_decay_table=ic_decay_table,
+                meta=meta,
+                ic_series_path_by_horizon=ic_series_path_by_horizon,
+                ic_decay_path=str(path_decay.relative_to(out_dir)) if not decay_df.empty else None,
+                turnover_path=str(path_turnover.relative_to(out_dir)),
+                gross_returns_path=None,
+                net_returns_path=None,
+            )
+            bundle_path = csv_dir / f"validation_bundle_{name}_{run_id_early}.json"
+            write_json_sorted(bundle.to_dict(), bundle_path)
+            bundle_output_paths.append(str(bundle_path))
+        except Exception as e:
+            print(f"ValidationBundle skip ({name}):", e)
 
     # ---- Deflated Sharpe ----
     lines.append("## 4) Overfitting defenses")
@@ -360,7 +437,7 @@ def main() -> int:
         f.write("\n".join(lines))
     print(f"Report: {report_path}")
 
-    output_paths = [str(report_path)]
+    output_paths = [str(report_path)] + bundle_output_paths
 
     # Research Health Summary + health_summary.json
     health_dir = out_dir / "health"
@@ -370,8 +447,6 @@ def main() -> int:
         if len(signals_dict) >= 1 and not returns_df.empty:
             sig_first = next(iter(signals_dict.values()))
             if sig_first is not None and not sig_first.empty:
-                from crypto_analyzer.alpha_research import information_coefficient
-
                 fwd1 = compute_forward_returns(returns_df, 1)
                 ic_ts = information_coefficient(sig_first, fwd1, method="spearman")
                 signal_stability = rolling_ic_stability(ic_ts, window=min(24, max(2, len(ic_ts) // 2)))
@@ -457,9 +532,6 @@ def main() -> int:
 
     # ---- SQLite experiment registry ----
     try:
-        import hashlib as _hl
-        import json as _js
-
         from crypto_analyzer.spec import RESEARCH_SPEC_VERSION
 
         pnl_sharpes = {
@@ -510,17 +582,7 @@ def main() -> int:
 
         canonical_metrics.update(mf_metrics)
 
-        config_blob = _js.dumps(
-            {"freq": args.freq, "signals": args.signals, "portfolio": args.portfolio, "cov_method": args.cov_method},
-            sort_keys=True,
-        )
-        config_hash = _hl.sha256(config_blob.encode()).hexdigest()[:16]
         env_fp = str(get_env_fingerprint())
-
-        ts_now = now_utc_iso()
-        run_payload = {"name": "research_report_v2", "ts_utc": ts_now, "config_hash": config_hash}
-        run_id = stable_run_id(run_payload)
-
         experiment_db_path = os.environ.get("EXPERIMENT_DB_PATH", str(out_dir / "experiments.db"))
         from crypto_analyzer.experiments import parse_tags
 
@@ -533,25 +595,21 @@ def main() -> int:
         }
         if "sharpe" not in canonical_metrics:
             params_dict["sharpe_unavailable_reason"] = "insufficient_assets_or_no_valid_pnl"
-        # Dataset versioning
-        _db = str(db)
-        _fp = compute_dataset_fingerprint(_db)
-        _computed_dataset_id = dataset_id_from_fingerprint(_fp)
-        params_dict["dataset_fingerprint"] = fingerprint_to_json(_fp)
+        params_dict["dataset_fingerprint"] = fingerprint_to_json(_fp_early)
         experiment_row = {
-            "run_id": run_id,
-            "ts_utc": ts_now,
+            "run_id": run_id_early,
+            "ts_utc": ts_now_early,
             "git_commit": get_git_commit(),
             "spec_version": RESEARCH_SPEC_VERSION,
             "out_dir": str(out_dir),
             "notes": getattr(args, "notes", "") or "",
             "data_start": str(returns_df.index.min()) if not returns_df.empty else "",
             "data_end": str(returns_df.index.max()) if not returns_df.empty else "",
-            "config_hash": config_hash,
+            "config_hash": config_hash_early,
             "env_fingerprint": env_fp,
             "hypothesis": getattr(args, "hypothesis", None) or "",
             "tags_json": tags_list,
-            "dataset_id": getattr(args, "dataset_id", None) or _computed_dataset_id,
+            "dataset_id": getattr(args, "dataset_id", None) or _computed_dataset_id_early,
             "params_json": params_dict,
         }
 
@@ -563,7 +621,7 @@ def main() -> int:
             metrics_dict=canonical_metrics,
             artifacts_list=artifacts_for_db,
         )
-        print(f"Experiment recorded: {run_id} -> {experiment_db_path}")
+        print(f"Experiment recorded: {run_id_early} -> {experiment_db_path}")
     except Exception as e:
         print("SQLite experiment registry skip:", e)
 

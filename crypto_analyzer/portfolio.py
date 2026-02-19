@@ -130,14 +130,12 @@ def apply_costs_to_portfolio(
 ) -> pd.Series:
     """
     Net PnL after costs: cost per period = turnover * (fee_bps + slippage_bps) / 10000.
-    pnl_series and turnover_series must be aligned (same index).
+    Delegates to ExecutionCostModel. pnl_series and turnover_series must be aligned (same index).
     """
-    if pnl_series.empty:
-        return pnl_series
-    cost_bps = fee_bps + slippage_bps
-    turnover = turnover_series.reindex(pnl_series.index).fillna(0)
-    cost = turnover * (cost_bps / 10_000)
-    return pnl_series - cost
+    from .execution_cost import apply_costs
+
+    net, _ = apply_costs(pnl_series, turnover_series, fee_bps=fee_bps, slippage_bps=slippage_bps)
+    return net
 
 
 def portfolio_returns_from_weights(

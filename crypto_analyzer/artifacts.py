@@ -24,8 +24,45 @@ def write_df_csv(df: pd.DataFrame, path: str | Path) -> None:
     df.to_csv(path, index=False, encoding="utf-8")
 
 
+def write_df_csv_stable(df: pd.DataFrame, path: str | Path, sort_index: bool = True) -> None:
+    """Write DataFrame to CSV with stable ordering (sort index and columns) for deterministic hashes."""
+    path = Path(path)
+    ensure_dir(path.parent)
+    out = df.sort_index(axis=0).sort_index(axis=1) if sort_index and not df.empty else df
+    out.to_csv(path, index=True, encoding="utf-8")
+
+
+def _enc_json(o: Any) -> Any:
+    """Encode object for JSON (numpy, etc.)."""
+    if isinstance(o, dict):
+        return {str(k): _enc_json(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_enc_json(x) for x in o]
+    if hasattr(o, "item") and callable(o.item):
+        try:
+            return o.item()
+        except Exception:
+            return str(o)
+    if isinstance(o, (float, int, str, bool, type(None))):
+        return o
+    if hasattr(o, "isoformat"):
+        return o.isoformat()
+    return str(o)
+
+
 def write_json(obj: Any, path: str | Path) -> None:
     """Write JSON-serializable object to file (UTF-8)."""
+    path = Path(path)
+    ensure_dir(path.parent)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(_enc_json(obj), f, indent=2)
+
+
+def write_json_sorted(obj: Any, path: str | Path, float_round: int | None = 10) -> None:
+    """
+    Write JSON with sort_keys=True for deterministic output. Use for manifests and bundles.
+    float_round: if set, round floats to this many decimal places for stability.
+    """
     path = Path(path)
     ensure_dir(path.parent)
 
@@ -36,17 +73,21 @@ def write_json(obj: Any, path: str | Path) -> None:
             return [_enc(x) for x in o]
         if hasattr(o, "item") and callable(o.item):
             try:
-                return o.item()
+                v = o.item()
+                return round(v, float_round) if float_round is not None and isinstance(v, float) else v
             except Exception:
                 return str(o)
-        if isinstance(o, (float, int, str, bool, type(None))):
+        if isinstance(o, float) and float_round is not None:
+            return round(o, float_round)
+        if isinstance(o, (int, str, bool, type(None))):
             return o
         if hasattr(o, "isoformat"):
             return o.isoformat()
         return str(o)
 
+    encoded = _enc(obj)
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(_enc(obj), f, indent=2)
+        json.dump(encoded, f, indent=2, sort_keys=True)
 
 
 def write_text(text: str, path: str | Path) -> None:
@@ -83,8 +124,14 @@ def df_to_download_bytes(df: pd.DataFrame) -> bytes:
 
 
 def timestamped_filename(prefix: str, ext: str, sep: str = "_") -> str:
-    """Return a filename like prefix_YYYYMMDD_HHMM.ext using UTC."""
-    from datetime import datetime, timezone
+    """Return a filename like prefix_YYYYMMDD_HHMM.ext. Uses timeutils for deterministic mode."""
+    from datetime import datetime
 
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+    from .timeutils import now_utc_iso
+
+    iso = now_utc_iso().replace("Z", "+00:00")
+    try:
+        ts = datetime.fromisoformat(iso).strftime("%Y%m%d_%H%M")
+    except Exception:
+        ts = "00000000_0000"
     return f"{prefix}{sep}{ts}.{ext}"

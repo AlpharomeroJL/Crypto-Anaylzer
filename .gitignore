@@ -20,6 +20,10 @@ __pycache__/
 # pytest cache (local test run artifacts)
 .pytest_cache/
 
+# deterministic rerun test temp dirs (do not commit)
+tmp_rerun_1/
+tmp_rerun_2/
+
 # streamlit
 .streamlit/
 
@@ -29,6 +33,9 @@ Thumbs.db
 
 # local backup copies (avoid accidental commit of temp edits)
 *.md.bak
+
+# private docs (never push to GitHub)
+docs/private_conversion.md
 
 # Service logs live outside repo (not trackable here):
 # C:\ProgramData\CryptoAnalyzer\poller.log

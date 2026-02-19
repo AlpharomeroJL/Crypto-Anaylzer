@@ -20,20 +20,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from crypto_analyzer.config import db_path, default_freq
 from crypto_analyzer.config import min_bars as config_min_bars
 from crypto_analyzer.data import load_bars
+from crypto_analyzer.execution_cost import (
+    ExecutionCostConfig,
+    ExecutionCostModel,
+    slippage_bps_from_liquidity,
+)
 from crypto_analyzer.features import bars_per_year, ema, log_returns, rolling_volatility
 
-# Default fees and slippage (documented in README)
+# Default fees and slippage (documented in README); unified with ExecutionCostModel
 DEFAULT_FEE_BPS = 30
 DEFAULT_SLIPPAGE_BPS = 10
-# Slippage proxy: extra bps when liquidity is low (e.g. 1M liq -> +5 bps)
-LIQUIDITY_SLIPPAGE_SCALE = 1e6  # 1M USD liquidity = baseline
-
-
-def slippage_bps(liquidity_usd: float) -> float:
-    """Proxy: higher slippage when liquidity is lower. Assumption: double slippage when liq halves."""
-    if liquidity_usd is None or pd.isna(liquidity_usd) or liquidity_usd <= 0:
-        return 50.0
-    return min(50.0, DEFAULT_SLIPPAGE_BPS * (LIQUIDITY_SLIPPAGE_SCALE / liquidity_usd) ** 0.5)
 
 
 def run_trend_strategy(
@@ -66,18 +62,17 @@ def run_trend_strategy(
         # Position: 1 when long, 0 when flat
         position = long_signal.astype(float) * position_pct
         ret = log_returns(close)
-        # Strategy log return (position * log return) minus fee/slippage on turnover
         prev_pos = position.shift(1).fillna(0)
+        gross_ret = prev_pos * ret
         turnover = (position - prev_pos).abs()
-        fee = turnover * (fee_bps / 10_000)
-        liq = (
-            g["liquidity_usd"]
-            if "liquidity_usd" in g.columns
-            else pd.Series(index=g.index, data=LIQUIDITY_SLIPPAGE_SCALE)
-        )
-        slip_bps = slippage_bps_fixed if slippage_bps_fixed is not None else liq.map(lambda x: slippage_bps(x))
-        slip = turnover * (slip_bps / 10_000)
-        strategy_ret = position.shift(1).fillna(0) * ret - fee - slip
+        cfg = ExecutionCostConfig(fee_bps=fee_bps, slippage_bps=slippage_bps_fixed or DEFAULT_SLIPPAGE_BPS)
+        if slippage_bps_fixed is not None:
+            slip_series = None
+        else:
+            liq = g["liquidity_usd"] if "liquidity_usd" in g.columns else pd.Series(index=g.index, dtype=float)
+            slip_series = liq.map(lambda x: slippage_bps_from_liquidity(x, cfg))
+        model = ExecutionCostModel(cfg)
+        strategy_ret, _ = model.apply_costs(gross_ret, turnover, slippage_bps_series=slip_series)
         equity = (1 + strategy_ret.fillna(0)).cumprod()
         equity.index = g["ts_utc"].values
         all_equity.append(equity)
@@ -167,16 +162,16 @@ def run_vol_breakout_strategy(
             else:
                 position.iloc[pos] = 0
         prev_pos = position.shift(1).fillna(0)
+        gross_ret = prev_pos * lr
         turnover = (position - prev_pos).abs()
-        fee = turnover * (fee_bps / 10_000)
-        liq = (
-            g["liquidity_usd"]
-            if "liquidity_usd" in g.columns
-            else pd.Series(index=g.index, data=LIQUIDITY_SLIPPAGE_SCALE)
-        )
-        slip_bps = slippage_bps_fixed if slippage_bps_fixed is not None else liq.map(lambda x: slippage_bps(x))
-        slip = turnover * (slip_bps / 10_000)
-        strategy_ret = prev_pos * lr - fee - slip
+        cfg = ExecutionCostConfig(fee_bps=fee_bps, slippage_bps=slippage_bps_fixed or DEFAULT_SLIPPAGE_BPS)
+        if slippage_bps_fixed is not None:
+            slip_series = None
+        else:
+            liq = g["liquidity_usd"] if "liquidity_usd" in g.columns else pd.Series(index=g.index, dtype=float)
+            slip_series = liq.map(lambda x: slippage_bps_from_liquidity(x, cfg))
+        model = ExecutionCostModel(cfg)
+        strategy_ret, _ = model.apply_costs(gross_ret, turnover, slippage_bps_series=slip_series)
         equity = (1 + strategy_ret.fillna(0)).cumprod()
         equity.index = g["ts_utc"].values
         all_equity.append(equity)

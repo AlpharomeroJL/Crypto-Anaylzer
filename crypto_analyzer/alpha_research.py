@@ -12,6 +12,7 @@ import pandas as pd
 
 from .factors import (
     build_factor_matrix,
+    causal_residual_returns,
     compute_ols_betas,
     compute_residual_returns,
 )
@@ -209,18 +210,15 @@ def signal_momentum_24h(returns_df: pd.DataFrame, freq: str) -> pd.DataFrame:
     return out
 
 
-def signal_residual_momentum_24h(
+def _signal_residual_momentum_24h_lookahead(
     returns_df: pd.DataFrame,
     freq: str,
-    factor_cols: Optional[List[str]] = None,
+    factor_cols: List[str],
 ) -> Optional[pd.DataFrame]:
     """
-    Residual momentum: 24h return of factor-model residual. If factor cols missing, returns None.
+    Full-sample OLS residual momentum (LOOKAHEAD). For comparison only; do not use in production.
+    Quarantined; use signal_residual_momentum_24h(..., allow_lookahead=False) by default.
     """
-    if factor_cols is None:
-        factor_cols = [c for c in ["BTC_spot", "ETH_spot"] if c in returns_df.columns]
-    if not factor_cols:
-        return None
     X = build_factor_matrix(returns_df, factor_cols=factor_cols)
     if X.empty or len(X) < 2:
         return None
@@ -241,6 +239,52 @@ def signal_residual_momentum_24h(
             lambda x: np.exp(x.sum()) - 1.0 if len(x) == bars_24h else np.nan, raw=False
         )
         out[col] = ret_24h
+    return out.replace([np.inf, -np.inf], np.nan)
+
+
+def signal_residual_momentum_24h(
+    returns_df: pd.DataFrame,
+    freq: str,
+    factor_cols: Optional[List[str]] = None,
+    *,
+    as_of_lag_bars: int = 1,
+    window_bars: int = 72,
+    min_obs: int = 24,
+    allow_lookahead: bool = False,
+) -> Optional[pd.DataFrame]:
+    """
+    Residual momentum: 24h return of factor-model residual. Causal by default (no lookahead).
+
+    Uses rolling OLS with as_of_lag_bars so that at time t the residual uses only data
+    available at t - as_of_lag_bars. If factor cols missing, returns None.
+
+    allow_lookahead: if True, use full-sample OLS (lookahead). For comparison only; default False.
+    """
+    if factor_cols is None:
+        factor_cols = [c for c in ["BTC_spot", "ETH_spot"] if c in returns_df.columns]
+    if not factor_cols:
+        return None
+    if allow_lookahead:
+        return _signal_residual_momentum_24h_lookahead(returns_df, freq, factor_cols)
+
+    resid_df = causal_residual_returns(
+        returns_df,
+        factor_cols=factor_cols,
+        window_bars=window_bars,
+        min_obs=min_obs,
+        as_of_lag_bars=as_of_lag_bars,
+    )
+    if resid_df.empty or resid_df.isna().all().all():
+        return None
+    bars_24h = period_return_bars(freq).get("24h", 24)
+    out = pd.DataFrame(index=returns_df.index, columns=resid_df.columns, dtype=float)
+    for col in resid_df.columns:
+        r = resid_df[col].dropna()
+        if len(r) < bars_24h:
+            continue
+        out[col] = r.rolling(bars_24h).apply(
+            lambda x: np.exp(x.sum()) - 1.0 if len(x) == bars_24h else np.nan, raw=False
+        )
     return out.replace([np.inf, -np.inf], np.nan)
 
 

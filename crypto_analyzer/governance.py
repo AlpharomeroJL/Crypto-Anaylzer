@@ -10,13 +10,13 @@ import json
 import platform
 import subprocess
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
 
-from .artifacts import ensure_dir, write_json
+from .artifacts import ensure_dir, write_json_sorted
 from .spec import spec_summary
+from .timeutils import now_utc_iso
 
 
 def get_git_commit() -> str:
@@ -55,11 +55,6 @@ def stable_run_id(payload: dict) -> str:
     """Return a stable hash of the payload (e.g. for reproducibility)."""
     blob = json.dumps(payload, sort_keys=True, default=str)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
-
-
-def now_utc_iso() -> str:
-    """Return current UTC time in ISO format."""
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def make_run_manifest(
@@ -126,7 +121,7 @@ def save_manifest(out_dir: str | Path, manifest: dict) -> str:
     ensure_dir(manifests_dir)
     run_id = manifest.get("run_id", "unknown")
     path = manifests_dir / f"{run_id}.json"
-    write_json(manifest, path)
+    write_json_sorted(manifest, path)
     manifest_path_str = str(path)
     append_run_registry(out_dir, run_id, manifest_path_str)
     return manifest_path_str

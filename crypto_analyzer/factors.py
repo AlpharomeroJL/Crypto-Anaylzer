@@ -167,6 +167,65 @@ def rolling_multifactor_ols(
     return betas_dict, r2_df, residual_df
 
 
+def causal_residual_returns(
+    returns_df: pd.DataFrame,
+    factor_cols: Optional[List[str]] = None,
+    window_bars: int = 72,
+    min_obs: int = 24,
+    as_of_lag_bars: int = 1,
+    add_const: bool = True,
+) -> pd.DataFrame:
+    """
+    Causal residual returns: at time t, fit betas using data ending at t - as_of_lag_bars,
+    then residual at t = y_t - (intercept + X_t @ betas). No lookahead.
+
+    Returns DataFrame with same index as returns_df; columns = asset columns (non-factor).
+    Rows where insufficient history or t - lag < 0 get NaN.
+    """
+    if factor_cols is None:
+        factor_cols = ["BTC_spot", "ETH_spot"]
+    available = [c for c in factor_cols if c in returns_df.columns]
+    if not available:
+        return pd.DataFrame(index=returns_df.index)
+    asset_cols = [c for c in returns_df.columns if c not in available]
+    if not asset_cols:
+        return pd.DataFrame(index=returns_df.index)
+    X = returns_df[available].reindex(returns_df.index).dropna(how="any")
+    common_idx = returns_df.index.intersection(X.index)
+    if len(common_idx) < min_obs + as_of_lag_bars:
+        out = pd.DataFrame(np.nan, index=returns_df.index, columns=asset_cols, dtype=float)
+        return out
+
+    out = pd.DataFrame(np.nan, index=returns_df.index, columns=asset_cols, dtype=float)
+    F_all = returns_df[available].reindex(common_idx).values.astype(float)
+
+    for col in asset_cols:
+        y_all = returns_df[col].reindex(common_idx).values.astype(float)
+        for i in range(len(common_idx)):
+            fit_end_i = i - as_of_lag_bars
+            if fit_end_i < 0:
+                continue
+            start_i = max(0, fit_end_i - window_bars + 1)
+            y_win = y_all[start_i : fit_end_i + 1]
+            F_win = F_all[start_i : fit_end_i + 1]
+            valid = ~(np.isnan(y_win) | np.any(np.isnan(F_win), axis=1))
+            if valid.sum() < min_obs:
+                continue
+            y_v = y_win[valid]
+            F_v = F_win[valid]
+            betas, intercept, _ = fit_ols(F_v, y_v, add_const=add_const)
+            if np.any(np.isnan(betas)) or np.isnan(intercept):
+                continue
+            y_point = y_all[i]
+            f_point = F_all[i]
+            if np.isnan(y_point) or np.any(np.isnan(f_point)):
+                continue
+            fitted = intercept + float(f_point @ betas)
+            out.loc[common_idx[i], col] = y_point - fitted
+
+    return out
+
+
 def compute_residual_returns(
     asset_ret: pd.Series,
     factor_returns_df: pd.DataFrame,
