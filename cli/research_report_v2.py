@@ -145,6 +145,13 @@ def main() -> int:
         metavar="REGIME_RUN_ID",
         help="Regime run ID for regime-conditioned IC summary (requires CRYPTO_ANALYZER_ENABLE_REGIMES=1)",
     )
+    ap.add_argument("--reality-check", dest="reality_check", action="store_true", help="Run Reality Check (RC) over signal×horizon family; write RC artifacts and registry metrics")
+    ap.add_argument("--rc-metric", dest="rc_metric", choices=["mean_ic", "deflated_sharpe"], default="mean_ic")
+    ap.add_argument("--rc-horizon", dest="rc_horizon", type=int, default=1, help="Horizon for mean_ic (required when rc-metric=mean_ic)")
+    ap.add_argument("--rc-n-sim", dest="rc_n_sim", type=int, default=200)
+    ap.add_argument("--rc-seed", dest="rc_seed", type=int, default=42)
+    ap.add_argument("--rc-method", dest="rc_method", choices=["stationary", "block_fixed"], default="stationary")
+    ap.add_argument("--rc-avg-block-length", dest="rc_avg_block_length", type=int, default=12)
     args = ap.parse_args()
 
     # Fail fast if --regimes set but regimes disabled (no silent ignore)
@@ -327,6 +334,9 @@ def main() -> int:
     walk_forward_rows = []
     bundle_output_paths: list[str] = []
     _regime_coverage_rel_path: str | None = None  # written once per run when --regimes set
+    rc_ic_series_by_hypothesis: dict = {}  # signal|horizon -> IC Series for Reality Check when --reality-check
+    _rc_family_id: str | None = None
+    _rc_result: dict | None = None
 
     for name, sig_df in (orth_dict or signals_dict).items():
         if sig_df is None or sig_df.empty:
@@ -389,6 +399,8 @@ def main() -> int:
                 fwd = compute_forward_returns(returns_df, h)
                 ic_ts = information_coefficient(sig_df, fwd, method="spearman")
                 ic_series_by_horizon[h] = ic_ts
+                if getattr(args, "reality_check", False):
+                    rc_ic_series_by_hypothesis[f"{name}|{h}"] = ic_ts
                 ic_summary_by_horizon[h] = ic_summary(ic_ts)
                 path_ic = csv_dir / f"ic_series_{name}_h{h}_{run_id_early}.csv"
                 write_df_csv_stable(ic_ts.to_frame(name="ic"), path_ic)
@@ -458,6 +470,60 @@ def main() -> int:
             bundle_output_paths.append(str(bundle_path))
         except Exception as e:
             print(f"ValidationBundle skip ({name}):", e)
+
+    # ---- Reality Check (opt-in) ----
+    if getattr(args, "reality_check", False) and rc_ic_series_by_hypothesis:
+        try:
+            from crypto_analyzer.stats.reality_check import (
+                RealityCheckConfig,
+                make_null_generator_stationary,
+                run_reality_check,
+            )
+            from crypto_analyzer.sweeps.family_id import compute_family_id
+
+            signal_names_sorted = sorted((orth_dict or signals_dict).keys())
+            horizons_sorted = sorted(VALIDATION_HORIZONS)
+            family_payload = {
+                "config_hash": config_hash_early,
+                "signals": signal_names_sorted,
+                "horizons": horizons_sorted,
+                "regime_run_id": regime_run_id_early or "",
+            }
+            _rc_family_id = compute_family_id(family_payload)
+            observed_stats = pd.Series({hid: float(s.mean()) for hid, s in rc_ic_series_by_hypothesis.items()}).sort_index()
+            cfg = RealityCheckConfig(
+                metric=getattr(args, "rc_metric", "mean_ic"),
+                horizon=getattr(args, "rc_horizon", 1),
+                n_sim=getattr(args, "rc_n_sim", 200),
+                seed=getattr(args, "rc_seed", 42),
+                method=getattr(args, "rc_method", "stationary"),
+                avg_block_length=getattr(args, "rc_avg_block_length", 12),
+                block_size=getattr(args, "rc_avg_block_length", 12),
+            )
+            null_gen = make_null_generator_stationary(rc_ic_series_by_hypothesis, cfg)
+            _rc_result = run_reality_check(observed_stats, null_gen, cfg)
+            _rc_result["family_id"] = _rc_family_id
+            csv_dir = out_dir / "csv"
+            ensure_dir(csv_dir)
+            summary_path = csv_dir / f"reality_check_summary_{_rc_family_id}.json"
+            summary_json = {
+                k: v for k, v in _rc_result.items()
+                if k not in ("null_max_distribution", "rw_adjusted_p_values")
+            }
+            summary_json["observed_stats"] = {k: float(v) for k, v in observed_stats.items()}
+            if "null_max_distribution" in _rc_result:
+                nd = _rc_result["null_max_distribution"]
+                summary_json["null_max_sample"] = float(nd[0]) if len(nd) else None
+            write_json_sorted(summary_json, summary_path)
+            bundle_output_paths.append(str(summary_path))
+            null_max_path = csv_dir / f"reality_check_null_max_{_rc_family_id}.csv"
+            if _rc_result.get("null_max_distribution") is not None and len(_rc_result["null_max_distribution"]) > 0:
+                write_df_csv_stable(pd.DataFrame({"null_max": _rc_result["null_max_distribution"]}), null_max_path)
+                bundle_output_paths.append(str(null_max_path))
+        except Exception as e:
+            print("Reality Check skip:", e)
+            _rc_family_id = None
+            _rc_result = None
 
     # ---- Deflated Sharpe ----
     lines.append("## 4) Overfitting defenses")
@@ -700,6 +766,16 @@ def main() -> int:
                 canonical_metrics["turnover"] = float(np.nanmean(turnover_vals))
 
         canonical_metrics.update(mf_metrics)
+        if _rc_result is not None and _rc_family_id is not None:
+            canonical_metrics["family_id"] = _rc_family_id
+            canonical_metrics["rc_p_value"] = _rc_result["rc_p_value"]
+            canonical_metrics["rc_observed_max"] = _rc_result["observed_max"]
+            canonical_metrics["rc_metric"] = _rc_result.get("rc_metric", "mean_ic")
+            canonical_metrics["rc_horizon"] = float(_rc_result["rc_horizon"]) if _rc_result.get("rc_horizon") is not None else None
+            canonical_metrics["rc_n_sim"] = _rc_result.get("n_sim", 0)
+            canonical_metrics["rc_seed"] = _rc_result.get("rc_seed")
+            canonical_metrics["rc_method"] = _rc_result.get("rc_method", "stationary")
+            canonical_metrics["rc_avg_block_length"] = _rc_result.get("rc_avg_block_length")
 
         env_fp = str(get_env_fingerprint())
         experiment_db_path = os.environ.get("EXPERIMENT_DB_PATH", str(out_dir / "experiments.db"))

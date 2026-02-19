@@ -107,6 +107,25 @@ def test_require_regime_robustness_on_accepts_when_all_above():
     assert decision.status == "accepted"
 
 
+def test_require_reality_check_rejects_when_rc_p_value_above_threshold():
+    """When require_reality_check=True, reject if rc_p_value > max_rc_p_value."""
+    bundle = _minimal_bundle(mean_ic=0.03, t_stat=3.0)
+    cfg = ThresholdConfig(require_reality_check=True, max_rc_p_value=0.05)
+    rc_summary = {"rc_p_value": 0.10}
+    decision = evaluate_candidate(bundle, cfg, regime_summary_df=None, rc_summary=rc_summary)
+    assert decision.status == "rejected"
+    assert any("rc_p_value" in r for r in decision.reasons)
+
+
+def test_require_reality_check_accepts_when_rc_p_value_below_threshold():
+    """When require_reality_check=True and rc_p_value <= threshold, no RC reason."""
+    bundle = _minimal_bundle(mean_ic=0.03, t_stat=3.0)
+    cfg = ThresholdConfig(require_reality_check=True, max_rc_p_value=0.05)
+    rc_summary = {"rc_p_value": 0.02}
+    decision = evaluate_candidate(bundle, cfg, regime_summary_df=None, rc_summary=rc_summary)
+    assert decision.status == "accepted"
+
+
 def test_evaluate_candidate_deterministic():
     """Same inputs -> same PromotionDecision (no randomness)."""
     bundle = _minimal_bundle(mean_ic=0.03, t_stat=3.0)

@@ -14,6 +14,7 @@ from typing import List, Optional
 import pandas as pd
 
 from .factors import causal_rolling_ols
+from .factors_dynamic_beta import dynamic_beta_rls
 from .timeutils import now_utc_iso
 
 
@@ -70,15 +71,29 @@ def materialize_factor_run(
     factors_json = json.dumps(config.factors)
     params_json = json.dumps(config.params) if config.params else None
 
-    result = causal_rolling_ols(
-        returns_df,
-        factor_cols=config.factors,
-        window_bars=config.window_bars,
-        min_obs=config.min_obs,
-        as_of_lag_bars=1,
-        add_const=True,
-    )
-    betas_dict, r2_df, residual_df, alpha_df = result
+    if config.estimator == "rolling_ols":
+        result = causal_rolling_ols(
+            returns_df,
+            factor_cols=config.factors,
+            window_bars=config.window_bars,
+            min_obs=config.min_obs,
+            as_of_lag_bars=1,
+            add_const=True,
+        )
+        betas_dict, r2_df, residual_df, alpha_df = result
+    elif config.estimator == "kalman_beta":
+        result = dynamic_beta_rls(
+            returns_df,
+            factor_cols=config.factors,
+            as_of_lag_bars=1,
+            add_const=True,
+            window_bars=config.window_bars,
+            min_obs=config.min_obs,
+            params=config.params,
+        )
+        betas_dict, r2_df, residual_df, alpha_df = result
+    else:
+        raise ValueError(f"Unknown estimator: {config.estimator!r}")
     if not betas_dict or not residual_df.columns.tolist():
         conn.execute(
             """INSERT OR REPLACE INTO factor_model_runs

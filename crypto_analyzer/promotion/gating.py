@@ -19,7 +19,7 @@ MIN_REGIMES_WITH_SAMPLES = 2
 
 @dataclass
 class ThresholdConfig:
-    """Minimum evidence thresholds; require_regime_robustness=False by default."""
+    """Minimum evidence thresholds; require_regime_robustness=False by default. Slice 4: RC opt-in."""
 
     ic_mean_min: float = 0.02
     tstat_min: float = 2.5
@@ -27,6 +27,8 @@ class ThresholdConfig:
     deflated_sharpe_min: Optional[float] = 1.0
     require_regime_robustness: bool = False
     worst_regime_ic_mean_min: Optional[float] = None  # used only when require_regime_robustness=True
+    require_reality_check: bool = False
+    max_rc_p_value: float = 0.05  # used only when require_reality_check=True
 
 
 @dataclass
@@ -42,6 +44,7 @@ def evaluate_candidate(
     bundle: ValidationBundle,
     thresholds: ThresholdConfig,
     regime_summary_df: Optional[pd.DataFrame] = None,
+    rc_summary: Optional[dict] = None,
 ) -> PromotionDecision:
     """
     Deterministic promotion gate. No randomness.
@@ -96,6 +99,17 @@ def evaluate_candidate(
                     worst = reg_df["mean_ic"].min()
                     if worst < min_ic_regime:
                         reasons.append(f"worst regime mean_ic {worst:.4f} < {min_ic_regime}")
+
+    if thresholds.require_reality_check:
+        rc_p = None
+        if rc_summary and isinstance(rc_summary.get("rc_p_value"), (int, float)):
+            rc_p = float(rc_summary["rc_p_value"])
+        elif getattr(bundle, "meta", None) and isinstance(bundle.meta.get("rc_p_value"), (int, float)):
+            rc_p = float(bundle.meta["rc_p_value"])
+        if rc_p is None:
+            reasons.append("require_reality_check=True but no rc_p_value in meta or rc_summary")
+        elif rc_p > thresholds.max_rc_p_value:
+            reasons.append(f"rc_p_value {rc_p:.4f} > {thresholds.max_rc_p_value}")
 
     if reasons:
         return PromotionDecision(status="rejected", reasons=reasons, metrics_snapshot=metrics_snapshot)

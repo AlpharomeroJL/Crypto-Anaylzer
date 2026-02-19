@@ -154,6 +154,70 @@ def test_materialize_idempotent_same_run_id():
         Path(path).unlink(missing_ok=True)
 
 
+def test_materialize_kalman_beta_writes_tables():
+    """Materialize with estimator=kalman_beta writes factor_model_runs, factor_betas, residual_returns."""
+    with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as f:
+        path = f.name
+    try:
+        conn = sqlite3.connect(path)
+        run_migrations(conn, path)
+        returns_df = _make_returns_fixture(80, 3)
+        config = FactorMaterializeConfig(
+            dataset_id="kal_ds",
+            freq="1h",
+            window_bars=24,
+            min_obs=12,
+            factors=["BTC_spot", "ETH_spot"],
+            estimator="kalman_beta",
+            params={"process_var": 1e-5, "obs_var": 1e-4},
+        )
+        run_id = materialize_factor_run(conn, returns_df, config)
+        assert run_id.startswith("fctr_")
+        cur = conn.execute(
+            "SELECT estimator FROM factor_model_runs WHERE factor_run_id = ?", (run_id,)
+        )
+        row = cur.fetchone()
+        assert row is not None and row[0] == "kalman_beta"
+        cur = conn.execute("SELECT COUNT(*) FROM factor_betas WHERE factor_run_id = ?", (run_id,))
+        assert cur.fetchone()[0] > 0
+        cur = conn.execute(
+            "SELECT COUNT(*) FROM residual_returns WHERE factor_run_id = ?", (run_id,)
+        )
+        assert cur.fetchone()[0] > 0
+        conn.close()
+    finally:
+        Path(path).unlink(missing_ok=True)
+
+
+def test_materialize_kalman_beta_idempotent():
+    """Second materialize with same kalman_beta config overwrites without duplicating rows."""
+    with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as f:
+        path = f.name
+    try:
+        conn = sqlite3.connect(path)
+        run_migrations(conn, path)
+        returns_df = _make_returns_fixture(60, 3)
+        config = FactorMaterializeConfig(
+            dataset_id="kal_idem_ds",
+            freq="1h",
+            window_bars=20,
+            min_obs=10,
+            factors=["BTC_spot", "ETH_spot"],
+            estimator="kalman_beta",
+            params={"obs_var": 1e-4},
+        )
+        run_id = materialize_factor_run(conn, returns_df, config)
+        cur = conn.execute("SELECT COUNT(*) FROM factor_betas WHERE factor_run_id = ?", (run_id,))
+        count1 = cur.fetchone()[0]
+        materialize_factor_run(conn, returns_df, config)
+        cur = conn.execute("SELECT COUNT(*) FROM factor_betas WHERE factor_run_id = ?", (run_id,))
+        count2 = cur.fetchone()[0]
+        assert count1 == count2
+        conn.close()
+    finally:
+        Path(path).unlink(missing_ok=True)
+
+
 def test_as_of_lag_bars_must_be_at_least_one():
     """causal_rolling_ols and causal_residual_returns reject as_of_lag_bars < 1 (no lookahead)."""
     from crypto_analyzer.factors import causal_residual_returns, causal_rolling_ols
