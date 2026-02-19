@@ -77,6 +77,11 @@ from crypto_analyzer.signals_xs import (
     value_vs_beta,
 )
 from crypto_analyzer.statistics import safe_nanmean
+from crypto_analyzer.validation import (
+    ic_decay_by_regime,
+    ic_summary_by_regime_multi,
+    regime_coverage,
+)
 from crypto_analyzer.validation_bundle import ValidationBundle
 
 MIN_ASSETS = 3
@@ -134,7 +139,31 @@ def main() -> int:
     ap.add_argument("--hypothesis", default=None, help="Hypothesis text for experiment registry")
     ap.add_argument("--tags", default=None, help="Comma-separated tags for experiment registry")
     ap.add_argument("--dataset-id", default=None, help="Explicit dataset ID (overrides computed)")
+    ap.add_argument(
+        "--regimes",
+        default=None,
+        metavar="REGIME_RUN_ID",
+        help="Regime run ID for regime-conditioned IC summary (requires CRYPTO_ANALYZER_ENABLE_REGIMES=1)",
+    )
     args = ap.parse_args()
+
+    # Fail fast if --regimes set but regimes disabled (no silent ignore)
+    regime_opt = (getattr(args, "regimes", None) or "").strip()
+    if regime_opt:
+        try:
+            from crypto_analyzer.regimes import is_regimes_enabled
+        except Exception:
+
+            def is_regimes_enabled() -> bool:
+                return False
+
+        if not is_regimes_enabled():
+            print(
+                "Error: --regimes is set but regimes are disabled. "
+                "Set CRYPTO_ANALYZER_ENABLE_REGIMES=1 to enable regime-conditioned output.",
+                file=sys.stderr,
+            )
+            return 1
 
     db = args.db or (db_path() if callable(db_path) else db_path())
     out_dir = Path(args.out_dir)
@@ -246,6 +275,37 @@ def main() -> int:
     lines.append(f"Mode: {args.portfolio}. Fee: {args.fee_bps} bps, Slippage: {args.slippage_bps} bps.")
     lines.append("")
 
+    # Regime state (exact join, no ffill): load once when --regimes set for per-signal artifacts
+    regime_labels_series = None
+    regime_run_id_early = (getattr(args, "regimes", None) or "").strip()
+    try:
+        from crypto_analyzer.regimes import is_regimes_enabled
+    except Exception:
+
+        def is_regimes_enabled() -> bool:
+            return False
+
+    if is_regimes_enabled() and regime_run_id_early:
+        import sqlite3
+
+        regime_rows = []
+        try:
+            conn = sqlite3.connect(db)
+            cur = conn.execute(
+                "SELECT ts_utc, regime_label FROM regime_states WHERE regime_run_id = ? ORDER BY ts_utc",
+                (regime_run_id_early,),
+            )
+            regime_rows = cur.fetchall()
+            conn.close()
+        except sqlite3.OperationalError:
+            pass
+        if regime_rows:
+            regime_df = pd.DataFrame(regime_rows, columns=["ts_utc", "regime_label"])
+            regime_df["ts_utc"] = pd.to_datetime(regime_df["ts_utc"])
+            # Exact join: reindex to returns index, no ffill/bfill (missing -> unknown)
+            reg_ser = regime_df.set_index("ts_utc")["regime_label"]
+            regime_labels_series = reg_ser.reindex(returns_df.index).fillna("unknown").astype(str)
+
     # Compute run_id and dataset_id once for ValidationBundles and deterministic paths
     import hashlib as _hl
     import json as _js
@@ -266,6 +326,7 @@ def main() -> int:
     portfolio_pnls = {}
     walk_forward_rows = []
     bundle_output_paths: list[str] = []
+    _regime_coverage_rel_path: str | None = None  # written once per run when --regimes set
 
     for name, sig_df in (orth_dict or signals_dict).items():
         if sig_df is None or sig_df.empty:
@@ -323,9 +384,11 @@ def main() -> int:
             horizons = VALIDATION_HORIZONS
             ic_summary_by_horizon: dict = {}
             ic_series_path_by_horizon: dict = {}
+            ic_series_by_horizon: dict = {}
             for h in horizons:
                 fwd = compute_forward_returns(returns_df, h)
                 ic_ts = information_coefficient(sig_df, fwd, method="spearman")
+                ic_series_by_horizon[h] = ic_ts
                 ic_summary_by_horizon[h] = ic_summary(ic_ts)
                 path_ic = csv_dir / f"ic_series_{name}_h{h}_{run_id_early}.csv"
                 write_df_csv_stable(ic_ts.to_frame(name="ic"), path_ic)
@@ -347,6 +410,31 @@ def main() -> int:
                 "as_of_lag_bars": 1,
                 "deterministic_time_used": deterministic_time_used,
             }
+            ic_summary_by_regime_path_rel: str | None = None
+            ic_decay_by_regime_path_rel: str | None = None
+            regime_coverage_path_rel: str | None = None
+            if regime_labels_series is not None and not regime_labels_series.empty:
+                if _regime_coverage_rel_path is None:
+                    coverage_dict = regime_coverage(regime_labels_series)
+                    path_coverage = csv_dir / f"regime_coverage_{run_id_early}.json"
+                    write_json_sorted(coverage_dict, path_coverage)
+                    _regime_coverage_rel_path = str(path_coverage.relative_to(out_dir))
+                    bundle_output_paths.append(str(path_coverage))
+                regime_coverage_path_rel = _regime_coverage_rel_path
+                ic_summary_reg = ic_summary_by_regime_multi(ic_series_by_horizon, regime_labels_series)
+                ic_decay_reg = ic_decay_by_regime(ic_series_by_horizon, regime_labels_series)
+                path_ic_summary_reg = csv_dir / f"ic_summary_by_regime_{name}_{run_id_early}.csv"
+                path_ic_decay_reg = csv_dir / f"ic_decay_by_regime_{name}_{run_id_early}.csv"
+                write_df_csv_stable(ic_summary_reg, path_ic_summary_reg)
+                write_df_csv_stable(ic_decay_reg, path_ic_decay_reg)
+                bundle_output_paths.append(str(path_ic_summary_reg))
+                bundle_output_paths.append(str(path_ic_decay_reg))
+                ic_summary_by_regime_path_rel = str(path_ic_summary_reg.relative_to(out_dir))
+                ic_decay_by_regime_path_rel = str(path_ic_decay_reg.relative_to(out_dir))
+                meta["regime_run_id"] = regime_run_id_early
+                meta["regime_join_policy"] = "exact"
+                meta["decision_lag_bars"] = 1
+                meta["regime_coverage_summary"] = regime_coverage(regime_labels_series)
             bundle = ValidationBundle(
                 run_id=run_id_early,
                 dataset_id=getattr(args, "dataset_id", None) or _computed_dataset_id_early,
@@ -361,6 +449,9 @@ def main() -> int:
                 turnover_path=str(path_turnover.relative_to(out_dir)),
                 gross_returns_path=None,
                 net_returns_path=None,
+                ic_summary_by_regime_path=ic_summary_by_regime_path_rel,
+                ic_decay_by_regime_path=ic_decay_by_regime_path_rel,
+                regime_coverage_path=regime_coverage_path_rel,
             )
             bundle_path = csv_dir / f"validation_bundle_{name}_{run_id_early}.json"
             write_json_sorted(bundle.to_dict(), bundle_path)
@@ -433,6 +524,14 @@ def main() -> int:
     else:
         lines.append("*Insufficient data for lead/lag.*")
     lines.append("")
+
+    # Regime-conditioned summary (only when --regimes set and regime artifacts were written)
+    if regime_run_id_early and _regime_coverage_rel_path is not None:
+        lines.append("## Regime-conditioned summary")
+        lines.append(
+            f"Regime run: `{regime_run_id_early}`. Join: exact. Artifacts: `csv/ic_summary_by_regime_*`, `csv/ic_decay_by_regime_*`, `csv/regime_coverage_*.json`."
+        )
+        lines.append("")
 
     report_path = out_dir / timestamped_filename("research_v2", "md", sep="_")
     with open(report_path, "w", encoding="utf-8") as f:

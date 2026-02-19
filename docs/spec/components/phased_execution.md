@@ -24,7 +24,8 @@
 
 ### Phase 3 (1–2 months)
 
-- [ ] Add statistically anchored regime models with causal filtering (ARCH/GARCH volatility regime OR Markov switching), persisted as regime_runs / regime_states.
+- [x] Add statistically anchored regime models with causal filtering (ARCH/GARCH volatility regime OR Markov switching), persisted as regime_runs / regime_states. *(Slice 1: threshold-vol regime + regime_features + RegimeDetector filter-only; migrations in migrations_phase3.py; reportv2 --regimes optional.)*
+- [x] Regime-conditioned validation outputs + promotion gating hooks (interfaces only). *(Slice 2: ic_summary_by_regime, ic_decay_by_regime, regime_coverage artifacts; exact join; ValidationBundle meta/paths; ThresholdConfig + evaluate_candidate; require_regime_robustness=False default.)*
 - [ ] Add dynamic beta estimator (Kalman) as optional factor model estimator; compare OOS factor exposure removal vs rolling OLS baseline.
 - [ ] Build full parameter sweep registry: define "test families," compute corrected inference, and adopt promotion criteria that require survival after correction + execution realism + regime robustness.
 - [ ] Performance optimization: cache factor/regime outputs by dataset_id and config hash; profile rolling OLS loops; vectorize or accelerate (Numba or incremental regression) once correctness gates pass.

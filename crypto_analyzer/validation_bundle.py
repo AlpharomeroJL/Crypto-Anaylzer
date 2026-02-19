@@ -29,12 +29,19 @@ class ValidationBundle:
     turnover_path: Optional[str] = None
     gross_returns_path: Optional[str] = None
     net_returns_path: Optional[str] = None
+    # Phase 3 Slice 2: regime-conditioned artifacts (relative paths; set only when --regimes used)
+    ic_summary_by_regime_path: Optional[str] = None
+    ic_decay_by_regime_path: Optional[str] = None
+    regime_coverage_path: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        """JSON-safe dict with stable key ordering (caller should use sort_keys when writing)."""
+        """JSON-safe dict with stable key ordering (caller should use sort_keys when writing).
+        Optional keys with value None are omitted so regime-off runs match pre-Slice-2 byte-identity."""
         d = asdict(self)
         out: Dict[str, Any] = {}
         for k, v in d.items():
+            if v is None:
+                continue
             if isinstance(v, dict):
                 # JSON keys must be strings (e.g. ic_summary_by_horizon has int keys)
                 out[k] = {str(kk): _round_floats(vv) for kk, vv in v.items()}
