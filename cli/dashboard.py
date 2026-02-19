@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import time
+from pathlib import Path
 from typing import Dict, List
 
 import numpy as np
@@ -16,11 +17,13 @@ from streamlit_autorefresh import st_autorefresh
 try:
     from st_keyup import st_keyup
 except ImportError:
+
     def st_keyup(default: str, *, key: str = "", label_visibility: str = "collapsed"):
         return default  # keyboard shortcuts disabled when st-keyup not installed
 
+
 # Same path the poller uses when NSSM AppDirectory is the project folder
-DB_PATH_DEFAULT = r"C:\Users\jo312\OneDrive\Desktop\Github Projects\Crypto-Anaylzer\dex_data.sqlite"
+DB_PATH_DEFAULT = str(Path(__file__).resolve().parent.parent / "dex_data.sqlite")
 SOL_MONITOR_TABLE = "sol_monitor_snapshots"
 SPOT_TABLE = "spot_price_snapshots"
 
@@ -207,7 +210,9 @@ with st.sidebar:
     else:
         st.caption("DB file not found. Run poller or check path.")
 
-    st.caption("To refresh after new data or a reset: reload the page (F5). Historical data is never cleared from the dashboard.")
+    st.caption(
+        "To refresh after new data or a reset: reload the page (F5). Historical data is never cleared from the dashboard."
+    )
 
     st.markdown("## Real-time")
     auto_refresh = st.toggle("Auto-refresh", value=True)
@@ -229,10 +234,12 @@ if auto_refresh:
 # Keyboard shortcuts listener (returns last key pressed as a string)
 key = st_keyup("", key="keypress", label_visibility="collapsed")
 
+
 # Shortcut handling
 def cycle_accent(delta: int) -> None:
     i = ACCENTS.index(st.session_state.accent)
     st.session_state.accent = ACCENTS[(i + delta) % len(ACCENTS)]
+
 
 if key:
     k = key.lower().strip()
@@ -278,7 +285,7 @@ ACCENT_HEX = {
     "Blue": "#4da3ff",
 }[st.session_state.accent]
 
-is_dark = (st.session_state.mode == "Bloomberg Dark")
+is_dark = st.session_state.mode == "Bloomberg Dark"
 BG = DARK_BG if is_dark else LIGHT_BG
 PANEL = DARK_PANEL if is_dark else LIGHT_PANEL
 TXT = DARK_TEXT if is_dark else LIGHT_TEXT
@@ -475,8 +482,12 @@ def fig_style(fig: go.Figure, title: str, height: int = 430) -> go.Figure:
         hovermode="x unified",
         hoverlabel=dict(bgcolor=PANEL, font_color=TXT, bordercolor="rgba(128,128,128,0.35)"),
     )
-    fig.update_xaxes(showgrid=True, gridcolor=GRID, zeroline=False, linecolor="rgba(128,128,128,0.25)", tickfont=dict(color=MUTED))
-    fig.update_yaxes(showgrid=True, gridcolor=GRID, zeroline=False, linecolor="rgba(128,128,128,0.25)", tickfont=dict(color=MUTED))
+    fig.update_xaxes(
+        showgrid=True, gridcolor=GRID, zeroline=False, linecolor="rgba(128,128,128,0.25)", tickfont=dict(color=MUTED)
+    )
+    fig.update_yaxes(
+        showgrid=True, gridcolor=GRID, zeroline=False, linecolor="rgba(128,128,128,0.25)", tickfont=dict(color=MUTED)
+    )
     return fig
 
 
@@ -503,7 +514,9 @@ if spot_df is None or spot_df.empty:
     sol_df2 = sol_df.copy()
     sol_df2["ts_utc"] = to_dt_utc(sol_df2["ts_utc"])
     sol_df2 = sol_df2.dropna(subset=["ts_utc"]).set_index("ts_utc").sort_index()
-    prices_wide = pd.DataFrame({"SOL": pd.to_numeric(sol_df2["spot_price_usd"], errors="coerce")}).resample(freq).last().dropna()
+    prices_wide = (
+        pd.DataFrame({"SOL": pd.to_numeric(sol_df2["spot_price_usd"], errors="coerce")}).resample(freq).last().dropna()
+    )
 else:
     prices_wide = resample_prices_wide(spot_df, freq)
 
@@ -521,7 +534,9 @@ if hasattr(latest_cst, "strftime"):
     latest_str = latest_cst.strftime("%Y-%m-%d %H:%M %Z")
 else:
     latest_str = str(latest_cst)
-st.caption(f"Data through: **{latest_str}** — turn on Auto-refresh to see new rows. After a data reset, refresh this page (F5) to load the DB.")
+st.caption(
+    f"Data through: **{latest_str}** — turn on Auto-refresh to see new rows. After a data reset, refresh this page (F5) to load the DB."
+)
 
 symbols = list(prices_wide.columns)
 
@@ -530,7 +545,9 @@ cum = (1.0 + rets.fillna(0)).cumprod() - 1.0
 roll_vol = rets.rolling(roll_window).std(ddof=1) * np.sqrt(periods_per_year)
 
 downside = rets.clip(upper=0)
-roll_down_dev = downside.rolling(roll_window).apply(lambda x: np.sqrt((x * x).mean()), raw=True) * np.sqrt(periods_per_year)
+roll_down_dev = downside.rolling(roll_window).apply(lambda x: np.sqrt((x * x).mean()), raw=True) * np.sqrt(
+    periods_per_year
+)
 roll_sharpe = (rets.rolling(roll_window).mean() / rets.rolling(roll_window).std(ddof=1)) * np.sqrt(periods_per_year)
 
 beta_series = pd.Series(dtype=float)
@@ -543,8 +560,11 @@ if "SOL" in symbols and "BTC" in symbols:
         var = df_beta.iloc[:, 1].var(ddof=1)
         beta_static = float(cov / var) if var and not np.isnan(var) else float("nan")
 
-sol_vol_for_regime = rets["SOL"].rolling(regime_window).std(ddof=1) * np.sqrt(periods_per_year) if "SOL" in symbols else None
+sol_vol_for_regime = (
+    rets["SOL"].rolling(regime_window).std(ddof=1) * np.sqrt(periods_per_year) if "SOL" in symbols else None
+)
 regime_df = add_regime_from_percentile(sol_vol_for_regime) if sol_vol_for_regime is not None else pd.DataFrame()
+
 
 # -----------------------------
 # Ticker tape content
@@ -556,6 +576,7 @@ def fmt_money(x: float) -> str:
         return f"{x:,.2f}"
     return f"{x:.4f}"
 
+
 ticker_items = []
 for sym in symbols:
     s = prices_wide[sym].dropna()
@@ -564,13 +585,19 @@ for sym in symbols:
         prev = float(s.iloc[-2])
         chg = (last / prev - 1.0) * 100.0 if prev else np.nan
         sign = "+" if chg >= 0 else ""
-        ticker_items.append(f"<span class='sym'>{sym}</span> {fmt_money(last)} <span class='muted'>({sign}{chg:.2f}%)</span>")
+        ticker_items.append(
+            f"<span class='sym'>{sym}</span> {fmt_money(last)} <span class='muted'>({sign}{chg:.2f}%)</span>"
+        )
     elif len(s) == 1:
         last = float(s.iloc[-1])
         ticker_items.append(f"<span class='sym'>{sym}</span> {fmt_money(last)} <span class='muted'>(n/a)</span>")
 
 liq_last = liq.dropna().iloc[-1] if liq.dropna().shape[0] else np.nan
-ticker_items.append(f"<span class='sym'>DEX_LIQ</span> {liq_last:,.0f}" if not np.isnan(liq_last) else "<span class='sym'>DEX_LIQ</span> n/a")
+ticker_items.append(
+    f"<span class='sym'>DEX_LIQ</span> {liq_last:,.0f}"
+    if not np.isnan(liq_last)
+    else "<span class='sym'>DEX_LIQ</span> n/a"
+)
 
 ticker_html = " • ".join([f"<span class='ticker-item'>{it}</span>" for it in ticker_items])
 
@@ -592,6 +619,7 @@ k1, k2, k3, k4, k5 = st.columns(5)
 latest_liq = liq.dropna().iloc[-1] if liq.dropna().shape[0] else np.nan
 bars = len(prices_wide)
 
+
 def kpi(col, label, value, accent_text=""):
     col.markdown(
         f"""
@@ -603,6 +631,7 @@ def kpi(col, label, value, accent_text=""):
 """,
         unsafe_allow_html=True,
     )
+
 
 kpi(k1, "BARS", f"{bars}", f"resample={freq}")
 kpi(k2, "WINDOW", f"{roll_window}", "rolling (bars)")
@@ -695,7 +724,15 @@ elif page == "REGIMES":
         sol_vol_cst = chart_df_cst(sol_vol)
 
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=sol_vol_cst.index, y=sol_vol.values, mode="lines", name="SOL vol (ann.)", line=dict(width=2.6, color=ACCENT_HEX)))
+        fig.add_trace(
+            go.Scatter(
+                x=sol_vol_cst.index,
+                y=sol_vol.values,
+                mode="lines",
+                name="SOL vol (ann.)",
+                line=dict(width=2.6, color=ACCENT_HEX),
+            )
+        )
 
         if not regime_df.empty and regime_df["regime"].notna().any():
             reg = regime_df["regime"].ffill()
@@ -715,10 +752,22 @@ elif page == "REGIMES":
                     current, start = v, t
                     continue
                 if v != current:
-                    fig.add_vrect(x0=start, x1=t, fillcolor=band.get(current, "rgba(255,255,255,0.06)"), line_width=0, layer="below")
+                    fig.add_vrect(
+                        x0=start,
+                        x1=t,
+                        fillcolor=band.get(current, "rgba(255,255,255,0.06)"),
+                        line_width=0,
+                        layer="below",
+                    )
                     current, start = v, t
             if current is not None and start is not None:
-                fig.add_vrect(x0=start, x1=reg_cst.index[-1], fillcolor=band.get(current, "rgba(255,255,255,0.06)"), line_width=0, layer="below")
+                fig.add_vrect(
+                    x0=start,
+                    x1=reg_cst.index[-1],
+                    fillcolor=band.get(current, "rgba(255,255,255,0.06)"),
+                    line_width=0,
+                    layer="below",
+                )
 
         fig = fig_style(fig, f"SOL volatility regimes — vol window={regime_window} bars")
         st.plotly_chart(fig, use_container_width=True)
@@ -743,7 +792,9 @@ elif page == "DEX ↔ VOL":
         else:
             scatter_df["regime"] = "n/a"
 
-        fig = px.scatter(scatter_df, x="liq_usd", y="sol_vol_ann", color="regime", hover_data=["sol_return"], opacity=0.85)
+        fig = px.scatter(
+            scatter_df, x="liq_usd", y="sol_vol_ann", color="regime", hover_data=["sol_return"], opacity=0.85
+        )
         fig.update_traces(marker=dict(size=9, line=dict(width=0.6, color="rgba(0,0,0,0.25)")))
         fig.update_xaxes(title="Dex liquidity (USD)")
         fig.update_yaxes(title="SOL rolling volatility (annualized)")

@@ -25,22 +25,23 @@ from __future__ import annotations
 
 import argparse
 import sqlite3
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Optional, Tuple
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
-import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from crypto_analyzer.data import append_spot_returns_to_returns_df, get_factor_returns, load_spot_price_resampled
 from crypto_analyzer.factors import (
     build_factor_matrix,
     compute_ols_betas,
-    compute_residual_returns,
     compute_residual_lookback_return,
+    compute_residual_returns,
     compute_residual_vol,
 )
 from crypto_analyzer.features import (
@@ -55,13 +56,13 @@ from crypto_analyzer.features import (
     compute_drawdown_from_equity,
     compute_drawdown_from_log_returns,
     compute_excess_cum_return,
-    compute_excess_lookback_return,
     compute_excess_log_returns,
+    compute_excess_lookback_return,
     compute_lookback_return,
     compute_lookback_return_from_price,
+    compute_ratio_series,
     compute_rolling_beta,
     compute_rolling_corr,
-    compute_ratio_series,
     dispersion_window_for_freq,
     period_return_bars,
     periods_per_year,
@@ -208,11 +209,7 @@ def compute_metrics(
         downside_std = downside.std(ddof=1) if len(downside) > 1 else np.nan
 
         sharpe = (mean_r - rf) / std_r if std_r and not np.isnan(std_r) else np.nan
-        sortino = (
-            (mean_r - rf) / downside_std
-            if downside_std and not np.isnan(downside_std)
-            else np.nan
-        )
+        sortino = (mean_r - rf) / downside_std if downside_std and not np.isnan(downside_std) else np.nan
 
         tmp = pd.DataFrame(
             {
@@ -226,19 +223,25 @@ def compute_metrics(
         panels.append(tmp)
 
     if not panels:
-        raise RuntimeError(
-            "No pairs had enough data after resampling. Try a larger timeframe (e.g., 15min/1h)."
-        )
+        raise RuntimeError("No pairs had enough data after resampling. Try a larger timeframe (e.g., 15min/1h).")
 
     panel = pd.concat(panels, axis=1).sort_index()
 
     # Returns matrix: DEX bars + spot (ETH, BTC) for correlation and factor
-    returns_df = pd.DataFrame(
-        {pid: panel[(pid, "log_return")].dropna() for pid in panel.columns.levels[0]}
-    ).dropna(how="all")
+    returns_df = pd.DataFrame({pid: panel[(pid, "log_return")].dropna() for pid in panel.columns.levels[0]}).dropna(
+        how="all"
+    )
     returns_df, meta = append_spot_returns_to_returns_df(returns_df, meta, db_path_override, freq)
-    factor_ret = get_factor_returns(returns_df, meta, db_path_override, freq, factor_symbol="BTC") if returns_df.shape[1] >= 1 else None
-    btc_price = load_spot_price_resampled(db_path_override, "BTC", freq) if db_path_override else load_spot_price_resampled(None, "BTC", freq)
+    factor_ret = (
+        get_factor_returns(returns_df, meta, db_path_override, freq, factor_symbol="BTC")
+        if returns_df.shape[1] >= 1
+        else None
+    )
+    btc_price = (
+        load_spot_price_resampled(db_path_override, "BTC", freq)
+        if db_path_override
+        else load_spot_price_resampled(None, "BTC", freq)
+    )
 
     win_short, win_long = rolling_windows_for_freq(freq)
     beta_compress_threshold = 0.15
@@ -254,11 +257,7 @@ def compute_metrics(
         downside = r[r < 0]
         downside_std = downside.std(ddof=1) if len(downside) > 1 else np.nan
         sharpe = (mean_r - rf) / std_r if std_r and not np.isnan(std_r) else np.nan
-        sortino = (
-            (mean_r - rf) / downside_std
-            if downside_std and not np.isnan(downside_std)
-            else np.nan
-        )
+        sortino = (mean_r - rf) / downside_std if downside_std and not np.isnan(downside_std) else np.nan
 
         vol = std_r
         annual_vol = float(vol * np.sqrt(periods_yr)) if vol is not None and not np.isnan(vol) else np.nan
@@ -266,10 +265,20 @@ def compute_metrics(
         _, max_dd = compute_drawdown_from_log_returns(r)
         return_24h = compute_lookback_return(r, lookback_24h) if len(r) >= lookback_24h else np.nan
         ann_sharpe = annualize_sharpe(float(sharpe) if not np.isnan(sharpe) else np.nan, freq)
-        beta_btc = compute_beta_vs_factor(r, factor_ret) if factor_ret is not None and not factor_ret.dropna().empty else np.nan
+        beta_btc = (
+            compute_beta_vs_factor(r, factor_ret)
+            if factor_ret is not None and not factor_ret.dropna().empty
+            else np.nan
+        )
         short_vol = r.rolling(window).std(ddof=1).iloc[-1] if len(r) >= window else np.nan
-        medium_vol = r.rolling(min(medium_window, len(r))).std(ddof=1).iloc[-1] if len(r) >= medium_window else short_vol
-        regime = classify_vol_regime(short_vol, medium_vol) if short_vol is not None and not np.isnan(short_vol) and medium_vol and not np.isnan(medium_vol) else "unknown"
+        medium_vol = (
+            r.rolling(min(medium_window, len(r))).std(ddof=1).iloc[-1] if len(r) >= medium_window else short_vol
+        )
+        regime = (
+            classify_vol_regime(short_vol, medium_vol)
+            if short_vol is not None and not np.isnan(short_vol) and medium_vol and not np.isnan(medium_vol)
+            else "unknown"
+        )
 
         # Rolling corr/beta vs BTC_spot (latest non-NaN)
         corr_24 = corr_72 = beta_24 = beta_72 = np.nan
@@ -295,7 +304,11 @@ def compute_metrics(
             price_series = panel[(pair_id, "price")].dropna()
             ratio_series = compute_ratio_series(price_series, btc_price)
             if len(ratio_series) >= 2:
-                ratio_return_24h = compute_lookback_return_from_price(ratio_series, lookback_24h) if len(ratio_series) >= lookback_24h else np.nan
+                ratio_return_24h = (
+                    compute_lookback_return_from_price(ratio_series, lookback_24h)
+                    if len(ratio_series) >= lookback_24h
+                    else np.nan
+                )
                 ratio_cum_return = float((ratio_series.iloc[-1] / ratio_series.iloc[0]) - 1.0)
 
         # BTC-hedged excess return (beta_hat = beta_btc_72, fallback beta_vs_btc)
@@ -306,7 +319,9 @@ def compute_metrics(
             r_excess = compute_excess_log_returns(r, factor_ret, float(beta_hat))
             if len(r_excess) >= 2:
                 excess_cum = compute_excess_cum_return(r_excess)
-                excess_return_24h = compute_excess_lookback_return(r_excess, lookback_24h) if len(r_excess) >= lookback_24h else np.nan
+                excess_return_24h = (
+                    compute_excess_lookback_return(r_excess, lookback_24h) if len(r_excess) >= lookback_24h else np.nan
+                )
                 excess_total_cum_return = float(excess_cum.iloc[-1]) if len(excess_cum) else np.nan
                 excess_equity = np.exp(r_excess.cumsum())
                 _, excess_max_drawdown = compute_drawdown_from_equity(excess_equity)
@@ -322,7 +337,11 @@ def compute_metrics(
                 if len(betas) > 0 and not np.isnan(intercept):
                     resid_series = compute_residual_returns(y_asset, X_factor, betas, float(intercept))
                     if len(resid_series) >= 2:
-                        residual_return_24h = compute_residual_lookback_return(resid_series, lookback_24h) if len(resid_series) >= lookback_24h else np.nan
+                        residual_return_24h = (
+                            compute_residual_lookback_return(resid_series, lookback_24h)
+                            if len(resid_series) >= lookback_24h
+                            else np.nan
+                        )
                         resid_cum = np.exp(resid_series.cumsum()) - 1.0
                         residual_total_cum_return = float(resid_cum.iloc[-1]) if len(resid_cum) else np.nan
                         residual_annual_vol = compute_residual_vol(resid_series, lookback_24h, freq)
@@ -390,8 +409,7 @@ def plot_top(
             plt.plot(
                 s.index,
                 s.values,
-                label=summary.loc[summary["pair_id"] == pid, "label"].iloc[0]
-                or pid[:10],
+                label=summary.loc[summary["pair_id"] == pid, "label"].iloc[0] or pid[:10],
             )
     plt.title(f"Cumulative Returns (log->cum) | freq={freq}")
     plt.xlabel("Time (UTC)")
@@ -407,12 +425,9 @@ def plot_top(
             plt.plot(
                 s.index,
                 s.values,
-                label=summary.loc[summary["pair_id"] == pid, "label"].iloc[0]
-                or pid[:10],
+                label=summary.loc[summary["pair_id"] == pid, "label"].iloc[0] or pid[:10],
             )
-    plt.title(
-        f"Rolling Volatility (std of log returns) | window={window} bars | freq={freq}"
-    )
+    plt.title(f"Rolling Volatility (std of log returns) | window={window} bars | freq={freq}")
     plt.xlabel("Time (UTC)")
     plt.ylabel("Rolling vol")
     plt.legend(loc="best")
@@ -428,7 +443,11 @@ def plot_top(
             ratio_series = compute_ratio_series(price_series, btc_price)
             if len(ratio_series) < 2:
                 continue
-            lbl = summary.loc[summary["pair_id"] == pid, "label"].iloc[0] if len(summary.loc[summary["pair_id"] == pid]) else pid[:10]
+            lbl = (
+                summary.loc[summary["pair_id"] == pid, "label"].iloc[0]
+                if len(summary.loc[summary["pair_id"] == pid])
+                else pid[:10]
+            )
             plt.plot(ratio_series.index, ratio_series.values, label=lbl or pid[:10])
         plt.title("Asset/BTC ratio")
         plt.xlabel("Time (UTC)")
@@ -444,7 +463,9 @@ def plot_top(
         ax1.set_xlabel("Time (UTC)")
         if disp_z_series is not None and not disp_z_series.empty:
             ax2 = ax1.twinx()
-            ax2.plot(disp_z_series.index, disp_z_series.values, color="tab:orange", alpha=0.8, label="Dispersion z-score")
+            ax2.plot(
+                disp_z_series.index, disp_z_series.values, color="tab:orange", alpha=0.8, label="Dispersion z-score"
+            )
             ax2.set_ylabel("Z-score")
             ax2.axhline(1, color="gray", linestyle="--", alpha=0.5)
             ax2.axhline(-1, color="gray", linestyle="--", alpha=0.5)
@@ -489,10 +510,18 @@ def plot_top(
                     resid_series = compute_residual_returns(y_asset, X_factor, betas, float(intercept))
                     if len(resid_series) >= 2:
                         resid_cum = np.exp(resid_series.cumsum()) - 1.0
-                        lbl = summary.loc[summary["pair_id"] == pid, "label"].iloc[0] if len(summary.loc[summary["pair_id"] == pid]) else pid[:10]
+                        lbl = (
+                            summary.loc[summary["pair_id"] == pid, "label"].iloc[0]
+                            if len(summary.loc[summary["pair_id"] == pid])
+                            else pid[:10]
+                        )
                         plt.figure()
                         plt.plot(resid_cum.index, resid_cum.values, label=lbl or pid[:10])
-                        plt.title(f"Residual cumulative return (vs BTC_spot" + (" + ETH_spot" if "ETH_spot" in factor_cols else "") + f") | {lbl or pid} | freq={freq}")
+                        plt.title(
+                            "Residual cumulative return (vs BTC_spot"
+                            + (" + ETH_spot" if "ETH_spot" in factor_cols else "")
+                            + f") | {lbl or pid} | freq={freq}"
+                        )
                         plt.xlabel("Time (UTC)")
                         plt.ylabel("Residual cum return")
                         plt.legend(loc="best")
@@ -504,9 +533,7 @@ def plot_top(
         r = panel[(pid, "log_return")].dropna()
         plt.figure()
         plt.hist(r.values, bins=60)
-        plt.title(
-            f"Returns Histogram (log returns) | {summary.loc[summary['pair_id']==pid,'label'].iloc[0] or pid}"
-        )
+        plt.title(f"Returns Histogram (log returns) | {summary.loc[summary['pair_id'] == pid, 'label'].iloc[0] or pid}")
         plt.xlabel("Log return")
         plt.ylabel("Count")
         plt.tight_layout()
@@ -600,9 +627,14 @@ def main() -> int:
         if len(disp_series) >= w_disp:
             disp_z_series = compute_dispersion_zscore(disp_series, w_disp)
     dispersion_latest = float(disp_series.iloc[-1]) if not disp_series.empty and disp_series.notna().any() else np.nan
-    dispersion_z_latest = float(disp_z_series.iloc[-1]) if not disp_z_series.empty and disp_z_series.notna().any() else np.nan
+    dispersion_z_latest = (
+        float(disp_z_series.iloc[-1]) if not disp_z_series.empty and disp_z_series.notna().any() else np.nan
+    )
     if not np.isnan(dispersion_latest):
-        print(f"Dispersion (latest): {dispersion_latest:.6f}" + (f"  dispersion_z: {dispersion_z_latest:.2f}" if not np.isnan(dispersion_z_latest) else ""))
+        print(
+            f"Dispersion (latest): {dispersion_latest:.6f}"
+            + (f"  dispersion_z: {dispersion_z_latest:.2f}" if not np.isnan(dispersion_z_latest) else "")
+        )
         print()
 
     # Correlation matrix (DEX + ETH_spot, BTC_spot)
@@ -615,19 +647,50 @@ def main() -> int:
 
     # Print leaderboard with trading-grade metrics
     cols = [
-        "label", "bars", "total_cum_return", "return_24h",
-        "vol_log_return", "annual_vol", "sharpe", "annual_sharpe", "sortino",
-        "max_drawdown", "beta_vs_btc", "corr_btc_24", "corr_btc_72", "beta_btc_24", "beta_btc_72",
-        "beta_compression", "beta_state", "beta_hat_used",
-        "ratio_return_24h", "ratio_cum_return",
-        "excess_return_24h", "excess_total_cum_return", "excess_max_drawdown",
-        "residual_return_24h", "residual_total_cum_return", "residual_annual_vol", "residual_max_drawdown",
+        "label",
+        "bars",
+        "total_cum_return",
+        "return_24h",
+        "vol_log_return",
+        "annual_vol",
+        "sharpe",
+        "annual_sharpe",
+        "sortino",
+        "max_drawdown",
+        "beta_vs_btc",
+        "corr_btc_24",
+        "corr_btc_72",
+        "beta_btc_24",
+        "beta_btc_72",
+        "beta_compression",
+        "beta_state",
+        "beta_hat_used",
+        "ratio_return_24h",
+        "ratio_cum_return",
+        "excess_return_24h",
+        "excess_total_cum_return",
+        "excess_max_drawdown",
+        "residual_return_24h",
+        "residual_total_cum_return",
+        "residual_annual_vol",
+        "residual_max_drawdown",
         "regime",
     ]
     cols = [c for c in cols if c in summary.columns]
     print(summary[["pair_id"] + cols].head(25).to_string(index=False))
 
-    plot_top(panel, summary, top=args.top, window=args.window, freq=args.freq, factor_ret=factor_ret, btc_price=btc_price, disp_series=disp_series, disp_z_series=disp_z_series, returns_df=returns_df)
+    plot_top(
+        panel,
+        summary,
+        top=args.top,
+        window=args.window,
+        freq=args.freq,
+        factor_ret=factor_ret,
+        btc_price=btc_price,
+        disp_series=disp_series,
+        disp_z_series=disp_z_series,
+        returns_df=returns_df,
+    )
     return 0
 
 

@@ -26,11 +26,11 @@ import requests
 _here = Path(__file__).resolve().parent
 sys.path.insert(0, str(_here.parent))
 
-from crypto_analyzer.providers.defaults import create_spot_chain, create_dex_chain, create_default_registry
-from crypto_analyzer.providers.base import ProviderStatus
+from crypto_analyzer.db.health import ProviderHealthStore
 from crypto_analyzer.db.migrations import run_migrations
 from crypto_analyzer.db.writer import DbWriter
-from crypto_analyzer.db.health import ProviderHealthStore
+from crypto_analyzer.providers.base import ProviderStatus
+from crypto_analyzer.providers.defaults import create_default_registry, create_dex_chain, create_spot_chain
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,7 @@ def _log(msg: str) -> None:
             _log_file.flush()
         except Exception:
             pass
+
 
 DB_PATH = "dex_data.sqlite"
 
@@ -105,9 +106,7 @@ def to_int(x: Any) -> Optional[int]:
 
 
 # Stable tokens for universe stable/stable rejection (institutional default)
-STABLE_SYMBOLS_UNIVERSE = frozenset(
-    {"USDC", "USDT", "DAI", "USDP", "TUSD", "FDUSD", "USDE", "FRAX"}
-)
+STABLE_SYMBOLS_UNIVERSE = frozenset({"USDC", "USDT", "DAI", "USDP", "TUSD", "FDUSD", "USDE", "FRAX"})
 
 
 def _universe_keep_pair(
@@ -190,9 +189,7 @@ def ensure_db(conn: sqlite3.Connection) -> None:
         );
         """
     )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_spot_ts_symbol ON spot_price_snapshots(ts_utc, symbol);"
-    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_spot_ts_symbol ON spot_price_snapshots(ts_utc, symbol);")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS universe_allowlist (
@@ -399,6 +396,7 @@ DEFAULT_UNIVERSE_QUERIES_BY_CHAIN: Dict[str, List[str]] = {
     "bsc": ["USDC", "USDT", "BNB"],
 }
 
+
 def _universe_rank_key(p: Dict[str, Any]) -> Tuple[Any, ...]:
     """Sort key for deterministic selection: liquidity desc, volume desc, label asc, pair_address asc."""
     liq = p.get("liquidity_usd")
@@ -488,7 +486,9 @@ def _apply_churn_control(
     if min_persistence_refreshes >= 1 and conn and chain_id and ts_utc:
         failure_counts = _load_persistence(conn, chain_id, prev_addrs)
         _update_persistence(conn, chain_id, ts_utc, prev_addrs, new_addrs, min_persistence_refreshes)
-        sticky_addrs = {a for a in prev_addrs if failure_counts.get(a, 0) < min_persistence_refreshes and a not in new_addrs}
+        sticky_addrs = {
+            a for a in prev_addrs if failure_counts.get(a, 0) < min_persistence_refreshes and a not in new_addrs
+        }
     keep_addrs = overlapping | sticky_addrs
     kept = [p for p in prev_pairs if p.get("pair_address") in keep_addrs]
     new_candidates = [p for p in new_pairs if p.get("pair_address") not in keep_addrs]
@@ -575,7 +575,7 @@ def _persist_universe_allowlist(
     new_selected_addrs: Optional[set] = None,
 ) -> None:
     """Write one row per pair to universe_allowlist for audit trail; reason_added when columns exist."""
-    result_addrs = {p.get("pair_address") for p in pairs if p.get("pair_address")}
+    {p.get("pair_address") for p in pairs if p.get("pair_address")}
     for p in pairs:
         addr = p.get("pair_address", "")
         if prev_addrs is not None and new_selected_addrs is not None:
@@ -719,13 +719,15 @@ def fetch_dex_universe_top_pairs(
         if not keep:
             continue
         seen.add(addr)
-        out.append({
-            "chain_id": chain_id,
-            "pair_address": addr,
-            "label": label,
-            "liquidity_usd": liq,
-            "vol_h24": vol,
-        })
+        out.append(
+            {
+                "chain_id": chain_id,
+                "pair_address": addr,
+                "label": label,
+                "liquidity_usd": liq,
+                "vol_h24": vol,
+            }
+        )
     # Deterministic selection: sort by liq desc, vol desc, label asc, pair_address asc; then take page_size
     out.sort(key=_universe_rank_key)
     out = out[:page_size]
@@ -760,6 +762,7 @@ def load_universe_config(config_path: str) -> Dict[str, Any]:
         return defaults
     try:
         import yaml
+
         with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
     except Exception:
@@ -795,6 +798,7 @@ def load_bootstrap_pairs_from_config(config_path: str, chain_id: str) -> List[Di
         return []
     try:
         import yaml
+
         with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
     except Exception:
@@ -814,13 +818,15 @@ def load_bootstrap_pairs_from_config(config_path: str, chain_id: str) -> List[Di
         addr = (item.get("pair_address") or item.get("pairAddress") or "").strip()
         if not addr:
             continue
-        out.append({
-            "chain_id": chain_id,
-            "pair_address": addr,
-            "label": str(item.get("label", "")).strip() or f"{chain_id}/{addr[:8]}",
-            "liquidity_usd": None,
-            "vol_h24": None,
-        })
+        out.append(
+            {
+                "chain_id": chain_id,
+                "pair_address": addr,
+                "label": str(item.get("label", "")).strip() or f"{chain_id}/{addr[:8]}",
+                "liquidity_usd": None,
+                "vol_h24": None,
+            }
+        )
     return out
 
 
@@ -856,11 +862,13 @@ def load_dex_pairs_from_config(config_path: str) -> List[Dict[str, str]]:
         addr = item.get("pair_address") or item.get("pairAddress")
         if not cid or not addr:
             continue
-        out.append({
-            "chain_id": str(cid).strip(),
-            "pair_address": str(addr).strip(),
-            "label": str(item.get("label", "")).strip() or f"{cid}/{addr[:8]}",
-        })
+        out.append(
+            {
+                "chain_id": str(cid).strip(),
+                "pair_address": str(addr).strip(),
+                "label": str(item.get("label", "")).strip() or f"{cid}/{addr[:8]}",
+            }
+        )
     return out
 
 
@@ -879,17 +887,14 @@ def insert_snapshot(
         "dex_id": pair.get("dexId"),
         "base_symbol": safe_get(pair, "baseToken.symbol"),
         "quote_symbol": safe_get(pair, "quoteToken.symbol"),
-
         "dex_price_usd": to_float(pair.get("priceUsd")),
         "dex_price_native": to_float(pair.get("priceNative")),
         "liquidity_usd": to_float(safe_get(pair, "liquidity.usd")),
         "vol_h24": to_float(safe_get(pair, "volume.h24")),
         "txns_h24_buys": to_int(safe_get(pair, "txns.h24.buys")),
         "txns_h24_sells": to_int(safe_get(pair, "txns.h24.sells")),
-
         "spot_source": "coinbase_or_kraken",
         "spot_price_usd": bpx,
-
         "raw_pair_json": json.dumps(pair, separators=(",", ":"), ensure_ascii=False),
     }
 
@@ -936,9 +941,7 @@ def poll_one_dex_pair(
         return False, None
 
 
-def insert_spot_prices(
-    conn: sqlite3.Connection, ts: str, prices: List[Tuple[str, float]]
-) -> None:
+def insert_spot_prices(conn: sqlite3.Connection, ts: str, prices: List[Tuple[str, float]]) -> None:
     """Insert one row per (ts, symbol, price) into spot_price_snapshots."""
     for symbol, px in prices:
         conn.execute(
@@ -953,38 +956,143 @@ def insert_spot_prices(
 def main() -> int:
     global _log_file
     if sys.prefix == sys.base_prefix:
-        print("Not running inside venv. Use .\\scripts\\run.ps1 poll (or universe-poll) or .\\.venv\\Scripts\\python.exe ...", flush=True)
+        print(
+            "Not running inside venv. Use .\\scripts\\run.ps1 poll (or universe-poll) or .\\.venv\\Scripts\\python.exe ...",
+            flush=True,
+        )
     parser = argparse.ArgumentParser(description="Poll Dexscreener + spot prices into SQLite")
     parser.add_argument("--config", default="config.yaml", help="Path to config YAML (default: config.yaml)")
-    parser.add_argument("--pairs-from-config", dest="pairs_from_config", action="store_true", default=True, help="Load DEX pairs from config (default)")
-    parser.add_argument("--no-pairs-from-config", dest="pairs_from_config", action="store_false", help="Disable config pairs; use single default or --pair only")
-    parser.add_argument("--pair", action="append", default=[], metavar="CHAIN_ID:PAIR_ADDRESS", help="Add DEX pair (repeatable); e.g. solana:Czfq3xZZ...")
-    parser.add_argument("--pair-delay", type=float, default=0.2, metavar="SEC", help="Seconds between DEX API calls (default: 0.2)")
+    parser.add_argument(
+        "--pairs-from-config",
+        dest="pairs_from_config",
+        action="store_true",
+        default=True,
+        help="Load DEX pairs from config (default)",
+    )
+    parser.add_argument(
+        "--no-pairs-from-config",
+        dest="pairs_from_config",
+        action="store_false",
+        help="Disable config pairs; use single default or --pair only",
+    )
+    parser.add_argument(
+        "--pair",
+        action="append",
+        default=[],
+        metavar="CHAIN_ID:PAIR_ADDRESS",
+        help="Add DEX pair (repeatable); e.g. solana:Czfq3xZZ...",
+    )
+    parser.add_argument(
+        "--pair-delay", type=float, default=0.2, metavar="SEC", help="Seconds between DEX API calls (default: 0.2)"
+    )
     parser.add_argument("--chainId", default=CHAIN_ID, help=f"Chain id for legacy single pair (default: {CHAIN_ID})")
     parser.add_argument("--pairAddress", default=PAIR_ADDRESS, help="DEX pair address for legacy single pair")
-    parser.add_argument("--interval", type=int, default=POLL_EVERY_SECONDS, help="Poll interval in seconds (default: 60)")
+    parser.add_argument(
+        "--interval", type=int, default=POLL_EVERY_SECONDS, help="Poll interval in seconds (default: 60)"
+    )
     parser.add_argument("--log-file", default=None, help="Also append all output to this file (for Windows service)")
-    parser.add_argument("--universe", nargs="?", const="top", default=None, metavar="top", help="Enable universe mode: use --universe or --universe top. Other flags: --universe-chain, --universe-page-size, etc.")
+    parser.add_argument(
+        "--universe",
+        nargs="?",
+        const="top",
+        default=None,
+        metavar="top",
+        help="Enable universe mode: use --universe or --universe top. Other flags: --universe-chain, --universe-page-size, etc.",
+    )
     parser.add_argument("--universe-chain", default="solana", help="Chain for universe fetch (default: solana)")
-    parser.add_argument("--universe-page-size", type=int, default=50, metavar="N", help="Max pairs to keep in universe (default: 50)")
-    parser.add_argument("--universe-refresh-minutes", type=float, default=60, metavar="M", help="Refresh universe allowlist every M minutes (default: 60)")
-    parser.add_argument("--universe-min-liquidity", type=float, default=250_000, help="Min liquidity USD for universe pairs (default: 250000)")
-    parser.add_argument("--universe-min-vol-h24", type=float, default=500_000, help="Min 24h volume USD for universe pairs (default: 500000)")
-    parser.add_argument("--universe-debug", type=int, default=0, metavar="N", help="Print first N universe candidates with accept/reject reasons (default: 0)")
-    parser.add_argument("--universe-quote-allowlist", default=None, metavar="CSV", help='Quote token allowlist e.g. "USDC,USDT" (overrides config)')
-    parser.add_argument("--universe-reject-stable-stable", dest="universe_reject_stable_stable", action="store_true", default=None, help="Reject stable/stable pairs (default from config)")
-    parser.add_argument("--no-universe-reject-stable-stable", dest="universe_reject_stable_stable", action="store_false", help="Allow stable/stable pairs")
-    parser.add_argument("--universe-reject-same-symbol", dest="universe_reject_same_symbol", action="store_true", default=None, help="Reject base==quote (default from config)")
-    parser.add_argument("--no-universe-reject-same-symbol", dest="universe_reject_same_symbol", action="store_false", help="Allow same base/quote")
-    parser.add_argument("--universe-query", dest="universe_query", action="append", default=None, metavar="Q", help="Search query for universe (repeatable); e.g. USDC, USDT. Overrides config queries.")
-    parser.add_argument("--universe-max-churn-pct", dest="universe_max_churn_pct", type=float, default=None, metavar="PCT", help="Max fraction of allowlist replaceable per refresh (0-1; default from config 0.20; 1.0 = no churn limit)")
-    parser.add_argument("--universe-min-persistence-refreshes", dest="universe_min_persistence_refreshes", type=int, default=None, metavar="K", help="Require pair to fail selection K refreshes before removal (default from config 2; 0 = disable)")
-    parser.add_argument("--run-seconds", type=int, default=None, metavar="N", help="Stop polling after N seconds (default: run forever)")
+    parser.add_argument(
+        "--universe-page-size", type=int, default=50, metavar="N", help="Max pairs to keep in universe (default: 50)"
+    )
+    parser.add_argument(
+        "--universe-refresh-minutes",
+        type=float,
+        default=60,
+        metavar="M",
+        help="Refresh universe allowlist every M minutes (default: 60)",
+    )
+    parser.add_argument(
+        "--universe-min-liquidity",
+        type=float,
+        default=250_000,
+        help="Min liquidity USD for universe pairs (default: 250000)",
+    )
+    parser.add_argument(
+        "--universe-min-vol-h24",
+        type=float,
+        default=500_000,
+        help="Min 24h volume USD for universe pairs (default: 500000)",
+    )
+    parser.add_argument(
+        "--universe-debug",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Print first N universe candidates with accept/reject reasons (default: 0)",
+    )
+    parser.add_argument(
+        "--universe-quote-allowlist",
+        default=None,
+        metavar="CSV",
+        help='Quote token allowlist e.g. "USDC,USDT" (overrides config)',
+    )
+    parser.add_argument(
+        "--universe-reject-stable-stable",
+        dest="universe_reject_stable_stable",
+        action="store_true",
+        default=None,
+        help="Reject stable/stable pairs (default from config)",
+    )
+    parser.add_argument(
+        "--no-universe-reject-stable-stable",
+        dest="universe_reject_stable_stable",
+        action="store_false",
+        help="Allow stable/stable pairs",
+    )
+    parser.add_argument(
+        "--universe-reject-same-symbol",
+        dest="universe_reject_same_symbol",
+        action="store_true",
+        default=None,
+        help="Reject base==quote (default from config)",
+    )
+    parser.add_argument(
+        "--no-universe-reject-same-symbol",
+        dest="universe_reject_same_symbol",
+        action="store_false",
+        help="Allow same base/quote",
+    )
+    parser.add_argument(
+        "--universe-query",
+        dest="universe_query",
+        action="append",
+        default=None,
+        metavar="Q",
+        help="Search query for universe (repeatable); e.g. USDC, USDT. Overrides config queries.",
+    )
+    parser.add_argument(
+        "--universe-max-churn-pct",
+        dest="universe_max_churn_pct",
+        type=float,
+        default=None,
+        metavar="PCT",
+        help="Max fraction of allowlist replaceable per refresh (0-1; default from config 0.20; 1.0 = no churn limit)",
+    )
+    parser.add_argument(
+        "--universe-min-persistence-refreshes",
+        dest="universe_min_persistence_refreshes",
+        type=int,
+        default=None,
+        metavar="K",
+        help="Require pair to fail selection K refreshes before removal (default from config 2; 0 = disable)",
+    )
+    parser.add_argument(
+        "--run-seconds", type=int, default=None, metavar="N", help="Stop polling after N seconds (default: run forever)"
+    )
     args = parser.parse_args()
     interval_sec = args.interval
 
     # Universe mode: refresh allowlist periodically (--universe or --universe top)
-    universe_enabled = (getattr(args, "universe", None) == "top")
+    universe_enabled = getattr(args, "universe", None) == "top"
     universe_refresh_sec = max(60, float(getattr(args, "universe_refresh_minutes", 60)) * 60)
     universe_last_refresh: List[Optional[float]] = [None]
     universe_cache: List[Optional[List[Dict[str, Any]]]] = [None]
@@ -996,6 +1104,7 @@ def main() -> int:
         now = time.time()
         if universe_last_refresh[0] is None or (now - universe_last_refresh[0]) >= universe_refresh_sec:
             import math
+
             cfg = load_universe_config(args.config)
             chain = getattr(args, "universe_chain", "solana") or cfg.get("chain_id", "solana")
             page_size = getattr(args, "universe_page_size", None) or cfg.get("page_size", 50)
@@ -1006,8 +1115,16 @@ def main() -> int:
                 quote_allowlist = [s.strip() for s in str(args.universe_quote_allowlist).split(",") if s.strip()]
             else:
                 quote_allowlist = quote_allowlist_cfg
-            reject_stable = cfg.get("reject_stable_stable", True) if getattr(args, "universe_reject_stable_stable", None) is None else args.universe_reject_stable_stable
-            reject_same = cfg.get("reject_same_symbol", True) if getattr(args, "universe_reject_same_symbol", None) is None else args.universe_reject_same_symbol
+            reject_stable = (
+                cfg.get("reject_stable_stable", True)
+                if getattr(args, "universe_reject_stable_stable", None) is None
+                else args.universe_reject_stable_stable
+            )
+            reject_same = (
+                cfg.get("reject_same_symbol", True)
+                if getattr(args, "universe_reject_same_symbol", None) is None
+                else args.universe_reject_same_symbol
+            )
             debug_n = getattr(args, "universe_debug", 0) or 0
             cli_queries = getattr(args, "universe_query", None) or []
             if cli_queries:
@@ -1058,15 +1175,29 @@ def main() -> int:
                     _log("Fallback used: bootstrap_pairs (from config universe.bootstrap_pairs)")
                 else:
                     pairs_raw = load_dex_pairs_from_config(args.config)
-                    pairs = [{"chain_id": p["chain_id"], "pair_address": p["pair_address"], "label": p["label"], "liquidity_usd": None, "vol_h24": None} for p in pairs_raw]
+                    pairs = [
+                        {
+                            "chain_id": p["chain_id"],
+                            "pair_address": p["pair_address"],
+                            "label": p["label"],
+                            "liquidity_usd": None,
+                            "vol_h24": None,
+                        }
+                        for p in pairs_raw
+                    ]
                     source = "config_fallback"
                     _log("Fallback used: config_fallback (configured pairs)")
             prev = universe_prev_pairs[0] or []
             ts = utc_now_iso()
             new_selected_addrs = {p.get("pair_address") for p in pairs if p.get("pair_address")}
             result = _apply_churn_control(
-                prev, pairs, page_size, max_churn_pct,
-                conn=conn, chain_id=chain, ts_utc=ts,
+                prev,
+                pairs,
+                page_size,
+                max_churn_pct,
+                conn=conn,
+                chain_id=chain,
+                ts_utc=ts,
                 min_persistence_refreshes=min_persistence_refreshes,
             )
             prev_addrs = {p.get("pair_address") for p in prev if p.get("pair_address")}
@@ -1080,14 +1211,32 @@ def main() -> int:
             added_addrs = result_addrs - prev_addrs
             prev_by_addr = {p.get("pair_address"): p for p in prev if p.get("pair_address")}
             result_by_addr = {p.get("pair_address"): p for p in result if p.get("pair_address")}
-            removed_log = [(a, "churn_evicted", prev_by_addr.get(a, {}).get("liquidity_usd"), prev_by_addr.get(a, {}).get("vol_h24")) for a in removed_addrs]
-            added_log = [(a, "churn_replace" if prev_addrs else source, result_by_addr.get(a, {}).get("liquidity_usd"), result_by_addr.get(a, {}).get("vol_h24")) for a in added_addrs]
+            removed_log = [
+                (
+                    a,
+                    "churn_evicted",
+                    prev_by_addr.get(a, {}).get("liquidity_usd"),
+                    prev_by_addr.get(a, {}).get("vol_h24"),
+                )
+                for a in removed_addrs
+            ]
+            added_log = [
+                (
+                    a,
+                    "churn_replace" if prev_addrs else source,
+                    result_by_addr.get(a, {}).get("liquidity_usd"),
+                    result_by_addr.get(a, {}).get("vol_h24"),
+                )
+                for a in added_addrs
+            ]
             _persist_churn_log(conn, ts, chain, removed_log, added_log)
             _log_persistence_stats(conn, chain, prev_addrs, new_selected_addrs, result_addrs, min_persistence_refreshes)
             universe_prev_pairs[0] = result
             universe_cache[0] = result
             universe_last_refresh[0] = now
-            _persist_universe_allowlist(conn, ts, result, source, query_summary, prev_addrs=prev_addrs, new_selected_addrs=new_selected_addrs)
+            _persist_universe_allowlist(
+                conn, ts, result, source, query_summary, prev_addrs=prev_addrs, new_selected_addrs=new_selected_addrs
+            )
             allowlist_str = "/".join(quote_allowlist) if quote_allowlist else "none"
             _log(f"Universe refreshed: {len(result)} pairs (chain={chain}, allowlist={allowlist_str})")
             _log("Top 5 selected universe pairs (label, address):")
@@ -1096,7 +1245,6 @@ def main() -> int:
         return universe_cache[0] or []
 
     conn = sqlite3.connect(DB_PATH)
-    ensure_db(conn)
     run_migrations(conn)
 
     # Initialize provider chains
@@ -1117,11 +1265,13 @@ def main() -> int:
     for raw in args.pair:
         if ":" in raw:
             cid, addr = raw.split(":", 1)
-            dex_pairs.append({
-                "chain_id": cid.strip(),
-                "pair_address": addr.strip(),
-                "label": f"{cid.strip()}/{addr.strip()[:8]}",
-            })
+            dex_pairs.append(
+                {
+                    "chain_id": cid.strip(),
+                    "pair_address": addr.strip(),
+                    "label": f"{cid.strip()}/{addr.strip()[:8]}",
+                }
+            )
 
     if getattr(args, "log_file", None):
         log_path = getattr(args, "log_file")
@@ -1160,19 +1310,7 @@ def main() -> int:
                         quote = spot_chain.get_spot(symbol)
                         spot_quotes.append(quote)
                     except Exception as e:
-                        _log(f"WARN spot {symbol}: {e}")
-                        # Fall back to legacy method for backward compat
-                        try:
-                            px = fetch_spot_price_asset(_cb_product, _kraken_pair)
-                            from crypto_analyzer.providers.base import SpotQuote
-                            quote = SpotQuote(
-                                symbol=symbol, price_usd=px,
-                                provider_name="coinbase_or_kraken(legacy)",
-                                fetched_at_utc=ts,
-                            )
-                            spot_quotes.append(quote)
-                        except Exception as e2:
-                            _log(f"WARN spot {symbol} legacy fallback: {e2}")
+                        _log(f"WARN spot {symbol}: all providers failed: {e}")
 
                 # Write spot prices with provenance
                 sol_price = spot_quotes[0].price_usd if spot_quotes else 0.0
@@ -1196,7 +1334,9 @@ def main() -> int:
                     try:
                         snapshot = dex_chain.get_snapshot(chain_id, pair_addr)
                         db_writer.write_dex_snapshot(
-                            ts, snapshot, sol_price,
+                            ts,
+                            snapshot,
+                            sol_price,
                             spot_source=spot_quotes[0].provider_name if spot_quotes else "unknown",
                         )
                         liq = snapshot.liquidity_usd
@@ -1204,16 +1344,7 @@ def main() -> int:
                         lbl = label or f"{snapshot.base_symbol}/{snapshot.quote_symbol}"
                         dex_summaries.append(f"[{lbl} liq={liq} vol24={vol}]")
                     except Exception as e:
-                        _log(f"WARN dex {chain_id}:{pair_addr} {e}")
-                        # Fall back to legacy fetch for backward compat
-                        ok, pair = poll_one_dex_pair(
-                            conn, ts, chain_id, pair_addr, sol_price, label=label,
-                        )
-                        if ok and pair is not None:
-                            liq = safe_get(pair, "liquidity.usd")
-                            vol = safe_get(pair, "volume.h24")
-                            lbl = label or f"{safe_get(pair, 'baseToken.symbol')}/{safe_get(pair, 'quoteToken.symbol')}"
-                            dex_summaries.append(f"[{lbl} liq={liq} vol24={vol}]")
+                        _log(f"WARN dex {chain_id}:{pair_addr}: all providers failed: {e}")
                     if i < len(dex_pairs_this_cycle) - 1 and args.pair_delay > 0:
                         time.sleep(args.pair_delay)
 
@@ -1227,7 +1358,11 @@ def main() -> int:
                     pass
 
                 spot_str = "  ".join(spot_details)
-                dex_str = f"  dex_pairs={len(dex_pairs_this_cycle)} " + " ".join(dex_summaries) if dex_summaries else f"  dex_pairs={len(dex_pairs_this_cycle)} (no ok)"
+                dex_str = (
+                    f"  dex_pairs={len(dex_pairs_this_cycle)} " + " ".join(dex_summaries)
+                    if dex_summaries
+                    else f"  dex_pairs={len(dex_pairs_this_cycle)} (no ok)"
+                )
                 _log(f"{ts}  OK  {spot_str}{dex_str}")
             except Exception as e:
                 _log(f"{ts}  ERR  {e}")

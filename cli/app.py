@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """
 Crypto quant monitoring + research dashboard.
-Pages: Overview (leaderboard), Pair detail, Scanner, Backtest.
+12 pages: Overview, Pair Detail, Scanner, Backtest, Walk-Forward, Market Structure,
+Signals, Research, Institutional Research, Experiments, Runtime/Health, Governance.
 Run: streamlit run app.py
 Width handled by crypto_analyzer.ui helpers (width='stretch' on Streamlit >= 1.40, use_container_width fallback for older).
 """
+
 from __future__ import annotations
 
 import json
 import os
 import sqlite3
-import subprocess
 import sys
 import traceback
 from pathlib import Path
@@ -25,56 +26,46 @@ _here = Path(__file__).resolve().parent
 sys.path.insert(0, str(_here.parent))
 sys.path.insert(0, str(_here))
 
-from crypto_analyzer.config import (
-    db_path,
-    default_freq,
-    min_bars as config_min_bars,
-    min_liquidity_usd as config_min_liq,
-    min_vol_h24 as config_min_vol,
-)
-from crypto_analyzer.data import append_spot_returns_to_returns_df, get_factor_returns, load_bars, load_snapshots, load_spot_price_resampled
+from backtest import metrics as backtest_metrics
+from backtest import run_trend_strategy, run_vol_breakout_strategy
 from report_daily import run_momentum_scan, run_risk_snapshot, run_vol_scan
 from scan import run_scan as dex_run_scan
-from crypto_analyzer.ui import _safe_df as _safe_df, st_df, st_plot, streamlit_compatibility_caption
-from crypto_analyzer.artifacts import df_to_download_bytes
-from crypto_analyzer.governance import load_manifests
-from crypto_analyzer.regimes import classify_market_regime, explain_regime
-from crypto_analyzer.signals import load_signals
-from crypto_analyzer.walkforward import bars_per_day, run_walkforward_backtest
-from crypto_analyzer.research_universe import get_research_assets
+
 # Aliases avoid UI variable shadowing (UnboundLocalError for rank_signal_df / signal_momentum_24h).
 from crypto_analyzer.alpha_research import (
-    compute_forward_returns,
-    information_coefficient,
-    ic_summary,
-    ic_decay,
-    rank_signal_df as calc_rank_signal_df,
-    signal_momentum_24h as calc_signal_momentum_24h,
-    signal_residual_momentum_24h,
     compute_dispersion_series,
+    compute_forward_returns,
     dispersion_zscore_series,
+    ic_decay,
+    ic_summary,
+    information_coefficient,
 )
-from crypto_analyzer.portfolio import (
-    long_short_from_ranks,
-    portfolio_returns_from_weights,
-    turnover_from_weights,
-    apply_costs_to_portfolio,
+from crypto_analyzer.alpha_research import (
+    rank_signal_df as calc_rank_signal_df,
 )
-from crypto_analyzer.statistics import significance_summary
-from crypto_analyzer.signals_xs import clean_momentum, value_vs_beta, orthogonalize_signals, build_exposure_panel
-from crypto_analyzer.portfolio_advanced import optimize_long_short_portfolio
-from crypto_analyzer.risk_model import estimate_covariance
-from crypto_analyzer.multiple_testing import deflated_sharpe_ratio, reality_check_warning, pbo_proxy_walkforward
+from crypto_analyzer.alpha_research import (
+    signal_momentum_24h as calc_signal_momentum_24h,
+)
+from crypto_analyzer.config import (
+    db_path,
+)
+from crypto_analyzer.config import (
+    min_bars as config_min_bars,
+)
+from crypto_analyzer.config import (
+    min_liquidity_usd as config_min_liq,
+)
+from crypto_analyzer.config import (
+    min_vol_h24 as config_min_vol,
+)
+from crypto_analyzer.data import (
+    append_spot_returns_to_returns_df,
+    get_factor_returns,
+    load_bars,
+    load_snapshots,
+    load_spot_price_resampled,
+)
 from crypto_analyzer.evaluation import conditional_metrics
-from crypto_analyzer.experiments import (
-    load_experiments as load_experiments_legacy,
-    load_experiments as _load_exp_sqlite,
-    load_experiment_metrics,
-    load_metric_history,
-    load_distinct_metric_names,
-    ensure_experiment_tables,
-)
-from backtest import metrics as backtest_metrics, run_trend_strategy, run_vol_breakout_strategy
 from crypto_analyzer.features import (
     bars_per_year,
     classify_beta_state,
@@ -86,21 +77,38 @@ from crypto_analyzer.features import (
     compute_dispersion_zscore,
     compute_drawdown_from_equity,
     compute_excess_cum_return,
-    compute_excess_lookback_return,
     compute_excess_log_returns,
+    compute_excess_lookback_return,
     compute_lookback_return_from_price,
     compute_ratio_series,
     compute_rolling_beta,
     compute_rolling_corr,
-    compute_rolling_correlation,
     dispersion_window_for_freq,
     drawdown,
     log_returns,
     max_drawdown,
+    period_return_bars,
     rolling_volatility,
     rolling_windows_for_freq,
-    period_return_bars,
 )
+from crypto_analyzer.governance import load_manifests
+from crypto_analyzer.multiple_testing import deflated_sharpe_ratio, pbo_proxy_walkforward, reality_check_warning
+from crypto_analyzer.portfolio import (
+    apply_costs_to_portfolio,
+    long_short_from_ranks,
+    portfolio_returns_from_weights,
+    turnover_from_weights,
+)
+from crypto_analyzer.portfolio_advanced import optimize_long_short_portfolio
+from crypto_analyzer.regimes import classify_market_regime, explain_regime
+from crypto_analyzer.research_universe import get_research_assets
+from crypto_analyzer.risk_model import estimate_covariance
+from crypto_analyzer.signals import load_signals
+from crypto_analyzer.signals_xs import build_exposure_panel, clean_momentum, orthogonalize_signals, value_vs_beta
+from crypto_analyzer.statistics import significance_summary
+from crypto_analyzer.ui import _safe_df as _safe_df
+from crypto_analyzer.ui import st_df, st_plot, streamlit_compatibility_caption
+from crypto_analyzer.walkforward import bars_per_day, run_walkforward_backtest
 
 
 def get_db_path() -> str:
@@ -154,17 +162,19 @@ def load_leaderboard(freq: str, min_liq: float, min_vol: float, min_bars_count: 
         sharpe = (lr.mean() / lr.std(ddof=1)) * np.sqrt(bars_yr) if lr.std(ddof=1) and lr.std(ddof=1) != 0 else np.nan
         total_ret = cum.iloc[-1] if len(cum) else np.nan
         label = f"{g['base_symbol'].iloc[-1]}/{g['quote_symbol'].iloc[-1]}"
-        rows.append({
-            "pair_id": pid,
-            "label": label,
-            "chain_id": g['chain_id'].iloc[0],
-            "pair_address": g['pair_address'].iloc[0],
-            "bars": len(close),
-            "total_cum_return": total_ret,
-            "annual_vol": ann_vol,
-            "sharpe": sharpe,
-            "max_drawdown": max_drawdown(cum),
-        })
+        rows.append(
+            {
+                "pair_id": pid,
+                "label": label,
+                "chain_id": g["chain_id"].iloc[0],
+                "pair_address": g["pair_address"].iloc[0],
+                "bars": len(close),
+                "total_cum_return": total_ret,
+                "annual_vol": ann_vol,
+                "sharpe": sharpe,
+                "max_drawdown": max_drawdown(cum),
+            }
+        )
     summary = pd.DataFrame(rows).sort_values("sharpe", ascending=False) if rows else pd.DataFrame()
     return df, summary
 
@@ -174,18 +184,40 @@ def main():
     st.title("Crypto Quant Monitoring & Research")
 
     db_path_str = st.sidebar.text_input("DB path", value=get_db_path())
-    page = st.sidebar.radio("Page", ["Overview", "Pair detail", "Scanner", "Backtest", "Walk-Forward", "Market Structure", "Signals", "Research", "Institutional Research", "Experiments", "Runtime / Health", "Governance"])
+    page = st.sidebar.radio(
+        "Page",
+        [
+            "Overview",
+            "Pair detail",
+            "Scanner",
+            "Backtest",
+            "Walk-Forward",
+            "Market Structure",
+            "Signals",
+            "Research",
+            "Institutional Research",
+            "Experiments",
+            "Runtime / Health",
+            "Governance",
+        ],
+    )
 
     if page == "Overview":
         st.header("Overview")
         with st.sidebar.expander("Filters", expanded=True):
             freq = st.selectbox("Freq", ["5min", "15min", "1h", "1D"], index=2, key="overview_freq")
             _min_liq = float(config_min_liq() if callable(config_min_liq) else 250_000)
-            min_liq = st.number_input("Min liquidity USD", value=_min_liq, min_value=0.0, step=50000.0, key="overview_liq")
+            min_liq = st.number_input(
+                "Min liquidity USD", value=_min_liq, min_value=0.0, step=50000.0, key="overview_liq"
+            )
             _min_vol = float(config_min_vol() if callable(config_min_vol) else 500_000)
-            min_vol = st.number_input("Min vol_h24 USD", value=_min_vol, min_value=0.0, step=50000.0, key="overview_vol")
+            min_vol = st.number_input(
+                "Min vol_h24 USD", value=_min_vol, min_value=0.0, step=50000.0, key="overview_vol"
+            )
             _min_bars = int(config_min_bars() if callable(config_min_bars) else 48)
-            min_bars_count = st.number_input("Min bars", value=_min_bars, min_value=10, max_value=10000, step=1, key="overview_bars")
+            min_bars_count = st.number_input(
+                "Min bars", value=_min_bars, min_value=10, max_value=10000, step=1, key="overview_bars"
+            )
             top_n = st.number_input("Top N", value=10, min_value=1, max_value=50, step=1, key="overview_top")
         snap_df, summary = load_leaderboard(freq, min_liq, min_vol, int(min_bars_count))
         try:
@@ -206,8 +238,20 @@ def main():
                     last = snap_df[snap_df["ts_utc"] == last_ts].copy()
                     last = last.sort_values("liquidity_usd", ascending=False).head(20)
                     if "label" not in last.columns and "base_symbol" in last.columns and "quote_symbol" in last.columns:
-                        last["label"] = (last["base_symbol"].fillna("").astype(str) + "/" + last["quote_symbol"].fillna("").astype(str)).str.replace("^/$", "", regex=True)
-                    display_cols = ["pair_id", "label", "chain_id", "liquidity_usd", "vol_h24"] if "label" in last.columns else [c for c in ["pair_id", "chain_id", "pair_address", "liquidity_usd", "vol_h24"] if c in last.columns]
+                        last["label"] = (
+                            last["base_symbol"].fillna("").astype(str)
+                            + "/"
+                            + last["quote_symbol"].fillna("").astype(str)
+                        ).str.replace("^/$", "", regex=True)
+                    display_cols = (
+                        ["pair_id", "label", "chain_id", "liquidity_usd", "vol_h24"]
+                        if "label" in last.columns
+                        else [
+                            c
+                            for c in ["pair_id", "chain_id", "pair_address", "liquidity_usd", "vol_h24"]
+                            if c in last.columns
+                        ]
+                    )
                     top_liq = last[[c for c in display_cols if c in last.columns]].copy()
                     top_liq.columns = [str(c) for c in top_liq.columns]
                     st_df(top_liq)
@@ -257,9 +301,17 @@ def main():
         else:
             pairs = bars.groupby(["chain_id", "pair_address"]).first().reset_index()
             pairs["label"] = pairs["base_symbol"].fillna("") + "/" + pairs["quote_symbol"].fillna("")
-            sel = st.selectbox("Pair", options=range(len(pairs)), format_func=lambda i: pairs.iloc[i]["label"] or f"{pairs.iloc[i]['chain_id']}/{pairs.iloc[i]['pair_address'][:8]}")
+            sel = st.selectbox(
+                "Pair",
+                options=range(len(pairs)),
+                format_func=lambda i: (
+                    pairs.iloc[i]["label"] or f"{pairs.iloc[i]['chain_id']}/{pairs.iloc[i]['pair_address'][:8]}"
+                ),
+            )
             r = pairs.iloc[sel]
-            g = bars[(bars["chain_id"] == r["chain_id"]) & (bars["pair_address"] == r["pair_address"])].sort_values("ts_utc")
+            g = bars[(bars["chain_id"] == r["chain_id"]) & (bars["pair_address"] == r["pair_address"])].sort_values(
+                "ts_utc"
+            )
             close = g.set_index("ts_utc")["close"]
             lr = log_returns(close)
             cum = np.exp(lr.cumsum()) - 1.0
@@ -283,17 +335,21 @@ def main():
             st.subheader("Latest metrics")
             last_vol = float(vol.iloc[-1]) if not vol.empty and vol.notna().any() else np.nan
             last_dd = float(dd_ser.iloc[-1]) if not dd_ser.empty and dd_ser.notna().any() else np.nan
-            latest_metrics = pd.DataFrame([
-                {"metric": "last_close", "value": float(close.iloc[-1])},
-                {"metric": "rolling_vol_24", "value": round(last_vol, 6) if not np.isnan(last_vol) else "—"},
-                {"metric": "current_drawdown", "value": round(last_dd, 4) if not np.isnan(last_dd) else "—"},
-            ])
+            latest_metrics = pd.DataFrame(
+                [
+                    {"metric": "last_close", "value": float(close.iloc[-1])},
+                    {"metric": "rolling_vol_24", "value": round(last_vol, 6) if not np.isnan(last_vol) else "—"},
+                    {"metric": "current_drawdown", "value": round(last_dd, 4) if not np.isnan(last_dd) else "—"},
+                ]
+            )
             st_df(latest_metrics, hide_index=True)
 
     elif page == "Scanner":
         st.header("Scanner")
         with st.sidebar.expander("Filters", expanded=True):
-            mode = st.selectbox("Mode", ["momentum", "residual_momentum", "volatility_breakout", "mean_reversion"], key="scan_mode")
+            mode = st.selectbox(
+                "Mode", ["momentum", "residual_momentum", "volatility_breakout", "mean_reversion"], key="scan_mode"
+            )
             freq = st.selectbox("Freq", ["5min", "15min", "1h", "1D"], index=2, key="scan_freq")
             top = st.number_input("Top N", value=20, min_value=1, max_value=100, step=1, key="scan_top")
         with st.sidebar.expander("Risk Filters", expanded=False):
@@ -301,7 +357,9 @@ def main():
             corr_window = st.radio("Corr window (bars)", [24, 72], index=0, key="scan_corr_win")
             min_beta_val = st.number_input("Min beta vs BTC", value=0.0, step=0.05, key="scan_min_beta")
             beta_window = st.radio("Beta window (bars)", [24, 72], index=1, key="scan_beta_win")
-            min_excess_val = st.number_input("Min excess return 24h", value=0.0, step=0.0001, format="%.4f", key="scan_min_excess")
+            min_excess_val = st.number_input(
+                "Min excess return 24h", value=0.0, step=0.0001, format="%.4f", key="scan_min_excess"
+            )
             min_disp_z_val = st.number_input("Min dispersion z", value=-999.0, step=0.1, key="scan_min_disp_z")
             only_beta_compressed = st.checkbox("Only beta compressed", value=False, key="scan_only_comp")
             only_beta_expanded = st.checkbox("Only beta expanded", value=False, key="scan_only_exp")
@@ -333,7 +391,12 @@ def main():
                     st.session_state["scan_result"] = (pd.DataFrame(), np.nan, np.nan, ["__error__", str(e)])
         if "scan_result" in st.session_state:
             res, disp_latest, disp_z_latest, reasons = st.session_state["scan_result"]
-            st.caption("Dispersion (global): " + (f"{disp_latest:.6f}" if not np.isnan(disp_latest) else "—") + "  |  z: " + (f"{disp_z_latest:.2f}" if not np.isnan(disp_z_latest) else "—"))
+            st.caption(
+                "Dispersion (global): "
+                + (f"{disp_latest:.6f}" if not np.isnan(disp_latest) else "—")
+                + "  |  z: "
+                + (f"{disp_z_latest:.2f}" if not np.isnan(disp_z_latest) else "—")
+            )
             if res.empty:
                 if reasons and reasons[0] == "__error__":
                     st.error(reasons[1] if len(reasons) > 1 else "Scan failed.")
@@ -342,11 +405,50 @@ def main():
                 else:
                     st.info("No signals.")
             else:
-                display_cols = [c for c in ["chain_id", "pair_address", "label", "close", "liquidity_usd", "vol_h24", "return_24h", "return_zscore", "residual_return_24h", "residual_annual_vol", "residual_max_drawdown", "capacity_usd", "est_slippage_bps", "tradable", "annual_vol", "annual_sharpe", "max_drawdown", "beta_vs_btc", "corr_btc_24", "corr_btc_72", "beta_btc_24", "beta_btc_72", "excess_return_24h", "excess_total_cum_return", "excess_max_drawdown", "beta_compression", "beta_state", "regime"] if c in res.columns]
+                display_cols = [
+                    c
+                    for c in [
+                        "chain_id",
+                        "pair_address",
+                        "label",
+                        "close",
+                        "liquidity_usd",
+                        "vol_h24",
+                        "return_24h",
+                        "return_zscore",
+                        "residual_return_24h",
+                        "residual_annual_vol",
+                        "residual_max_drawdown",
+                        "capacity_usd",
+                        "est_slippage_bps",
+                        "tradable",
+                        "annual_vol",
+                        "annual_sharpe",
+                        "max_drawdown",
+                        "beta_vs_btc",
+                        "corr_btc_24",
+                        "corr_btc_72",
+                        "beta_btc_24",
+                        "beta_btc_72",
+                        "excess_return_24h",
+                        "excess_total_cum_return",
+                        "excess_max_drawdown",
+                        "beta_compression",
+                        "beta_state",
+                        "regime",
+                    ]
+                    if c in res.columns
+                ]
                 out = res[display_cols] if display_cols else res
                 st_df(out.round(4))
-            sample_csv = (res.to_csv(index=False).encode("utf-8") if not res.empty else pd.DataFrame(columns=["chain_id", "pair_address", "label"]).to_csv(index=False).encode("utf-8"))
-            st.download_button("Download scan CSV", data=sample_csv, file_name="scan_export.csv", mime="text/csv", key="scan_dl")
+            sample_csv = (
+                res.to_csv(index=False).encode("utf-8")
+                if not res.empty
+                else pd.DataFrame(columns=["chain_id", "pair_address", "label"]).to_csv(index=False).encode("utf-8")
+            )
+            st.download_button(
+                "Download scan CSV", data=sample_csv, file_name="scan_export.csv", mime="text/csv", key="scan_dl"
+            )
         else:
             st.info("Use sidebar filters and click **Run scan** to run.")
 
@@ -358,9 +460,18 @@ def main():
         run_bt_clicked = st.sidebar.button("Run backtest", key="bt_run")
         if run_bt_clicked:
             try:
-                bars_bt = load_bars(freq_bt, db_path_override=db_path_str, min_bars=int(config_min_bars() if callable(config_min_bars) else 48))
+                bars_bt = load_bars(
+                    freq_bt,
+                    db_path_override=db_path_str,
+                    min_bars=int(config_min_bars() if callable(config_min_bars) else 48),
+                )
                 if bars_bt.empty:
-                    st.session_state["bt_result"] = (None, None, None, "No bars. Run materialize_bars.py for this freq.")
+                    st.session_state["bt_result"] = (
+                        None,
+                        None,
+                        None,
+                        "No bars. Run materialize_bars.py for this freq.",
+                    )
                 else:
                     if strategy == "trend":
                         _, equity_gross = run_trend_strategy(bars_bt, freq_bt, fee_bps=0, slippage_bps_fixed=0)
@@ -373,7 +484,10 @@ def main():
                     else:
                         met = backtest_metrics(equity, freq_bt)
                         met["n_trades"] = len(trades_df) if trades_df is not None and not trades_df.empty else 0
-                        if not (equity_gross is None or (hasattr(equity_gross, "empty") and equity_gross.empty)) and len(equity_gross) >= 2:
+                        if (
+                            not (equity_gross is None or (hasattr(equity_gross, "empty") and equity_gross.empty))
+                            and len(equity_gross) >= 2
+                        ):
                             met["gross_total_return"] = float(equity_gross.iloc[-1] / equity_gross.iloc[0] - 1.0)
                             met["net_total_return"] = met["total_return"]
                             met["cost_drag_pct"] = (met["gross_total_return"] - met["total_return"]) * 100.0
@@ -382,7 +496,7 @@ def main():
                             met["net_total_return"] = met["total_return"]
                             met["cost_drag_pct"] = 0.0
                         st.session_state["bt_result"] = (trades_df, equity, met, None)
-            except Exception as e:
+            except Exception:
                 st.session_state["bt_result"] = (None, None, None, traceback.format_exc())
         if "bt_result" in st.session_state:
             trades_df, equity, met, err = st.session_state["bt_result"]
@@ -393,7 +507,12 @@ def main():
             else:
                 if met:
                     st.subheader("Summary")
-                    summary_df = pd.DataFrame([{"metric": k, "value": round(v, 4) if isinstance(v, float) and not np.isnan(v) else v} for k, v in met.items()])
+                    summary_df = pd.DataFrame(
+                        [
+                            {"metric": k, "value": round(v, 4) if isinstance(v, float) and not np.isnan(v) else v}
+                            for k, v in met.items()
+                        ]
+                    )
                     if "gross_total_return" in met and "cost_drag_pct" in met:
                         st.caption("Gross vs net return; cost_drag_pct = (gross - net) in %.")
                     st_df(summary_df, hide_index=True)
@@ -416,16 +535,26 @@ def main():
         with st.sidebar.expander("Walk-Forward settings", expanded=True):
             wf_strategy = st.selectbox("Strategy", ["trend", "volatility_breakout"], key="wf_strategy")
             wf_freq = st.selectbox("Freq", ["5min", "15min", "1h", "1D"], index=2, key="wf_freq")
-            train_days = st.number_input("Train (days)", value=30.0, min_value=1.0, max_value=365.0, step=1.0, key="wf_train")
-            test_days = st.number_input("Test (days)", value=7.0, min_value=1.0, max_value=90.0, step=1.0, key="wf_test")
-            step_days = st.number_input("Step (days)", value=7.0, min_value=1.0, max_value=90.0, step=1.0, key="wf_step")
+            train_days = st.number_input(
+                "Train (days)", value=30.0, min_value=1.0, max_value=365.0, step=1.0, key="wf_train"
+            )
+            test_days = st.number_input(
+                "Test (days)", value=7.0, min_value=1.0, max_value=90.0, step=1.0, key="wf_test"
+            )
+            step_days = st.number_input(
+                "Step (days)", value=7.0, min_value=1.0, max_value=90.0, step=1.0, key="wf_step"
+            )
             wf_expanding = st.checkbox("Expanding train", value=False, key="wf_expanding")
             wf_fee_bps = st.number_input("Fee (bps)", value=30.0, min_value=0.0, step=5.0, key="wf_fee")
             wf_slip_bps = st.number_input("Slippage (bps)", value=10.0, min_value=0.0, step=5.0, key="wf_slip")
         run_wf = st.sidebar.button("Run walk-forward", key="wf_run")
         if run_wf:
             try:
-                bars_wf = load_bars(wf_freq, db_path_override=db_path_str, min_bars=int(config_min_bars() if callable(config_min_bars) else 48))
+                bars_wf = load_bars(
+                    wf_freq,
+                    db_path_override=db_path_str,
+                    min_bars=int(config_min_bars() if callable(config_min_bars) else 48),
+                )
                 if bars_wf.empty:
                     st.session_state["wf_result"] = (None, None, None, "No bars.")
                 else:
@@ -435,10 +564,18 @@ def main():
                     step_bars = max(1, int(step_days * bpd))
                     costs = {"fee_bps": wf_fee_bps, "slippage_bps": wf_slip_bps}
                     stitched, fold_df, fold_metrics = run_walkforward_backtest(
-                        bars_wf, wf_freq, wf_strategy, train_bars=train_bars, test_bars=test_bars, step_bars=step_bars, params={}, costs=costs, expanding=wf_expanding,
+                        bars_wf,
+                        wf_freq,
+                        wf_strategy,
+                        train_bars=train_bars,
+                        test_bars=test_bars,
+                        step_bars=step_bars,
+                        params={},
+                        costs=costs,
+                        expanding=wf_expanding,
                     )
                     st.session_state["wf_result"] = (stitched, fold_df, fold_metrics, None)
-            except Exception as e:
+            except Exception:
                 st.session_state["wf_result"] = (None, None, None, traceback.format_exc())
         if "wf_result" in st.session_state:
             stitched, fold_df, fold_metrics, wf_err = st.session_state["wf_result"]
@@ -455,7 +592,13 @@ def main():
                 if fold_df is not None and not fold_df.empty:
                     st.subheader("Per-fold metrics")
                     st_df(fold_df)
-                    st.download_button("Download fold CSV", data=fold_df.to_csv(index=False).encode("utf-8"), file_name="walkforward_folds.csv", mime="text/csv", key="wf_dl")
+                    st.download_button(
+                        "Download fold CSV",
+                        data=fold_df.to_csv(index=False).encode("utf-8"),
+                        file_name="walkforward_folds.csv",
+                        mime="text/csv",
+                        key="wf_dl",
+                    )
             else:
                 st.info("No folds (not enough data) or run again.")
         else:
@@ -463,7 +606,9 @@ def main():
 
     elif page == "Market Structure":
         st.header("Market Structure")
-        freq_ms = st.selectbox("Freq (1h recommended for beta/correlation)", ["5min", "15min", "1h", "1D"], index=2, key="ms_freq")
+        freq_ms = st.selectbox(
+            "Freq (1h recommended for beta/correlation)", ["5min", "15min", "1h", "1D"], index=2, key="ms_freq"
+        )
         try:
             bars_ms = load_bars(freq_ms, db_path_override=db_path_str)
         except FileNotFoundError:
@@ -473,7 +618,9 @@ def main():
         else:
             bars_ms = bars_ms.copy()
             bars_ms["pair_id"] = bars_ms["chain_id"].astype(str) + ":" + bars_ms["pair_address"].astype(str)
-            bars_ms["label"] = bars_ms["base_symbol"].fillna("").astype(str) + "/" + bars_ms["quote_symbol"].fillna("").astype(str)
+            bars_ms["label"] = (
+                bars_ms["base_symbol"].fillna("").astype(str) + "/" + bars_ms["quote_symbol"].fillna("").astype(str)
+            )
             if "log_return" not in bars_ms.columns:
                 out = []
                 for (c, a), g in bars_ms.groupby(["chain_id", "pair_address"]):
@@ -484,13 +631,27 @@ def main():
             returns_df = bars_ms.pivot_table(index="ts_utc", columns="pair_id", values="log_return").dropna(how="all")
             meta = bars_ms.groupby("pair_id")["label"].last().to_dict()
             returns_df, meta = append_spot_returns_to_returns_df(returns_df, meta, db_path_str, freq_ms)
-            factor_ret = get_factor_returns(returns_df, meta, db_path_str, freq_ms, factor_symbol="BTC") if not returns_df.empty else None
+            factor_ret = (
+                get_factor_returns(returns_df, meta, db_path_str, freq_ms, factor_symbol="BTC")
+                if not returns_df.empty
+                else None
+            )
 
             if returns_df.shape[1] >= 2:
                 corr = compute_correlation_matrix(returns_df)
                 corr_display = corr.rename(index=meta, columns=meta)
                 st.subheader("Correlation matrix (log returns)")
-                fig_corr = go.Figure(data=go.Heatmap(z=corr_display.values, x=corr_display.columns, y=corr_display.index, colorscale="RdBu", zmid=0, zmin=-1, zmax=1))
+                fig_corr = go.Figure(
+                    data=go.Heatmap(
+                        z=corr_display.values,
+                        x=corr_display.columns,
+                        y=corr_display.index,
+                        colorscale="RdBu",
+                        zmid=0,
+                        zmin=-1,
+                        zmax=1,
+                    )
+                )
                 fig_corr.update_layout(height=400, xaxis_tickangle=-45)
                 st_plot(fig_corr, use_container_width=True)
 
@@ -515,13 +676,23 @@ def main():
                         vol_regime_ms = classify_vol_regime(vol_short, vol_med)
                         roll_b24 = compute_rolling_beta(r_first, factor_ret, 24)
                         roll_b72 = compute_rolling_beta(r_first, factor_ret, 72)
-                        b24 = float(roll_b24.dropna().iloc[-1]) if not roll_b24.empty and roll_b24.notna().any() else np.nan
-                        b72 = float(roll_b72.dropna().iloc[-1]) if not roll_b72.empty and roll_b72.notna().any() else np.nan
+                        b24 = (
+                            float(roll_b24.dropna().iloc[-1])
+                            if not roll_b24.empty and roll_b24.notna().any()
+                            else np.nan
+                        )
+                        b72 = (
+                            float(roll_b72.dropna().iloc[-1])
+                            if not roll_b72.empty and roll_b72.notna().any()
+                            else np.nan
+                        )
                         beta_state_ms = classify_beta_state(b24, b72, 0.15)
                 regime_label_ms = classify_market_regime(disp_z_latest_ms, vol_regime_ms, beta_state_ms)
                 regime_explanation_ms = explain_regime(regime_label_ms)
                 st.subheader("Market Regime")
-                st.info(f"**{regime_label_ms}** — dispersion_z: {disp_z_latest_ms:.2f} | vol_regime: {vol_regime_ms} | beta_state: {beta_state_ms}. {regime_explanation_ms}")
+                st.info(
+                    f"**{regime_label_ms}** — dispersion_z: {disp_z_latest_ms:.2f} | vol_regime: {vol_regime_ms} | beta_state: {beta_state_ms}. {regime_explanation_ms}"
+                )
             else:
                 st.info("Need 2+ pairs for correlation matrix.")
 
@@ -535,24 +706,50 @@ def main():
                     if "SOL" in (meta.get(c, c) or "") and "USDC" in (meta.get(c, c) or ""):
                         default_idx = i
                         break
-                pair_ratio_sel = st.selectbox("Pair (vs BTC_spot)", options=pair_ratio_options, index=default_idx, format_func=lambda x: meta.get(x, x), key="pair_ratio")
+                pair_ratio_sel = st.selectbox(
+                    "Pair (vs BTC_spot)",
+                    options=pair_ratio_options,
+                    index=default_idx,
+                    format_func=lambda x: meta.get(x, x),
+                    key="pair_ratio",
+                )
                 g_ratio = bars_ms[bars_ms["pair_id"] == pair_ratio_sel].sort_values("ts_utc").set_index("ts_utc")
                 if not g_ratio.empty and "close" in g_ratio.columns:
                     price_series = g_ratio["close"].dropna()
                     ratio_series = compute_ratio_series(price_series, btc_price)
                     if len(ratio_series) >= 2:
                         n_24h = period_return_bars(freq_ms)["24h"]
-                        ratio_return_24h = compute_lookback_return_from_price(ratio_series, n_24h) if len(ratio_series) >= n_24h else np.nan
+                        ratio_return_24h = (
+                            compute_lookback_return_from_price(ratio_series, n_24h)
+                            if len(ratio_series) >= n_24h
+                            else np.nan
+                        )
                         ratio_cum_return = (float(ratio_series.iloc[-1]) / float(ratio_series.iloc[0])) - 1.0
-                        ratio_metrics = pd.DataFrame([
-                            {"metric": "ratio_return_24h", "value": round(ratio_return_24h, 4) if pd.notna(ratio_return_24h) else "—"},
-                            {"metric": "ratio_cum_return", "value": round(ratio_cum_return, 4) if pd.notna(ratio_cum_return) else "—"},
-                        ])
-                        st.caption(f"Metrics for {meta.get(pair_ratio_sel, pair_ratio_sel)} / BTC. Ratio = asset price / BTC price; strength vs BTC.")
+                        ratio_metrics = pd.DataFrame(
+                            [
+                                {
+                                    "metric": "ratio_return_24h",
+                                    "value": round(ratio_return_24h, 4) if pd.notna(ratio_return_24h) else "—",
+                                },
+                                {
+                                    "metric": "ratio_cum_return",
+                                    "value": round(ratio_cum_return, 4) if pd.notna(ratio_cum_return) else "—",
+                                },
+                            ]
+                        )
+                        st.caption(
+                            f"Metrics for {meta.get(pair_ratio_sel, pair_ratio_sel)} / BTC. Ratio = asset price / BTC price; strength vs BTC."
+                        )
                         st_df(ratio_metrics, hide_index=True)
                         fig_ratio = go.Figure()
-                        fig_ratio.add_trace(go.Scatter(x=ratio_series.index, y=ratio_series.values, name="Ratio", mode="lines"))
-                        fig_ratio.update_layout(title=f"Asset/BTC ratio — {meta.get(pair_ratio_sel, pair_ratio_sel)}", height=300, yaxis_title="Ratio")
+                        fig_ratio.add_trace(
+                            go.Scatter(x=ratio_series.index, y=ratio_series.values, name="Ratio", mode="lines")
+                        )
+                        fig_ratio.update_layout(
+                            title=f"Asset/BTC ratio — {meta.get(pair_ratio_sel, pair_ratio_sel)}",
+                            height=300,
+                            yaxis_title="Ratio",
+                        )
                         st_plot(fig_ratio, use_container_width=True)
                     else:
                         st.info("Not enough aligned ratio points.")
@@ -563,9 +760,16 @@ def main():
             else:
                 st.caption("BTC_spot price not available for ratio.")
 
-            roll_window = st.number_input("Rolling correlation window (bars)", value=24, min_value=2, step=1, key="roll_win")
+            roll_window = st.number_input(
+                "Rolling correlation window (bars)", value=24, min_value=2, step=1, key="roll_win"
+            )
             if returns_df.shape[1] >= 2 and len(returns_df) >= roll_window:
-                pair_sel = st.selectbox("Pair for rolling correlation", options=list(returns_df.columns), format_func=lambda x: meta.get(x, x), key="roll_pair")
+                pair_sel = st.selectbox(
+                    "Pair for rolling correlation",
+                    options=list(returns_df.columns),
+                    format_func=lambda x: meta.get(x, x),
+                    key="roll_pair",
+                )
                 ref_col = returns_df[pair_sel]
                 roll_corr = pd.DataFrame(index=returns_df.index)
                 for c in returns_df.columns:
@@ -575,15 +779,29 @@ def main():
                 fig_roll = go.Figure()
                 for col in roll_corr.columns:
                     fig_roll.add_trace(go.Scatter(x=roll_corr.index, y=roll_corr[col], name=col, mode="lines"))
-                fig_roll.update_layout(title=f"Rolling correlation vs {meta.get(pair_sel, pair_sel)} (window={roll_window})", height=350, yaxis_title="Correlation")
+                fig_roll.update_layout(
+                    title=f"Rolling correlation vs {meta.get(pair_sel, pair_sel)} (window={roll_window})",
+                    height=350,
+                    yaxis_title="Correlation",
+                )
                 st_plot(fig_roll, use_container_width=True)
 
             st.subheader("Rolling corr / beta vs BTC_spot")
             dex_cols = [c for c in returns_df.columns if not str(c).endswith("_spot")]
             if dex_cols and factor_ret is not None and not factor_ret.dropna().empty:
                 win_short, win_long = rolling_windows_for_freq(freq_ms)
-                roll_win_sel = st.selectbox("Window (bars)", options=[win_short, win_long], format_func=lambda w: f"{w} bars", key="roll_btc_win")
-                pair_btc_sel = st.selectbox("Pair for rolling vs BTC_spot", options=dex_cols, format_func=lambda x: meta.get(x, x), key="pair_btc")
+                roll_win_sel = st.selectbox(
+                    "Window (bars)",
+                    options=[win_short, win_long],
+                    format_func=lambda w: f"{w} bars",
+                    key="roll_btc_win",
+                )
+                pair_btc_sel = st.selectbox(
+                    "Pair for rolling vs BTC_spot",
+                    options=dex_cols,
+                    format_func=lambda x: meta.get(x, x),
+                    key="pair_btc",
+                )
                 asset_ret = returns_df[pair_btc_sel].dropna()
                 roll_corr_btc = compute_rolling_corr(asset_ret, factor_ret, roll_win_sel)
                 roll_beta_btc = compute_rolling_beta(asset_ret, factor_ret, roll_win_sel)
@@ -591,14 +809,48 @@ def main():
                 roll_corr_72 = compute_rolling_corr(asset_ret, factor_ret, win_long)
                 roll_beta_24 = compute_rolling_beta(asset_ret, factor_ret, win_short)
                 roll_beta_72 = compute_rolling_beta(asset_ret, factor_ret, win_long)
-                beta_hat_72 = float(roll_beta_72.dropna().iloc[-1]) if not roll_beta_72.empty and roll_beta_72.notna().any() else None
-                beta_hat_24 = float(roll_beta_24.dropna().iloc[-1]) if not roll_beta_24.empty and roll_beta_24.notna().any() else None
-                beta_hat_sel = st.radio("Beta for hedged return", options=["72", "24"], format_func=lambda x: f"beta_btc_{x} (default)" if x == "72" else f"beta_btc_{x}", key="beta_hat_radio", horizontal=True)
-                beta_hat = beta_hat_72 if beta_hat_sel == "72" and beta_hat_72 is not None else (beta_hat_24 if beta_hat_24 is not None else beta_hat_72)
-                corr_24 = float(roll_corr_24.dropna().iloc[-1]) if not roll_corr_24.empty and roll_corr_24.notna().any() else np.nan
-                corr_72 = float(roll_corr_72.dropna().iloc[-1]) if not roll_corr_72.empty and roll_corr_72.notna().any() else np.nan
-                beta_24 = float(roll_beta_24.dropna().iloc[-1]) if not roll_beta_24.empty and roll_beta_24.notna().any() else np.nan
-                beta_72 = float(roll_beta_72.dropna().iloc[-1]) if not roll_beta_72.empty and roll_beta_72.notna().any() else np.nan
+                beta_hat_72 = (
+                    float(roll_beta_72.dropna().iloc[-1])
+                    if not roll_beta_72.empty and roll_beta_72.notna().any()
+                    else None
+                )
+                beta_hat_24 = (
+                    float(roll_beta_24.dropna().iloc[-1])
+                    if not roll_beta_24.empty and roll_beta_24.notna().any()
+                    else None
+                )
+                beta_hat_sel = st.radio(
+                    "Beta for hedged return",
+                    options=["72", "24"],
+                    format_func=lambda x: f"beta_btc_{x} (default)" if x == "72" else f"beta_btc_{x}",
+                    key="beta_hat_radio",
+                    horizontal=True,
+                )
+                beta_hat = (
+                    beta_hat_72
+                    if beta_hat_sel == "72" and beta_hat_72 is not None
+                    else (beta_hat_24 if beta_hat_24 is not None else beta_hat_72)
+                )
+                corr_24 = (
+                    float(roll_corr_24.dropna().iloc[-1])
+                    if not roll_corr_24.empty and roll_corr_24.notna().any()
+                    else np.nan
+                )
+                corr_72 = (
+                    float(roll_corr_72.dropna().iloc[-1])
+                    if not roll_corr_72.empty and roll_corr_72.notna().any()
+                    else np.nan
+                )
+                beta_24 = (
+                    float(roll_beta_24.dropna().iloc[-1])
+                    if not roll_beta_24.empty and roll_beta_24.notna().any()
+                    else np.nan
+                )
+                beta_72 = (
+                    float(roll_beta_72.dropna().iloc[-1])
+                    if not roll_beta_72.empty and roll_beta_72.notna().any()
+                    else np.nan
+                )
                 beta_compress_threshold = 0.15
                 beta_compression = compute_beta_compression(beta_24, beta_72)
                 beta_state = classify_beta_state(beta_24, beta_72, beta_compress_threshold)
@@ -607,39 +859,72 @@ def main():
                 if beta_hat is not None and len(asset_ret) >= 2:
                     r_excess = compute_excess_log_returns(asset_ret, factor_ret, beta_hat)
                     if len(r_excess) >= 2:
-                        excess_return_24h = compute_excess_lookback_return(r_excess, n_24h) if len(r_excess) >= n_24h else np.nan
+                        excess_return_24h = (
+                            compute_excess_lookback_return(r_excess, n_24h) if len(r_excess) >= n_24h else np.nan
+                        )
                         excess_equity = np.exp(r_excess.cumsum())
                         _, excess_max_drawdown = compute_drawdown_from_equity(excess_equity)
-                metrics_card = pd.DataFrame([
-                    {"metric": "corr_btc_24", "value": round(corr_24, 4) if pd.notna(corr_24) else "—"},
-                    {"metric": "corr_btc_72", "value": round(corr_72, 4) if pd.notna(corr_72) else "—"},
-                    {"metric": "beta_btc_24", "value": round(beta_24, 4) if pd.notna(beta_24) else "—"},
-                    {"metric": "beta_btc_72", "value": round(beta_72, 4) if pd.notna(beta_72) else "—"},
-                    {"metric": "beta_compression", "value": round(beta_compression, 4) if pd.notna(beta_compression) else "—"},
-                    {"metric": "beta_state", "value": beta_state},
-                    {"metric": "excess_return_24h", "value": round(excess_return_24h, 4) if pd.notna(excess_return_24h) else "—"},
-                    {"metric": "excess_max_drawdown", "value": round(excess_max_drawdown, 4) if pd.notna(excess_max_drawdown) else "—"},
-                ])
+                metrics_card = pd.DataFrame(
+                    [
+                        {"metric": "corr_btc_24", "value": round(corr_24, 4) if pd.notna(corr_24) else "—"},
+                        {"metric": "corr_btc_72", "value": round(corr_72, 4) if pd.notna(corr_72) else "—"},
+                        {"metric": "beta_btc_24", "value": round(beta_24, 4) if pd.notna(beta_24) else "—"},
+                        {"metric": "beta_btc_72", "value": round(beta_72, 4) if pd.notna(beta_72) else "—"},
+                        {
+                            "metric": "beta_compression",
+                            "value": round(beta_compression, 4) if pd.notna(beta_compression) else "—",
+                        },
+                        {"metric": "beta_state", "value": beta_state},
+                        {
+                            "metric": "excess_return_24h",
+                            "value": round(excess_return_24h, 4) if pd.notna(excess_return_24h) else "—",
+                        },
+                        {
+                            "metric": "excess_max_drawdown",
+                            "value": round(excess_max_drawdown, 4) if pd.notna(excess_max_drawdown) else "—",
+                        },
+                    ]
+                )
                 st.caption(f"Metrics for {meta.get(pair_btc_sel, pair_btc_sel)}")
-                st.caption("beta_state: compressed = short-window beta below long − threshold (often pre-vol shift); expanded = above; stable = in between.")
+                st.caption(
+                    "beta_state: compressed = short-window beta below long − threshold (often pre-vol shift); expanded = above; stable = in between."
+                )
                 st_df(metrics_card, hide_index=True)
                 fig_rc = go.Figure()
                 if not roll_corr_btc.empty:
-                    fig_rc.add_trace(go.Scatter(x=roll_corr_btc.index, y=roll_corr_btc.values, name="Rolling corr", mode="lines"))
-                fig_rc.update_layout(title=f"Rolling correlation vs BTC_spot — {meta.get(pair_btc_sel, pair_btc_sel)} (window={roll_win_sel})", height=300, yaxis_title="Correlation")
+                    fig_rc.add_trace(
+                        go.Scatter(x=roll_corr_btc.index, y=roll_corr_btc.values, name="Rolling corr", mode="lines")
+                    )
+                fig_rc.update_layout(
+                    title=f"Rolling correlation vs BTC_spot — {meta.get(pair_btc_sel, pair_btc_sel)} (window={roll_win_sel})",
+                    height=300,
+                    yaxis_title="Correlation",
+                )
                 st_plot(fig_rc, use_container_width=True)
                 fig_rb = go.Figure()
                 if not roll_beta_btc.empty:
-                    fig_rb.add_trace(go.Scatter(x=roll_beta_btc.index, y=roll_beta_btc.values, name="Rolling beta", mode="lines"))
-                fig_rb.update_layout(title=f"Rolling beta vs BTC_spot — {meta.get(pair_btc_sel, pair_btc_sel)} (window={roll_win_sel})", height=300, yaxis_title="Beta")
+                    fig_rb.add_trace(
+                        go.Scatter(x=roll_beta_btc.index, y=roll_beta_btc.values, name="Rolling beta", mode="lines")
+                    )
+                fig_rb.update_layout(
+                    title=f"Rolling beta vs BTC_spot — {meta.get(pair_btc_sel, pair_btc_sel)} (window={roll_win_sel})",
+                    height=300,
+                    yaxis_title="Beta",
+                )
                 st_plot(fig_rb, use_container_width=True)
                 if beta_hat is not None and len(asset_ret) >= 2:
                     r_excess = compute_excess_log_returns(asset_ret, factor_ret, beta_hat)
                     if len(r_excess) >= 2:
                         excess_cum = compute_excess_cum_return(r_excess)
                         fig_ex = go.Figure()
-                        fig_ex.add_trace(go.Scatter(x=excess_cum.index, y=excess_cum.values, name="Excess cum return", mode="lines"))
-                        fig_ex.update_layout(title=f"BTC-hedged cumulative return — {meta.get(pair_btc_sel, pair_btc_sel)} (beta_hat={beta_hat_sel})", height=300, yaxis_title="Excess cum return")
+                        fig_ex.add_trace(
+                            go.Scatter(x=excess_cum.index, y=excess_cum.values, name="Excess cum return", mode="lines")
+                        )
+                        fig_ex.update_layout(
+                            title=f"BTC-hedged cumulative return — {meta.get(pair_btc_sel, pair_btc_sel)} (beta_hat={beta_hat_sel})",
+                            height=300,
+                            yaxis_title="Excess cum return",
+                        )
                         st_plot(fig_ex, use_container_width=True)
             else:
                 st.info("Need DEX pairs and BTC_spot (run poller with spot).")
@@ -652,7 +937,11 @@ def main():
                 if len(r) < 2:
                     continue
                 factor_aligned = factor_ret.reindex(r.index).dropna() if factor_ret is not None else None
-                beta = compute_beta_vs_factor(r, factor_aligned) if factor_aligned is not None and not (factor_aligned.dropna().empty) else np.nan
+                beta = (
+                    compute_beta_vs_factor(r, factor_aligned)
+                    if factor_aligned is not None and not (factor_aligned.dropna().empty)
+                    else np.nan
+                )
                 label = meta.get(f"{cid}:{addr}", f"{cid}/{addr}")
                 rows_beta.append({"label": label, "beta_vs_btc": beta})
             if rows_beta:
@@ -672,18 +961,37 @@ def main():
                         disp_z_series = compute_dispersion_zscore(disp_series, w_disp)
                         if not disp_z_series.empty and disp_z_series.notna().any():
                             disp_z_latest = float(disp_z_series.iloc[-1])
-                    disp_metrics = pd.DataFrame([
-                        {"metric": "dispersion_latest", "value": round(disp_latest, 6)},
-                        {"metric": "dispersion_z_latest", "value": round(disp_z_latest, 2) if not np.isnan(disp_z_latest) else "—"},
-                    ])
-                    st.caption("Dispersion: cross-sectional std of returns. z > +1: high dispersion (relative value); z < -1: low dispersion (macro beta).")
+                    disp_metrics = pd.DataFrame(
+                        [
+                            {"metric": "dispersion_latest", "value": round(disp_latest, 6)},
+                            {
+                                "metric": "dispersion_z_latest",
+                                "value": round(disp_z_latest, 2) if not np.isnan(disp_z_latest) else "—",
+                            },
+                        ]
+                    )
+                    st.caption(
+                        "Dispersion: cross-sectional std of returns. z > +1: high dispersion (relative value); z < -1: low dispersion (macro beta)."
+                    )
                     st_df(disp_metrics, hide_index=True)
                     fig_disp = go.Figure()
-                    fig_disp.add_trace(go.Scatter(x=disp_series.index, y=disp_series.values, name="Dispersion (std)", mode="lines"))
+                    fig_disp.add_trace(
+                        go.Scatter(x=disp_series.index, y=disp_series.values, name="Dispersion (std)", mode="lines")
+                    )
                     if not disp_z_series.empty:
-                        fig_disp.add_trace(go.Scatter(x=disp_z_series.index, y=disp_z_series.values, name="Dispersion z-score", mode="lines", yaxis="y2"))
+                        fig_disp.add_trace(
+                            go.Scatter(
+                                x=disp_z_series.index,
+                                y=disp_z_series.values,
+                                name="Dispersion z-score",
+                                mode="lines",
+                                yaxis="y2",
+                            )
+                        )
                         fig_disp.update_layout(yaxis2=dict(title="z-score", overlaying="y", side="right"))
-                    fig_disp.update_layout(title="Cross-asset dispersion index (std across assets)", height=300, yaxis_title="Dispersion")
+                    fig_disp.update_layout(
+                        title="Cross-asset dispersion index (std across assets)", height=300, yaxis_title="Dispersion"
+                    )
                     st_plot(fig_disp, use_container_width=True)
                 else:
                     st.write("Dispersion series empty.")
@@ -699,7 +1007,9 @@ def main():
                 if len(r) < vol_short:
                     continue
                 short_vol = r.rolling(vol_short).std(ddof=1).iloc[-1]
-                medium_vol = r.rolling(min(vol_medium, len(r))).std(ddof=1).iloc[-1] if len(r) >= vol_medium else short_vol
+                medium_vol = (
+                    r.rolling(min(vol_medium, len(r))).std(ddof=1).iloc[-1] if len(r) >= vol_medium else short_vol
+                )
                 regime = classify_vol_regime(short_vol, medium_vol)
                 label = meta.get(f"{cid}:{addr}", f"{cid}/{addr}")
                 rows_regime.append({"label": label, "regime": regime})
@@ -710,13 +1020,23 @@ def main():
 
     elif page == "Signals":
         st.header("Signals (research journal)")
-        signal_type_filter = st.sidebar.selectbox("Signal type", ["all", "beta_compression_trigger", "dispersion_extreme", "residual_momentum"], key="sig_type")
+        signal_type_filter = st.sidebar.selectbox(
+            "Signal type",
+            ["all", "beta_compression_trigger", "dispersion_extreme", "residual_momentum"],
+            key="sig_type",
+        )
         last_n = st.sidebar.number_input("Last N signals", value=100, min_value=1, max_value=1000, step=10, key="sig_n")
         sig_type = None if signal_type_filter == "all" else signal_type_filter
         signals_df = load_signals(db_path_str, signal_type=sig_type, last_n=int(last_n))
         if not signals_df.empty:
             st_df(signals_df)
-            st.download_button("Download signals CSV", data=signals_df.to_csv(index=False).encode("utf-8"), file_name="signals_export.csv", mime="text/csv", key="sig_dl")
+            st.download_button(
+                "Download signals CSV",
+                data=signals_df.to_csv(index=False).encode("utf-8"),
+                file_name="signals_export.csv",
+                mime="text/csv",
+                key="sig_dl",
+            )
         else:
             st.info("No signals in journal. Run report_daily.py to detect and log signals.")
 
@@ -731,11 +1051,15 @@ def main():
             st.warning(f"Universe load failed: {e}")
         n_assets = returns_df_res.shape[1] if not returns_df_res.empty else 0
         if n_assets < 3:
-            st.info(f"Need >= 3 assets for cross-sectional research. Current: {n_assets}. Add more DEX pairs or ensure spot series exist.")
-            meta_dict_res = {}
+            st.info(
+                f"Need >= 3 assets for cross-sectional research. Current: {n_assets}. Add more DEX pairs or ensure spot series exist."
+            )
+            _meta_dict_res = {}  # noqa: F841
         else:
-            meta_dict_res = meta_df_res.set_index("asset_id")["label"].to_dict() if not meta_df_res.empty else {}
-        tab_univ, tab_ic, tab_decay, tab_port, tab_regime = st.tabs(["Universe", "IC Summary", "IC Decay", "Portfolio", "Regime Conditioning"])
+            _meta_dict_res = meta_df_res.set_index("asset_id")["label"].to_dict() if not meta_df_res.empty else {}  # noqa: F841
+        tab_univ, tab_ic, tab_decay, tab_port, tab_regime = st.tabs(
+            ["Universe", "IC Summary", "IC Decay", "Portfolio", "Regime Conditioning"]
+        )
         with tab_univ:
             st.subheader("Universe")
             if not meta_df_res.empty:
@@ -754,7 +1078,9 @@ def main():
                     st_df(pd.DataFrame([s_res]), hide_index=True)
                     if not ic_ts_res.empty and ic_ts_res.notna().any():
                         fig_ic = go.Figure()
-                        fig_ic.add_trace(go.Scatter(x=ic_ts_res.dropna().index, y=ic_ts_res.dropna().values, name="IC", mode="lines"))
+                        fig_ic.add_trace(
+                            go.Scatter(x=ic_ts_res.dropna().index, y=ic_ts_res.dropna().values, name="IC", mode="lines")
+                        )
                         fig_ic.update_layout(title="IC over time (momentum_24h vs fwd 1-bar)", height=300)
                         st_plot(fig_ic, use_container_width=True)
                 else:
@@ -770,7 +1096,14 @@ def main():
                 if not decay_df_res.empty:
                     st_df(decay_df_res.round(4))
                     fig_dec = go.Figure()
-                    fig_dec.add_trace(go.Scatter(x=decay_df_res["horizon_bars"], y=decay_df_res["mean_ic"], mode="lines+markers", name="Mean IC"))
+                    fig_dec.add_trace(
+                        go.Scatter(
+                            x=decay_df_res["horizon_bars"],
+                            y=decay_df_res["mean_ic"],
+                            mode="lines+markers",
+                            name="Mean IC",
+                        )
+                    )
                     fig_dec.update_layout(title="IC decay (momentum_24h)", xaxis_title="Horizon (bars)", height=300)
                     st_plot(fig_dec, use_container_width=True)
                 else:
@@ -789,7 +1122,9 @@ def main():
                 turnover_res = turnover_from_weights(weights_res)
                 fee_bps = 30.0
                 slip_bps = 10.0
-                port_net_res = apply_costs_to_portfolio(port_ret_res, turnover_res.reindex(port_ret_res.index).fillna(0), fee_bps, slip_bps)
+                port_net_res = apply_costs_to_portfolio(
+                    port_ret_res, turnover_res.reindex(port_ret_res.index).fillna(0), fee_bps, slip_bps
+                )
                 if len(port_net_res) >= 2:
                     summ_res = significance_summary(port_net_res, freq_res)
                     eq_res = (1 + port_net_res).cumprod()
@@ -826,7 +1161,9 @@ def main():
                         r = port_r.loc[mask]
                         if len(r) >= 2 and r.std() and r.std() != 0:
                             sh = float(r.mean() / r.std() * np.sqrt(bars_per_year(freq_res)))
-                            rows_r.append({"regime": label, "n_bars": len(r), "mean_ret": r.mean(), "sharpe_approx": sh})
+                            rows_r.append(
+                                {"regime": label, "n_bars": len(r), "mean_ret": r.mean(), "sharpe_approx": sh}
+                            )
                     if rows_r:
                         st_df(pd.DataFrame(rows_r).round(4))
                     else:
@@ -858,7 +1195,9 @@ def main():
             else:
                 try:
                     sig_mom_i = calc_signal_momentum_24h(returns_inst, "1h")
-                    sig_clean_i = clean_momentum(returns_inst, "1h", factor_inst) if not returns_inst.empty else pd.DataFrame()
+                    sig_clean_i = (
+                        clean_momentum(returns_inst, "1h", factor_inst) if not returns_inst.empty else pd.DataFrame()
+                    )
                     sig_value_i = value_vs_beta(returns_inst, "1h", factor_inst)
                     signals_dict_i = {}
                     if not sig_mom_i.empty:
@@ -894,12 +1233,26 @@ def main():
                             st.write("No timestamps.")
                         else:
                             er_i = ranks_i.loc[last_t].astype(float)
-                            cov_i = estimate_covariance(returns_inst.tail(72) if len(returns_inst) >= 72 else returns_inst, method="ewma", halflife=24.0)
-                            constraints_i = {"dollar_neutral": True, "target_gross_leverage": 1.0, "max_weight_per_asset": 0.25}
+                            cov_i = estimate_covariance(
+                                returns_inst.tail(72) if len(returns_inst) >= 72 else returns_inst,
+                                method="ewma",
+                                halflife=24.0,
+                            )
+                            constraints_i = {
+                                "dollar_neutral": True,
+                                "target_gross_leverage": 1.0,
+                                "max_weight_per_asset": 0.25,
+                            }
                             if factor_inst is not None:
-                                exp_i = build_exposure_panel(returns_inst, meta_inst, factor_returns=factor_inst, freq="1h")
+                                exp_i = build_exposure_panel(
+                                    returns_inst, meta_inst, factor_returns=factor_inst, freq="1h"
+                                )
                                 if "beta_btc_72" in exp_i and not exp_i["beta_btc_72"].empty:
-                                    b_ser = exp_i["beta_btc_72"].loc[last_t] if last_t in exp_i["beta_btc_72"].index else exp_i["beta_btc_72"].iloc[-1]
+                                    b_ser = (
+                                        exp_i["beta_btc_72"].loc[last_t]
+                                        if last_t in exp_i["beta_btc_72"].index
+                                        else exp_i["beta_btc_72"].iloc[-1]
+                                    )
                                     constraints_i["betas"] = b_ser
                             w_i, diag_i = optimize_long_short_portfolio(er_i, cov_i, constraints_i)
                             st.caption("Diagnostics")
@@ -923,13 +1276,24 @@ def main():
                         weights_i = long_short_from_ranks(ranks_i, 3, 3, gross_leverage=1.0)
                         port_ret_i = portfolio_returns_from_weights(weights_i, returns_inst).dropna()
                         turnover_i = turnover_from_weights(weights_i)
-                        port_net_i = apply_costs_to_portfolio(port_ret_i, turnover_i.reindex(port_ret_i.index).fillna(0), 30, 10)
+                        port_net_i = apply_costs_to_portfolio(
+                            port_ret_i, turnover_i.reindex(port_ret_i.index).fillna(0), 30, 10
+                        )
                         if len(port_net_i) >= 10:
                             dsr = deflated_sharpe_ratio(port_net_i, "1h", 50, skew_kurtosis_optional=True)
                             st_df(pd.DataFrame([dsr]).T)
                             st.caption("Deflated Sharpe (n_trials=50). Use for research screening only.")
                             st.info(reality_check_warning(3, 1))
-                            wf_df = pd.DataFrame([{"train_sharpe": np.nan, "test_sharpe": float(port_net_i.mean() / port_net_i.std()) if port_net_i.std() and port_net_i.std() > 0 else np.nan}])
+                            wf_df = pd.DataFrame(
+                                [
+                                    {
+                                        "train_sharpe": np.nan,
+                                        "test_sharpe": float(port_net_i.mean() / port_net_i.std())
+                                        if port_net_i.std() and port_net_i.std() > 0
+                                        else np.nan,
+                                    }
+                                ]
+                            )
                             pbo = pbo_proxy_walkforward(wf_df)
                             st.write("PBO proxy:", pbo.get("pbo_proxy", np.nan), "—", pbo.get("explanation", ""))
                         else:
@@ -943,8 +1307,14 @@ def main():
             else:
                 try:
                     disp_ser = compute_dispersion_series(returns_inst)
-                    disp_z_ser = dispersion_zscore_series(disp_ser, 24) if len(disp_ser) >= 24 else pd.Series(dtype=float)
-                    regime_ser = disp_z_ser.apply(lambda z: "high_disp" if z > 1 else ("low_disp" if z < -1 else "mid")) if not disp_z_ser.empty else pd.Series(dtype=str)
+                    disp_z_ser = (
+                        dispersion_zscore_series(disp_ser, 24) if len(disp_ser) >= 24 else pd.Series(dtype=float)
+                    )
+                    regime_ser = (
+                        disp_z_ser.apply(lambda z: "high_disp" if z > 1 else ("low_disp" if z < -1 else "mid"))
+                        if not disp_z_ser.empty
+                        else pd.Series(dtype=str)
+                    )
                     sig_mom_i = calc_signal_momentum_24h(returns_inst, "1h")
                     if sig_mom_i.empty or regime_ser.empty:
                         st.write("No signal or regime.")
@@ -953,7 +1323,9 @@ def main():
                         weights_i = long_short_from_ranks(ranks_i, 3, 3, gross_leverage=1.0)
                         port_ret_i = portfolio_returns_from_weights(weights_i, returns_inst).dropna()
                         turnover_i = turnover_from_weights(weights_i)
-                        port_net_i = apply_costs_to_portfolio(port_ret_i, turnover_i.reindex(port_ret_i.index).fillna(0), 30, 10)
+                        port_net_i = apply_costs_to_portfolio(
+                            port_ret_i, turnover_i.reindex(port_ret_i.index).fillna(0), 30, 10
+                        )
                         cm = conditional_metrics(port_net_i, regime_ser)
                         if not cm.empty:
                             st_df(cm.round(4))
@@ -964,13 +1336,19 @@ def main():
         with tab_exp:
             st.subheader("Experiments (past runs — legacy CSV)")
             try:
+                from crypto_analyzer.experiments import load_experiments as _load_exp_csv
+
                 exp_dir = Path("reports/experiments")
-                df_exp = load_experiments_legacy(str(exp_dir))
+                df_exp = _load_exp_csv(str(exp_dir))
                 if df_exp.empty:
                     st.info("No experiments logged. Run research_report_v2.py to log.")
                 else:
                     st_df(df_exp.tail(50))
-                    sel_run = st.selectbox("View run", options=df_exp["run_name"].astype(str).tolist() if "run_name" in df_exp.columns else [], key="exp_sel")
+                    sel_run = st.selectbox(
+                        "View run",
+                        options=df_exp["run_name"].astype(str).tolist() if "run_name" in df_exp.columns else [],
+                        key="exp_sel",
+                    )
                     if sel_run:
                         st.json(df_exp[df_exp["run_name"].astype(str) == str(sel_run)].iloc[0].to_dict())
             except Exception as e:
@@ -986,12 +1364,21 @@ def main():
             st.info("No experiment database found. Run `reportv2` first to record experiments.")
         else:
             from crypto_analyzer.experiments import (
-                load_experiments as load_exp_db,
-                load_experiment_metrics as load_exp_metrics,
-                load_metric_history as load_mhist,
                 load_distinct_metric_names as load_mnames,
+            )
+            from crypto_analyzer.experiments import (
+                load_experiment_metrics as load_exp_metrics,
+            )
+            from crypto_analyzer.experiments import (
+                load_experiments as load_exp_db,
+            )
+            from crypto_analyzer.experiments import (
                 load_experiments_filtered as load_exp_filtered,
             )
+            from crypto_analyzer.experiments import (
+                load_metric_history as load_mhist,
+            )
+
             tab_runs, tab_compare, tab_hist = st.tabs(["Run List", "Compare Runs", "Metric History"])
 
             with tab_runs:
@@ -1023,10 +1410,37 @@ def main():
                         display_df["sharpe"] = display_df["sharpe"].apply(
                             lambda v: "N/A" if v is None or (isinstance(v, float) and np.isnan(v)) else v
                         )
-                    show_cols = [c for c in ["run_id", "ts_utc", "git_commit", "spec_version", "hypothesis", "tags_json"] + [c for c in display_df.columns if c not in ("run_id", "ts_utc", "git_commit", "spec_version", "out_dir", "notes", "data_start", "data_end", "config_hash", "env_fingerprint", "hypothesis", "tags_json", "dataset_id", "params_json")] if c in display_df.columns]
+                    show_cols = [
+                        c
+                        for c in ["run_id", "ts_utc", "git_commit", "spec_version", "hypothesis", "tags_json"]
+                        + [
+                            c
+                            for c in display_df.columns
+                            if c
+                            not in (
+                                "run_id",
+                                "ts_utc",
+                                "git_commit",
+                                "spec_version",
+                                "out_dir",
+                                "notes",
+                                "data_start",
+                                "data_end",
+                                "config_hash",
+                                "env_fingerprint",
+                                "hypothesis",
+                                "tags_json",
+                                "dataset_id",
+                                "params_json",
+                            )
+                        ]
+                        if c in display_df.columns
+                    ]
                     st_df(display_df[show_cols])
                     if "sharpe" in display_df.columns and (display_df["sharpe"] == "N/A").any():
-                        st.caption("Sharpe shows N/A when the optimizer cannot construct a valid portfolio PnL (often due to small universe or missing bars).")
+                        st.caption(
+                            "Sharpe shows N/A when the optimizer cannot construct a valid portfolio PnL (often due to small universe or missing bars)."
+                        )
 
             with tab_compare:
                 st.subheader("Compare two runs")
@@ -1038,18 +1452,36 @@ def main():
                     run_labels = [f"{r} ({t})" for r, t in zip(df_runs["run_id"], df_runs["ts_utc"])]
                     col_a, col_b = st.columns(2)
                     with col_a:
-                        idx_a = st.selectbox("Run A", range(len(run_ids)), format_func=lambda i: run_labels[i], key="cmp_a")
+                        idx_a = st.selectbox(
+                            "Run A", range(len(run_ids)), format_func=lambda i: run_labels[i], key="cmp_a"
+                        )
                     with col_b:
-                        idx_b = st.selectbox("Run B", range(len(run_ids)), index=min(1, len(run_ids) - 1), format_func=lambda i: run_labels[i], key="cmp_b")
+                        idx_b = st.selectbox(
+                            "Run B",
+                            range(len(run_ids)),
+                            index=min(1, len(run_ids) - 1),
+                            format_func=lambda i: run_labels[i],
+                            key="cmp_b",
+                        )
                     metrics_a = load_exp_metrics(exp_db, run_ids[idx_a])
                     metrics_b = load_exp_metrics(exp_db, run_ids[idx_b])
                     if metrics_a.empty and metrics_b.empty:
                         st.info("No metrics for selected runs.")
                     else:
-                        ma = metrics_a.set_index("metric_name")["metric_value"].rename("A") if not metrics_a.empty else pd.Series(dtype=float, name="A")
-                        mb = metrics_b.set_index("metric_name")["metric_value"].rename("B") if not metrics_b.empty else pd.Series(dtype=float, name="B")
+                        ma = (
+                            metrics_a.set_index("metric_name")["metric_value"].rename("A")
+                            if not metrics_a.empty
+                            else pd.Series(dtype=float, name="A")
+                        )
+                        mb = (
+                            metrics_b.set_index("metric_name")["metric_value"].rename("B")
+                            if not metrics_b.empty
+                            else pd.Series(dtype=float, name="B")
+                        )
                         diff = pd.concat([ma, mb], axis=1).fillna(float("nan"))
-                        diff["delta"] = pd.to_numeric(diff["B"], errors="coerce") - pd.to_numeric(diff["A"], errors="coerce")
+                        diff["delta"] = pd.to_numeric(diff["B"], errors="coerce") - pd.to_numeric(
+                            diff["A"], errors="coerce"
+                        )
                         diff = diff.reset_index().rename(columns={"index": "metric_name"})
                         st_df(diff.round(6))
 
@@ -1067,10 +1499,14 @@ def main():
                         hist_df["ts_utc"] = pd.to_datetime(hist_df["ts_utc"], errors="coerce")
                         hist_df = hist_df.sort_values("ts_utc")
                         fig_hist = go.Figure()
-                        fig_hist.add_trace(go.Scatter(
-                            x=hist_df["ts_utc"], y=hist_df["metric_value"],
-                            mode="lines+markers", name=sel_metric,
-                        ))
+                        fig_hist.add_trace(
+                            go.Scatter(
+                                x=hist_df["ts_utc"],
+                                y=hist_df["metric_value"],
+                                mode="lines+markers",
+                                name=sel_metric,
+                            )
+                        )
                         fig_hist.update_layout(
                             title=f"{sel_metric} over time",
                             xaxis_title="Run time (UTC)",
@@ -1088,7 +1524,7 @@ def main():
         st.subheader("Provider Health")
         try:
             from crypto_analyzer.db.health import ProviderHealthStore
-            from crypto_analyzer.providers.base import ProviderStatus as PStatus
+
             with sqlite3.connect(db_path_str_r) as con_h:
                 health_store = ProviderHealthStore(con_h)
                 provider_healths = health_store.load_all()
@@ -1098,7 +1534,9 @@ def main():
                     freshness = None
                     if h.last_ok_at:
                         try:
-                            from datetime import datetime as dt_cls, timezone as tz_cls
+                            from datetime import datetime as dt_cls
+                            from datetime import timezone as tz_cls
+
                             last_ok = dt_cls.fromisoformat(h.last_ok_at)
                             if last_ok.tzinfo is None:
                                 last_ok = last_ok.replace(tzinfo=tz_cls.utc)
@@ -1111,14 +1549,18 @@ def main():
                                 freshness = f"{age_s / 3600:.1f}h ago"
                         except Exception:
                             freshness = h.last_ok_at
-                    status_icon = {"OK": "\u2705", "DEGRADED": "\u26a0\ufe0f", "DOWN": "\u274c"}.get(h.status.value, "\u2753")
-                    health_rows.append({
-                        "Provider": h.provider_name,
-                        "Status": f"{status_icon} {h.status.value}",
-                        "Last Success": freshness or "Never",
-                        "Fail Count": h.fail_count,
-                        "Last Error": (h.last_error or "")[:100] if h.last_error else "",
-                    })
+                    status_icon = {"OK": "\u2705", "DEGRADED": "\u26a0\ufe0f", "DOWN": "\u274c"}.get(
+                        h.status.value, "\u2753"
+                    )
+                    health_rows.append(
+                        {
+                            "Provider": h.provider_name,
+                            "Status": f"{status_icon} {h.status.value}",
+                            "Last Success": freshness or "Never",
+                            "Fail Count": h.fail_count,
+                            "Last Error": (h.last_error or "")[:100] if h.last_error else "",
+                        }
+                    )
                 st_df(pd.DataFrame(health_rows), hide_index=True)
             else:
                 st.caption("No provider health data yet. Run the poller to populate.")
@@ -1176,7 +1618,9 @@ def main():
         )
         st.caption("Run doctor for env/DB/pipeline; universe-poll for 2+ refreshes; then reportv2 and streamlit.")
         st.subheader("Audit verification SQL (copy-paste)")
-        st.caption("Latest allowlist size + sources; churn since last refresh. If these look right, universe mode is auditable.")
+        st.caption(
+            "Latest allowlist size + sources; churn since last refresh. If these look right, universe mode is auditable."
+        )
         st.code(
             "-- Latest allowlist size + sources (last 5 refreshes)\n"
             "SELECT ts_utc, COUNT(*) AS n, MIN(source) AS sources_hint\n"
@@ -1239,7 +1683,13 @@ def main():
                     try:
                         with open(manifest_path, encoding="utf-8") as f:
                             data = json.load(f)
-                        st.download_button("Download JSON", data=json.dumps(data, indent=2).encode("utf-8"), file_name=f"manifest_{sel_run}.json", mime="application/json", key="gov_dl")
+                        st.download_button(
+                            "Download JSON",
+                            data=json.dumps(data, indent=2).encode("utf-8"),
+                            file_name=f"manifest_{sel_run}.json",
+                            mime="application/json",
+                            key="gov_dl",
+                        )
                     except Exception:
                         pass
         health_path = reports_dir / "health" / "health_summary.json"
@@ -1257,6 +1707,7 @@ def main():
     cap = streamlit_compatibility_caption()
     if cap:
         st.sidebar.caption(cap)
+
 
 if __name__ == "__main__":
     main()
