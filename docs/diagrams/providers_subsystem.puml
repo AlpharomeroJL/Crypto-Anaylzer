@@ -1,0 +1,51 @@
+@startuml providers_subsystem
+title Provider Subsystem — Chain, Resilience, Registry
+
+package "Protocols" {
+  interface "SpotPriceProvider\nget_spot -> SpotQuote" as SPP
+  interface "DexSnapshotProvider\nget_snapshot, search_pairs" as DSP
+}
+
+package "Implementations" {
+  component "Coinbase" as CB
+  component "Kraken" as KK
+  component "Dexscreener" as DexScr
+  SPP <|.. CB
+  SPP <|.. KK
+  DSP <|.. DexScr
+}
+
+package "Resilience (per call)" {
+  component "Retry\n(exponential backoff)" as Retry
+  component "Circuit breaker\n(CLOSED OPEN HALF_OPEN)" as CBreaker
+  component "Last-known-good\ncache (DEGRADED)" as LKG
+  Retry --> CBreaker
+  CBreaker --> LKG
+}
+
+package "Orchestration" {
+  component "ProviderRegistry\n(defaults + config)" as Reg
+  component "SpotPriceChain\n(ordered fallback)" as SpotChain
+  component "DexSnapshotChain\n(ordered fallback)" as DexChain
+  Reg --> SpotChain : spot_priority
+  Reg --> DexChain : dex_priority
+  SpotChain --> Retry : try each provider
+  DexChain --> Retry
+}
+
+package "Data quality" {
+  component "Quality gate\n(price > 0, status not DOWN)" as Gate
+  component "DbWriter" as DW
+  Gate --> DW
+}
+
+Retry --> Gate : valid quote/snapshot
+LKG --> Gate : stale allowed (DEGRADED)
+
+note right of Reg
+  config.yaml:
+  spot_priority: [coinbase, kraken]
+  dex_priority: [dexscreener]
+end note
+
+@enduml

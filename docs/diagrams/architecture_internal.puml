@@ -1,0 +1,52 @@
+@startuml architecture_internal
+title Internal Architecture — Four Stages, One Database
+
+database "SQLite\n(dex_data.sqlite)" as DB
+
+package "Ingestion" {
+  component "Poller\n(60s cycle)" as Poller
+  component "Spot chain\n(Coinbase → Kraken)" as SpotChain
+  component "DEX chain\n(Dexscreener)" as DexChain
+  component "DbWriter" as DbWriter
+  Poller --> SpotChain
+  Poller --> DexChain
+  SpotChain --> DbWriter
+  DexChain --> DbWriter
+  DbWriter --> DB : write snapshots,\nspot prices, health
+}
+
+package "Materialization" {
+  component "Bar builder\n(materialize_bars)" as BarBuilder
+  BarBuilder --> DB : read snapshots\nwrite bars_5min, 1h, 1D
+}
+
+package "Modeling" {
+  component "data / features\nfactors / signals" as Model
+  component "optimizer\nwalk_forward" as Opt
+  component "experiments\nregistry" as Exp
+  Model --> DB : read bars, spot
+  Opt --> Model
+  Exp --> DB : read/write runs
+}
+
+package "Presentation" {
+  component "Reports\n(report_*.py)" as Reports
+  component "Streamlit\n(dashboard)" as UI
+  component "REST API\n(FastAPI)" as API
+  Reports --> DB
+  UI --> DB
+  API --> DB
+}
+
+DB --> BarBuilder : snapshots
+DB --> Model : bars, spot
+DB --> Reports : data
+DB --> UI : data
+DB --> API : data
+
+note bottom of DB
+  Single source of truth.
+  Stages can run independently.
+end note
+
+@enduml

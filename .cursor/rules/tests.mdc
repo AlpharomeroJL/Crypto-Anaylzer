@@ -1,0 +1,29 @@
+---
+description: Test conventions — no live network, mocking, SQLite, no sleep
+globs: "**/tests/**/*.py"
+alwaysApply: false
+---
+
+# Test Conventions
+
+## Mocking (Locked In)
+- Use **unittest.mock**: `patch`, `MagicMock`. Patch at the **HTTP boundary** where the request is made (e.g. `patch("crypto_analyzer.providers.cex.coinbase.requests.get")` or the specific provider module’s `requests.get`).
+- Do **not** introduce `responses`, `requests_mock`, or `respx` unless the project adopts them; keep one consistent approach.
+
+## No Live Network
+- No real HTTP or external calls. All provider/API requests must be mocked.
+
+## SQLite and DB
+- **Unit tests**: never touch SQLite; use mocks for any DB access.
+- **Integration tests**: use a **temp SQLite file** (e.g. `tmp_path / "test.db"` or `tempfile.NamedTemporaryFile`); never use the project’s real `dex_data.sqlite` or a shared in-memory DB for integration tests that write.
+
+## Time
+- **No `time.sleep` in tests.** Use `freezegun` or `monkeypatch` (e.g. `monkeypatch.setattr(module, "time_monotonic", lambda: fixed_time)`) to control time. For circuit breaker / cooldown tests, advance time via fixtures or mocks, not real sleeps.
+
+## Layout and Discovery
+- Tests in `tests/`; pytest discovers `test_*.py`. Config in `pyproject.toml` under `[tool.pytest.ini_options]`.
+
+## Before Finishing, Always Output
+- **Files changed** (list)
+- **Commands to run** (e.g. `python -m pytest tests/path/to/test_file.py -v`)
+- **What to look for in output**

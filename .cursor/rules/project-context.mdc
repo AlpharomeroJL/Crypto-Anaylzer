@@ -1,0 +1,81 @@
+---
+description: Project context, constraints, and how to run commands (Crypto Quantitative Research Platform)
+alwaysApply: true
+---
+
+# Crypto-Analyzer Project Context
+
+## What This Repo Is
+- **Crypto Quantitative Research Platform**: local-first, SQLite-backed. Ingestion (CEX/DEX providers) → materialization (OHLCV bars) → modeling (factor OLS, signals, QP, walk-forward) → dashboard/API/CLI.
+- **Single source of truth**: SQLite. No API keys; public endpoints only. No live network in tests.
+
+## Hard Constraints (Must / Never)
+- SQLite remains the single source of truth.
+- No API keys or authenticated endpoints.
+- No live network in tests — use mocked HTTP.
+- Minimal new dependencies; justify any addition.
+- Preserve backwards compatibility or provide migrations + upgrade notes.
+
+## Decision Defaults (When Unsure)
+- Prefer adding small helper functions over large refactors.
+- Prefer pure functions in analytics; side-effects only in `db/` and `cli/`.
+- New modules must include tests; wire into docs only when the user asks.
+- Prefer minimal diffs that preserve existing structure unless explicitly asked to refactor.
+
+## No Silent Architecture Change
+- If a change affects architecture boundaries (providers, db layer, public API), explicitly state that it changes architecture. This prevents incremental erosion.
+
+## Do Not Touch (Without Explicit Request)
+- **db/migrations.py** — semantics of migrations (idempotent CREATE/ALTER); add new migrations only when needed.
+- **Provider interface method signatures** — `SpotPriceProvider.get_spot(symbol)`, `DexSnapshotProvider.get_snapshot(chain_id, pair_address)`, `search_pairs(query, chain_id)`; do not change names or signatures.
+- **config schema keys** — e.g. `db.path`, `providers.spot_priority`, `providers.dex_priority`; add keys only, do not rename/remove without migration note.
+- **Public API surface of data.py** — function names and return shapes consumed by reports/dashboard; extend only or document breaking changes.
+
+## Architecture Change Disclosure
+
+If a change affects architecture boundaries (providers layer, db layer, public API of crypto_analyzer/, configuration schema, or experiment store wiring), explicitly state in the final output that the change modifies architecture.
+
+Architecture-impacting changes must:
+- Be clearly described.
+- Justify why the boundary change is necessary.
+- Mention potential downstream effects.
+
+If unsure whether a change affects architecture, assume that it does and disclose it.
+
+## Minimal Diff Bias
+
+Prefer minimal diffs that preserve existing structure unless explicitly asked to refactor.
+
+Do not:
+- Rename modules or functions unless required.
+- Move files across layers.
+- Introduce new abstractions without user request.
+- Reformat unrelated code.
+
+When making changes:
+- Modify only what is necessary.
+- Avoid opportunistic cleanup.
+- Preserve public interfaces.
+
+## Running Things (Windows)
+- **Venv**: `.venv` at repo root; activate with `.venv\Scripts\activate` (PowerShell).
+- **CLI**: Prefer `.\scripts\run.ps1 <command> [args...]` (e.g. `.\scripts\run.ps1 poll`, `.\scripts\run.ps1 test`, `.\scripts\run.ps1 streamlit`). Fallback: `python -m crypto_analyzer` or `python cli\<script>.py`.
+- **Tests**: `python -m pytest -q` (or `.\scripts\run.ps1 test`). Test root: `tests/`.
+- **Lint**: `ruff check .` and `ruff format .`; config in `pyproject.toml`.
+
+## Verification (Commands to Run After Code Changes)
+When changing providers, DB, or CLI:
+1. `python -m pytest -q`
+2. `ruff check .` (fix or document exceptions)
+3. If touching ingestion: one poll cycle, e.g. `.\scripts\run.ps1 poll` or `python cli/poll.py --run-seconds 65`
+
+## Docs as Source of Truth
+- **Architecture / design**: `docs/design.md`, `docs/architecture.md`.
+- **Contributing / style / adding providers**: `CONTRIBUTING.md`.
+- **Diagrams**: When the user explicitly requests architecture diagrams or diagram updates, create/update `docs/diagrams/` (PlantUML/C4) and export SVG/PNG; keep diagrams aligned with code (providers, chain, resilience, DB).
+- README claims must match code; when in doubt, verify in code and tests.
+
+## Before Finishing, Always Output
+- **Files changed** (list)
+- **Commands to run** (exact, copy-paste)
+- **What to look for in output** (e.g. "200 passed", "All checks passed", "2 successful cycles")

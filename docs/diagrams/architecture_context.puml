@@ -1,0 +1,30 @@
+@startuml architecture_context
+title System Context — Crypto Quantitative Research Platform
+
+actor "Researcher" as User
+rectangle "Crypto-Analyzer" as App
+
+cloud "CEX APIs" {
+  [Coinbase] as Coinbase
+  [Kraken] as Kraken
+}
+
+cloud "DEX APIs" {
+  [Dexscreener] as Dexscreener
+}
+
+database "SQLite\n(dex_data.sqlite)" as DB
+
+User --> App : use (reports, backtest, dashboard)
+App --> Coinbase : spot prices (public)
+App --> Kraken : spot prices (public)
+App --> Dexscreener : DEX snapshots (public)
+App --> DB : read/write (single source of truth)
+
+note right of App
+  No API keys.
+  Public endpoints only.
+  Local-first, research-only.
+end note
+
+@enduml

@@ -1,0 +1,48 @@
+@startuml research_lifecycle
+title Research Lifecycle — From Bars to Experiments
+
+database "SQLite\n(bars_*, spot)" as DB
+
+package "Data & features" {
+  component "data.load_bars()" as Load
+  component "features\n(returns, vol, regime)" as Feat
+  DB --> Load
+  Load --> Feat
+}
+
+package "Modeling" {
+  component "factors\n(multifactor OLS)" as Factors
+  component "cs_factors\n(size, liquidity, momentum)" as CS
+  component "signals\n(detect, log)" as Sig
+  component "regimes\n(dispersion, vol, beta)" as Reg
+  Feat --> Factors
+  Feat --> CS
+  Factors --> Sig
+  Feat --> Reg
+}
+
+package "Portfolio" {
+  component "optimizer\n(QP, constraints)" as Opt
+  component "walk_forward\n(train/test folds)" as WF
+  component "backtest metrics" as Metrics
+  Sig --> Opt
+  Opt --> WF
+  WF --> Metrics
+}
+
+package "Governance" {
+  component "experiment_store\n(SQLite/Postgres)" as ExpStore
+  component "run metadata\n(hypothesis, tags)" as Meta
+  Metrics --> ExpStore
+  ExpStore --> Meta
+  component "governance manifest\n(git, env, hashes)" as Gov
+  Meta --> Gov
+}
+
+note right of WF
+  Strict train/test.
+  No lookahead.
+  DSR, PBO, bootstrap.
+end note
+
+@enduml

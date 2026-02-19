@@ -1,0 +1,82 @@
+---
+description: Python style and provider-architecture conventions for crypto_analyzer and CLI
+globs: "**/crypto_analyzer/**/*.py, **/cli/**/*.py"
+alwaysApply: false
+---
+
+# Python and Provider Conventions
+
+## Boundaries and Types
+- Type hints on all public function parameters and return types.
+- Use `typing.Protocol` for provider interfaces; see `crypto_analyzer/providers/base.py`.
+- Use **frozen dataclasses** for DTOs at boundaries (e.g. `SpotQuote`, `DexSnapshot`).
+
+## Providers
+- Every provider exposes a stable `provider_name: str` (property or attribute).
+- New CEX/DEX: implement protocol → register in `defaults.py` → add to `config.yaml` under `providers.spot_priority` or `providers.dex_priority`. See CONTRIBUTING.md and the add-provider skill.
+
+## Logging and Output
+- **crypto_analyzer/**: use `logging.getLogger(__name__)`; **never** bare `print()`.
+- **cli/**: type/style same as above; `print()` allowed only for user-facing CLI output; prefer structured logging (e.g. rich) where it improves UX.
+
+## Style (CONTRIBUTING + ruff)
+- Imports: stdlib → third-party → local, blank line between groups.
+- Naming: `snake_case` (functions/variables), `PascalCase` (classes), `UPPER_SNAKE` (constants).
+- Docstrings on public classes and functions; module-level docstring in every file.
+
+---
+
+## Canonical Snippets (Copy-Paste Patterns)
+
+### 1. Spot provider skeleton (Protocol + DTO + provider_name + error handling)
+
+```python
+from datetime import datetime, timezone
+import requests
+from ..base import ProviderStatus, SpotQuote
+
+class MySpotProvider:
+    @property
+    def provider_name(self) -> str:
+        return "my_exchange"
+
+    def get_spot(self, symbol: str) -> SpotQuote:
+        ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        url = f"https://api.example.com/prices/{symbol}-USD"  # replace with real URL
+        try:
+            resp = requests.get(url, timeout=15.0)
+            if resp.status_code == 429:
+                raise RuntimeError("Rate limit (HTTP 429)")
+            resp.raise_for_status()
+            price = float(resp.json()["data"]["amount"])
+            if price <= 0:
+                return SpotQuote(symbol=symbol.upper(), price_usd=price, provider_name=self.provider_name,
+                    fetched_at_utc=ts, status=ProviderStatus.DEGRADED, error_message="Non-positive price")
+            return SpotQuote(symbol=symbol.upper(), price_usd=price, provider_name=self.provider_name, fetched_at_utc=ts)
+        except Exception as e:
+            raise RuntimeError(f"MyExchange: {e}") from e
+```
+
+### 2. Resilience wrapper usage (chain calls providers via resilient_call)
+
+Chain is built in `chain.py`; providers are **not** responsible for retry/circuit breaker. The chain calls `resilient_call(provider.get_spot, symbol, retry_config=..., circuit_breaker=...)`. When **adding** a new provider, only implement the protocol; do not wrap your own retry/breaker.
+
+```python
+# In chain (already implemented): quote = resilient_call(
+#     provider.get_spot, symbol, retry_config=self._retry_config, circuit_breaker=breaker,
+# )
+```
+
+### 3. How to add a new provider (wiring sequence)
+1. Implement provider in `crypto_analyzer/providers/cex/<name>.py` or `dex/<name>.py` (Protocol + `provider_name` + return SpotQuote/DexSnapshot).
+2. Register in `crypto_analyzer/providers/defaults.py` (e.g. `registry.register_spot("my_exchange", MySpotProvider)`).
+3. Add name to `config.yaml` under `providers.spot_priority` or `providers.dex_priority`.
+4. Add tests with mocked HTTP (`unittest.mock.patch` at the provider’s `requests.get`).
+5. Optionally add a one-line note in CONTRIBUTING or README "Adding a provider" section.
+
+---
+
+## Before Finishing, Always Output
+- **Files changed** (list)
+- **Commands to run** (exact, copy-paste)
+- **What to look for in output**

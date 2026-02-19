@@ -1,0 +1,6 @@
+@startuml test
+title Test diagram
+actor User
+component "Crypto-Analyzer" as App
+User --> App
+@enduml

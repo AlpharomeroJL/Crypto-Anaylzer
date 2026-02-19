@@ -1,0 +1,46 @@
+@startuml ingestion_sequence
+title Ingestion Sequence — One Poll Cycle (60s)
+
+actor Poller
+participant "SpotPriceChain" as SpotChain
+participant "Coinbase" as CB
+participant "Kraken" as KK
+participant "DexSnapshotChain" as DexChain
+participant "Dexscreener" as DS
+participant "DbWriter" as DW
+participant "ProviderHealthStore" as Health
+database "SQLite" as DB
+
+Poller -> SpotChain : get_spot(SOL)\nget_spot(ETH)\nget_spot(BTC)
+loop for each symbol
+  SpotChain -> CB : get_spot(symbol)
+  alt success
+    CB --> SpotChain : SpotQuote (OK)
+  else failure
+    SpotChain -> KK : get_spot(symbol)
+    alt success
+      KK --> SpotChain : SpotQuote (OK)
+    else all failed
+      SpotChain --> SpotChain : return LKG (DEGRADED)
+    end
+  end
+  SpotChain -> DW : write_spot_price(quote)
+  DW -> DB : INSERT (provenance)
+end
+
+Poller -> DexChain : get_snapshot(chain_id, pair) for each pair
+loop for each DEX pair
+  DexChain -> DS : get_snapshot(...)
+  alt success
+    DS --> DexChain : DexSnapshot (OK)
+  else failure
+    DexChain --> DexChain : return LKG (DEGRADED)
+  end
+  DexChain -> DW : write_dex_snapshot(snapshot)
+  DW -> DB : INSERT (provenance)
+end
+
+Poller -> Health : upsert_all()
+Health -> DB : provider_health table
+
+@enduml
