@@ -23,11 +23,12 @@ def _safe_add_column(conn: sqlite3.Connection, table: str, column: str, col_type
         pass
 
 
-def run_migrations(conn: sqlite3.Connection) -> None:
+def run_migrations(conn: sqlite3.Connection, db_path: str | None = None) -> None:
     """
-    Apply all schema migrations idempotently.
+    Apply all schema migrations idempotently (core + versioned v2).
 
     Safe to call on every startup — only creates/alters what's missing.
+    When db_path is provided, versioned migrations back up the DB file before applying.
     """
     conn.execute(
         """
@@ -140,4 +141,8 @@ def run_migrations(conn: sqlite3.Connection) -> None:
     )
 
     conn.commit()
-    logger.debug("Database migrations complete")
+    logger.debug("Core migrations complete")
+
+    from .migrations_v2 import run_migrations_v2
+
+    run_migrations_v2(conn, db_path)

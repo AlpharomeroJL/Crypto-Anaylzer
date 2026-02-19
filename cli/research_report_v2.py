@@ -8,6 +8,7 @@ Research-only. Does not replace research_report.py.
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import sys
 from datetime import datetime, timezone
@@ -59,6 +60,7 @@ from crypto_analyzer.integrity import (
     count_non_positive_prices,
 )
 from crypto_analyzer.multiple_testing import deflated_sharpe_ratio, pbo_proxy_walkforward, reality_check_warning
+from crypto_analyzer.multiple_testing_adjuster import adjust as adjust_pvalues
 from crypto_analyzer.portfolio import (
     apply_costs_to_portfolio,
     long_short_from_ranks,
@@ -558,10 +560,28 @@ def main() -> int:
 
         if signals_dict:
             fwd1 = compute_forward_returns(returns_df, 1)
+            p_values_series = pd.Series(dtype=float)
             for sname, sig in signals_dict.items():
                 ic_ts = information_coefficient(sig, fwd1, method="spearman")
                 if not ic_ts.empty and ic_ts.notna().any():
                     canonical_metrics[f"mean_ic_{sname}"] = float(ic_ts.mean())
+                    s = ic_summary(ic_ts)
+                    t_stat = s.get("t_stat")
+                    if t_stat is not None and np.isfinite(t_stat):
+                        # Two-tailed p from t (normal approximation)
+                        z = abs(float(t_stat))
+                        p_val = 2.0 * (1.0 - 0.5 * (1.0 + math.erf(z / math.sqrt(2.0))))
+                        p_val = min(1.0, max(1e-16, p_val))
+                        p_values_series[sname] = p_val
+                        canonical_metrics[f"p_value_raw_{sname}"] = p_val
+            if len(p_values_series) >= 2:
+                adj, discoveries = adjust_pvalues(p_values_series, method="bh", q=0.05)
+                for sname in p_values_series.index:
+                    if sname in adj.index and np.isfinite(adj[sname]):
+                        canonical_metrics[f"p_value_adj_bh_{sname}"] = float(adj[sname])
+                canonical_metrics["p_value_family_adjusted"] = 1.0
+            elif len(p_values_series) == 1:
+                canonical_metrics["p_value_family_adjusted"] = 0.0
             ic_vals = [canonical_metrics[k] for k in canonical_metrics if k.startswith("mean_ic_")]
             if ic_vals:
                 canonical_metrics["mean_ic"] = float(np.nanmean(ic_vals))

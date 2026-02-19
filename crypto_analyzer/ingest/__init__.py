@@ -72,7 +72,7 @@ def get_poll_context(db_path: str) -> PollContext:
     Use as: with get_poll_context(db_path) as ctx: ...
     """
     conn = sqlite3.connect(db_path)
-    run_migrations(conn)
+    run_migrations(conn, db_path)
     db_writer = DbWriter(conn)
     health_store = ProviderHealthStore(conn)
     registry = create_default_registry()
@@ -167,7 +167,7 @@ def get_provider_health(db_path: str) -> List[Any]:
     """Load all provider health records for dashboard. Returns list of ProviderHealth."""
     conn = sqlite3.connect(db_path)
     try:
-        run_migrations(conn)
+        run_migrations(conn, db_path)
         store = ProviderHealthStore(conn)
         return store.load_all()
     finally:

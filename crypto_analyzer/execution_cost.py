@@ -23,6 +23,47 @@ class ExecutionCostConfig:
     slippage_bps: float = 10.0
     # When using liquidity-based proxy: missing/zero liquidity uses this (conservative)
     slippage_bps_missing_liquidity: float = DEFAULT_SLIPPAGE_BPS_WHEN_MISSING_LIQUIDITY
+    # Spread proxy: scale spread by vol (e.g. vol_pct * spread_vol_scale -> extra bps). 0 = disabled.
+    spread_vol_scale: float = 0.0
+    # Participation-based impact: impact_bps = participation_ratio * impact_per_participation, capped.
+    use_participation_impact: bool = False
+    impact_bps_per_participation: float = 5.0  # bps per 1% participation
+    max_participation_pct: float = 10.0  # cap participation for impact calc
+
+
+def spread_bps_from_vol_liquidity(
+    vol_proxy: float,
+    liquidity_usd: float,
+    base_spread_bps: float = 10.0,
+    spread_vol_scale: float = 50.0,
+) -> float:
+    """
+    Proxy spread: wider when vol is high or liquidity is low.
+    spread_bps = base_spread_bps + vol_proxy * spread_vol_scale + liquidity component.
+    Liquidity component uses same idea as slippage_bps_from_liquidity.
+    """
+    if vol_proxy is None or pd.isna(vol_proxy):
+        vol_proxy = 0.0
+    spread = base_spread_bps + vol_proxy * spread_vol_scale
+    if liquidity_usd is not None and not pd.isna(liquidity_usd) and liquidity_usd > 0:
+        # Lower liquidity -> higher spread (e.g. 1M USD -> 0 extra, 100k -> ~30 bps extra)
+        spread += min(50.0, 1e6 / (liquidity_usd + 1e4))
+    return max(0.0, spread)
+
+
+def impact_bps_from_participation(
+    participation_pct: float,
+    impact_per_pct: float = 5.0,
+    max_pct: float = 10.0,
+) -> float:
+    """
+    Size-dependent impact: cost increases with participation (trade notional / ADV proxy).
+    Linear in participation up to max_pct, then flat.
+    """
+    if participation_pct is None or pd.isna(participation_pct) or participation_pct <= 0:
+        return 0.0
+    p = min(float(participation_pct), max_pct)
+    return p * impact_per_pct
 
 
 def slippage_bps_from_liquidity(liquidity_usd: float, config: Optional[ExecutionCostConfig] = None) -> float:
@@ -97,3 +138,34 @@ def apply_costs(
     cfg = ExecutionCostConfig(fee_bps=fee_bps, slippage_bps=slippage_bps)
     model = ExecutionCostModel(cfg)
     return model.apply_costs(gross_returns, turnover_series, slippage_bps_series=slippage_bps_series)
+
+
+def capacity_curve(
+    gross_returns: pd.Series,
+    turnover_series: pd.Series,
+    multipliers: Optional[list] = None,
+    freq: str = "1h",
+    fee_bps: float = 30.0,
+    slippage_bps: float = 10.0,
+) -> pd.DataFrame:
+    """
+    Minimal capacity curve: at each notional multiplier, scale turnover (same pattern, higher size)
+    and apply costs; return Sharpe (annualized) vs multiplier. Higher multiplier -> higher turnover
+    -> higher costs -> lower net Sharpe typically.
+    """
+    from .features import bars_per_year
+
+    if multipliers is None:
+        multipliers = [1.0, 2.0, 5.0]
+    rows = []
+    for mult in multipliers:
+        scaled_turnover = turnover_series * mult
+        net_ret, _ = apply_costs(gross_returns, scaled_turnover, fee_bps=fee_bps, slippage_bps=slippage_bps)
+        n = net_ret.dropna()
+        if len(n) < 2 or n.std(ddof=1) == 0:
+            sharpe = float("nan")
+        else:
+            bars_yr = bars_per_year(freq)
+            sharpe = float(n.mean() / n.std(ddof=1) * (bars_yr**0.5))
+        rows.append({"notional_multiplier": mult, "sharpe_annual": sharpe})
+    return pd.DataFrame(rows)

@@ -16,7 +16,10 @@ from crypto_analyzer.execution_cost import (
     ExecutionCostConfig,
     ExecutionCostModel,
     apply_costs,
+    capacity_curve,
+    impact_bps_from_participation,
     slippage_bps_from_liquidity,
+    spread_bps_from_vol_liquidity,
 )
 
 
@@ -76,3 +79,33 @@ def test_execution_cost_model_with_slippage_series():
     # Second period has higher slippage => higher cost
     assert cost.iloc[1] > cost.iloc[0]
     assert net.iloc[1] < net.iloc[0]
+
+
+def test_spread_increases_with_vol_and_lower_liquidity():
+    """spread_bps_from_vol_liquidity: higher vol or lower liquidity -> higher spread."""
+    low_vol = spread_bps_from_vol_liquidity(0.01, 1e6, base_spread_bps=10, spread_vol_scale=50)
+    high_vol = spread_bps_from_vol_liquidity(0.05, 1e6, base_spread_bps=10, spread_vol_scale=50)
+    assert high_vol > low_vol
+    high_liq = spread_bps_from_vol_liquidity(0.02, 5e6, base_spread_bps=10, spread_vol_scale=50)
+    low_liq = spread_bps_from_vol_liquidity(0.02, 100e3, base_spread_bps=10, spread_vol_scale=50)
+    assert low_liq > high_liq
+
+
+def test_impact_increases_with_participation():
+    """impact_bps_from_participation: higher participation -> higher impact."""
+    assert impact_bps_from_participation(1.0, 5.0, 10.0) == 5.0
+    assert impact_bps_from_participation(5.0, 5.0, 10.0) == 25.0
+    assert impact_bps_from_participation(20.0, 5.0, 10.0) == 50.0  # capped at 10%
+
+
+def test_capacity_curve_multipliers():
+    """Capacity curve: higher notional multiplier -> lower Sharpe (more turnover, more cost)."""
+    np.random.seed(3)
+    n = 100
+    gross = pd.Series(np.random.randn(n) * 0.01)
+    turnover = pd.Series(np.random.rand(n) * 0.2)
+    df = capacity_curve(gross, turnover, multipliers=[1.0, 2.0, 5.0], freq="1h")
+    assert len(df) == 3
+    assert list(df["notional_multiplier"]) == [1.0, 2.0, 5.0]
+    # Typically Sharpe decreases as multiplier increases (more cost)
+    assert df["sharpe_annual"].iloc[0] >= df["sharpe_annual"].iloc[2] or np.isnan(df["sharpe_annual"].iloc[2])

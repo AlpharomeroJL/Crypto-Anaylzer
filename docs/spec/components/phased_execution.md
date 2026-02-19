@@ -16,11 +16,11 @@
 
 ### Phase 2 (1–2 weeks)
 
-- [ ] Implement schema_migrations + versioned migration runner; add tables: factor_model_runs, factor_betas, residual_returns.
-- [ ] Implement BH FDR correction (MultipleTestingAdjuster) and wire into sweep runner + experiment registry metrics (store adjusted p-values).
-- [ ] Add stationary bootstrap option to Bootstrapper; update stats corrections outputs to record bootstrap method + seed.
-- [ ] Add a "null suite" runner: random signal, permuted cross-section, block-shuffled time; require reports to show null results next to real signals.
-- [ ] Implement basic spread model (vol/liquidity proxy) + size-dependent impact (participation proxy) and generate capacity-vs-performance curves.
+- [x] Implement schema_migrations + versioned migration runner; add tables: factor_model_runs, factor_betas, residual_returns.
+- [x] Implement BH FDR correction (MultipleTestingAdjuster) and wire into sweep runner + experiment registry metrics (store adjusted p-values).
+- [x] Add stationary bootstrap option to Bootstrapper; update stats corrections outputs to record bootstrap method + seed.
+- [x] Add a "null suite" runner: random signal, permuted cross-section, block-shuffled time; require reports to show null results next to real signals.
+- [x] Implement basic spread model (vol/liquidity proxy) + size-dependent impact (participation proxy) and generate capacity-vs-performance curves.
 
 ### Phase 3 (1–2 months)
 

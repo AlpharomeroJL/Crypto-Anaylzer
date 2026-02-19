@@ -167,6 +167,84 @@ def rolling_multifactor_ols(
     return betas_dict, r2_df, residual_df
 
 
+def causal_rolling_ols(
+    returns_df: pd.DataFrame,
+    factor_cols: Optional[List[str]] = None,
+    window_bars: int = 72,
+    min_obs: int = 24,
+    as_of_lag_bars: int = 1,
+    add_const: bool = True,
+) -> Tuple[Dict[str, pd.DataFrame], pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Causal rolling OLS: at time t, fit on data ending at t - as_of_lag_bars;
+    residual and betas at t use only that fit. No lookahead.
+
+    Returns (betas_dict, r2_df, residual_df, alpha_df). alpha_df is intercept per (ts, asset).
+    """
+    if as_of_lag_bars < 1:
+        raise ValueError("as_of_lag_bars must be >= 1 to avoid fit including t+1 (no lookahead)")
+    if factor_cols is None:
+        factor_cols = ["BTC_spot", "ETH_spot"]
+    available = [c for c in factor_cols if c in returns_df.columns]
+    if not available:
+        return (
+            {},
+            pd.DataFrame(index=returns_df.index),
+            pd.DataFrame(index=returns_df.index),
+            pd.DataFrame(index=returns_df.index),
+        )
+    asset_cols = [c for c in returns_df.columns if c not in available]
+    if not asset_cols:
+        return (
+            {},
+            pd.DataFrame(index=returns_df.index),
+            pd.DataFrame(index=returns_df.index),
+            pd.DataFrame(index=returns_df.index),
+        )
+    common_idx = returns_df.index.intersection(returns_df[available].dropna(how="any").index)
+    if len(common_idx) < min_obs + as_of_lag_bars:
+        empty = pd.DataFrame(np.nan, index=returns_df.index, columns=asset_cols, dtype=float)
+        return {f: empty.copy() for f in available}, empty.copy(), empty.copy(), empty.copy()
+
+    betas_dict: Dict[str, pd.DataFrame] = {
+        f: pd.DataFrame(np.nan, index=common_idx, columns=asset_cols) for f in available
+    }
+    r2_df = pd.DataFrame(np.nan, index=common_idx, columns=asset_cols)
+    residual_df = pd.DataFrame(np.nan, index=common_idx, columns=asset_cols)
+    alpha_df = pd.DataFrame(np.nan, index=common_idx, columns=asset_cols)
+    F_all = returns_df[available].reindex(common_idx).values.astype(float)
+
+    for col in asset_cols:
+        y_all = returns_df[col].reindex(common_idx).values.astype(float)
+        for i in range(len(common_idx)):
+            fit_end_i = i - as_of_lag_bars
+            if fit_end_i < 0:
+                continue
+            start_i = max(0, fit_end_i - window_bars + 1)
+            y_win = y_all[start_i : fit_end_i + 1]
+            F_win = F_all[start_i : fit_end_i + 1]
+            valid = ~(np.isnan(y_win) | np.any(np.isnan(F_win), axis=1))
+            if valid.sum() < min_obs:
+                continue
+            y_v = y_win[valid]
+            F_v = F_win[valid]
+            betas, intercept, r2 = fit_ols(F_v, y_v, add_const=add_const)
+            if np.any(np.isnan(betas)) or np.isnan(intercept):
+                continue
+            alpha_df.iloc[i, alpha_df.columns.get_loc(col)] = intercept
+            for j, fname in enumerate(available):
+                betas_dict[fname].iloc[i, betas_dict[fname].columns.get_loc(col)] = betas[j]
+            r2_df.iloc[i, r2_df.columns.get_loc(col)] = r2
+            y_point = y_all[i]
+            f_point = F_all[i]
+            if np.isnan(y_point) or np.any(np.isnan(f_point)):
+                continue
+            fitted = intercept + float(f_point @ betas)
+            residual_df.iloc[i, residual_df.columns.get_loc(col)] = y_point - fitted
+
+    return betas_dict, r2_df, residual_df, alpha_df
+
+
 def causal_residual_returns(
     returns_df: pd.DataFrame,
     factor_cols: Optional[List[str]] = None,
@@ -182,6 +260,8 @@ def causal_residual_returns(
     Returns DataFrame with same index as returns_df; columns = asset columns (non-factor).
     Rows where insufficient history or t - lag < 0 get NaN.
     """
+    if as_of_lag_bars < 1:
+        raise ValueError("as_of_lag_bars must be >= 1 to avoid fit including t+1 (no lookahead)")
     if factor_cols is None:
         factor_cols = ["BTC_spot", "ETH_spot"]
     available = [c for c in factor_cols if c in returns_df.columns]

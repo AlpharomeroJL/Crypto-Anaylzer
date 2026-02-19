@@ -19,7 +19,7 @@ def _with_conn(db_path: str):
     """Context manager for read-only DB access with migrations applied."""
     conn = sqlite3.connect(db_path)
     try:
-        run_migrations(conn)
+        run_migrations(conn, db_path)
         yield conn
     finally:
         conn.close()
