@@ -2,9 +2,8 @@
 Cross-sectional factor model: size, liquidity, momentum factors scored per timestamp.
 Research-only; no execution.
 """
-from __future__ import annotations
 
-from typing import Optional
+from __future__ import annotations
 
 import numpy as np
 import pandas as pd
@@ -55,10 +54,7 @@ def build_cs_factor_frame(
     df = df.sort_values(["pair_key", "ts_utc"])
 
     df["cum_mom"] = (
-        df.groupby("pair_key")["log_return"]
-        .rolling(lookback, min_periods=1)
-        .sum()
-        .reset_index(level=0, drop=True)
+        df.groupby("pair_key")["log_return"].rolling(lookback, min_periods=1).sum().reset_index(level=0, drop=True)
     )
 
     records: list[dict] = []
@@ -86,9 +82,15 @@ def build_cs_factor_frame(
 
         for idx_row in grp.index:
             pk = grp.at[idx_row, "pair_key"]
-            records.append({"ts_utc": ts, "pair_key": pk, "factor_name": "size_factor", "value": size_v.get(idx_row, np.nan)})
-            records.append({"ts_utc": ts, "pair_key": pk, "factor_name": "liquidity_factor", "value": liq_v.get(idx_row, np.nan)})
-            records.append({"ts_utc": ts, "pair_key": pk, "factor_name": "momentum_factor", "value": mom_v.get(idx_row, np.nan)})
+            records.append(
+                {"ts_utc": ts, "pair_key": pk, "factor_name": "size_factor", "value": size_v.get(idx_row, np.nan)}
+            )
+            records.append(
+                {"ts_utc": ts, "pair_key": pk, "factor_name": "liquidity_factor", "value": liq_v.get(idx_row, np.nan)}
+            )
+            records.append(
+                {"ts_utc": ts, "pair_key": pk, "factor_name": "momentum_factor", "value": mom_v.get(idx_row, np.nan)}
+            )
 
     if not records:
         return pd.DataFrame(columns=["ts_utc", "pair_key", "factor_name", "value"])

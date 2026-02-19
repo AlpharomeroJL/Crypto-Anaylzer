@@ -4,6 +4,7 @@ Kraken spot price provider.
 Uses the public Kraken API (no authentication required):
   GET https://api.kraken.com/0/public/Ticker?pair={pair}
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

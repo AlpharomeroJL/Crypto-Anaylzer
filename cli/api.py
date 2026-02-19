@@ -3,6 +3,7 @@
 Launch the research API server.
 Usage: python cli/api.py [--host 0.0.0.0] [--port 8000]
 """
+
 from __future__ import annotations
 
 import argparse

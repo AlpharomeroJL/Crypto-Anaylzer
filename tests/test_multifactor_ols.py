@@ -3,6 +3,7 @@ Tests for multi-factor OLS: fit_ols and rolling_multifactor_ols.
 Synthetic data where y = 2*BTC + 1*ETH + noise; ensure estimated betas near
 2 and 1, residual mean ~0, R^2 high.
 """
+
 from __future__ import annotations
 
 import sys
@@ -15,7 +16,7 @@ import pytest
 _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
 
-from crypto_analyzer.factors import fit_ols, rolling_multifactor_ols, build_factor_matrix
+from crypto_analyzer.factors import fit_ols, rolling_multifactor_ols
 
 
 class TestFitOls:
@@ -63,19 +64,20 @@ class TestRollingMultifactorOls:
         noise = np.random.randn(n) * 0.002
         asset = 2.0 * btc.values + 1.0 * eth.values + noise
 
-        returns_df = pd.DataFrame({
-            "BTC_spot": btc.values,
-            "ETH_spot": eth.values,
-            "asset_A": asset,
-        }, index=idx)
+        returns_df = pd.DataFrame(
+            {
+                "BTC_spot": btc.values,
+                "ETH_spot": eth.values,
+                "asset_A": asset,
+            },
+            index=idx,
+        )
         factor_df = returns_df[["BTC_spot", "ETH_spot"]]
         return returns_df, factor_df
 
     def test_betas_near_true_values(self, synthetic_data):
         returns_df, factor_df = synthetic_data
-        betas_dict, r2_df, residual_df = rolling_multifactor_ols(
-            returns_df, factor_df, window=72, min_obs=24
-        )
+        betas_dict, r2_df, residual_df = rolling_multifactor_ols(returns_df, factor_df, window=72, min_obs=24)
 
         assert "BTC_spot" in betas_dict
         assert "ETH_spot" in betas_dict
@@ -110,9 +112,7 @@ class TestRollingMultifactorOls:
         returns_df = pd.DataFrame({"BTC_spot": btc, "asset_X": asset}, index=idx)
         factor_df = returns_df[["BTC_spot"]]
 
-        betas_dict, r2_df, residual_df = rolling_multifactor_ols(
-            returns_df, factor_df, window=48, min_obs=20
-        )
+        betas_dict, r2_df, residual_df = rolling_multifactor_ols(returns_df, factor_df, window=48, min_obs=20)
         assert "BTC_spot" in betas_dict
         assert "ETH_spot" not in betas_dict
         btc_beta = betas_dict["BTC_spot"]["asset_X"].dropna().tail(30)
@@ -130,9 +130,7 @@ class TestRollingMultifactorOls:
     def test_alignment_no_forward_looking(self, synthetic_data):
         """Verify that betas at time t only use data up to time t."""
         returns_df, factor_df = synthetic_data
-        betas_dict, _, _ = rolling_multifactor_ols(
-            returns_df, factor_df, window=72, min_obs=24
-        )
+        betas_dict, _, _ = rolling_multifactor_ols(returns_df, factor_df, window=72, min_obs=24)
         btc_betas = betas_dict["BTC_spot"]["asset_A"]
         first_valid = btc_betas.first_valid_index()
         idx_list = list(returns_df.index)

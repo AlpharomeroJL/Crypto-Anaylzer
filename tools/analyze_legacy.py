@@ -5,9 +5,9 @@ import argparse
 import os
 import sqlite3
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
 DB_PATH = "dex_data.sqlite"
 OUT_DIR = "plots"
@@ -31,7 +31,7 @@ if DAILY_MODE:
 else:
     # Even if you poll faster (e.g., every 10s), analyze at 1-minute closes to reduce noise.
     RESAMPLE_FREQ = "1min"
-    ROLLING_WINDOW = 30               # 30 minutes
+    ROLLING_WINDOW = 30  # 30 minutes
     PERIODS_PER_YEAR = 365 * 24 * 60  # minutes/year
     DEFAULT_MIN_POINTS_FOR_RATIOS = 300
 
@@ -67,7 +67,9 @@ def savefig_and_maybe_show(path: str, show: bool) -> None:
 def main() -> int:
     global SHOW_PLOTS
     parser = argparse.ArgumentParser(description="Analyze DEX + spot data from SQLite and save plots.")
-    parser.add_argument("--show", action="store_true", help="Display plot windows after saving (default: only save to files)")
+    parser.add_argument(
+        "--show", action="store_true", help="Display plot windows after saving (default: only save to files)"
+    )
     parser.add_argument(
         "--min_ratio_points",
         type=int,
@@ -159,7 +161,7 @@ def main() -> int:
             price = prices_multi["SOL"] if "SOL" in prices_multi else prices_multi.iloc[:, 0]
 
     liq = dex_df["liquidity_usd"].astype(float).resample(RESAMPLE_FREQ).last()
-    vol24 = dex_df["vol_h24"].astype(float).resample(RESAMPLE_FREQ).last()
+    dex_df["vol_h24"].astype(float).resample(RESAMPLE_FREQ).last()
 
     print("Resampled points (SOL series):", len(price))
 
@@ -196,7 +198,9 @@ def main() -> int:
         if prices_multi is not None:
             for sym in prices_multi.columns:
                 r = prices_multi[sym].pct_change()
-                print(f"  {sym}: Sharpe={sharpe_ratio(r, PERIODS_PER_YEAR):.3f}  Sortino={sortino_ratio(r, PERIODS_PER_YEAR):.3f}")
+                print(
+                    f"  {sym}: Sharpe={sharpe_ratio(r, PERIODS_PER_YEAR):.3f}  Sortino={sortino_ratio(r, PERIODS_PER_YEAR):.3f}"
+                )
     else:
         print(f"Need {min_points_for_ratios}+ resampled points for Sharpe/Sortino (have {n_pts}). Plots only.")
 

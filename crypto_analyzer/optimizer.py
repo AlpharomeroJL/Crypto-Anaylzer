@@ -2,9 +2,8 @@
 Constrained QP portfolio optimizer using scipy.optimize.
 Research-only; no execution.
 """
-from __future__ import annotations
 
-from typing import Optional
+from __future__ import annotations
 
 import numpy as np
 import pandas as pd
@@ -83,10 +82,12 @@ def optimize_ls_qp(
 
     reg_matrix = np.eye(n) * l2_reg
     H = risk_aversion * Q + reg_matrix
-    H_full = np.block([
-        [H, -H],
-        [-H, H],
-    ])
+    H_full = np.block(
+        [
+            [H, -H],
+            [-H, H],
+        ]
+    )
 
     s_full = np.concatenate([s, -s])
 

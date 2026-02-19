@@ -1,9 +1,9 @@
 """
 Research spec versioning and research-only boundary checks.
 """
+
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 RESEARCH_SPEC_VERSION = "5.0"
@@ -23,7 +23,18 @@ _FORBIDDEN_KEYWORDS = [
     "wallet.sign",
 ]
 # Allow these in comments/docs (we scan file content; if line is comment/doc we could skip - for simplicity we exclude known doc paths)
-_EXCLUDED_PATHS = ("README", "INSTITUTIONAL", "CONTRIBUTING", "DEPLOY", "HANDOFF", "WINDOWS_24_7", "docs/", ".md", "CHANGELOG", "tests/")
+_EXCLUDED_PATHS = (
+    "README",
+    "INSTITUTIONAL",
+    "CONTRIBUTING",
+    "DEPLOY",
+    "HANDOFF",
+    "WINDOWS_24_7",
+    "docs/",
+    ".md",
+    "CHANGELOG",
+    "tests/",
+)
 
 
 def spec_summary() -> dict:
@@ -31,6 +42,7 @@ def spec_summary() -> dict:
     out = {"research_spec_version": RESEARCH_SPEC_VERSION}
     try:
         import crypto_analyzer  # noqa: F401
+
         out["package"] = "crypto_analyzer"
     except Exception:
         pass

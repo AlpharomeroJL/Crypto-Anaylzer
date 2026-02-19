@@ -1,14 +1,13 @@
 """
 Regime-conditioned performance and stability. Research-only.
 """
+
 from __future__ import annotations
 
 from typing import List, Optional
 
 import numpy as np
 import pandas as pd
-
-from .features import periods_per_year
 
 
 def conditional_metrics(
@@ -32,15 +31,17 @@ def conditional_metrics(
         mask = regime == r
         p = pnl[mask]
         if len(p) < 2:
-            rows.append({
-                "regime": r,
-                "sharpe": np.nan,
-                "cagr_proxy": np.nan,
-                "max_dd": np.nan,
-                "hit_rate": np.nan,
-                "avg_daily_pnl": np.nan,
-                "n": len(p),
-            })
+            rows.append(
+                {
+                    "regime": r,
+                    "sharpe": np.nan,
+                    "cagr_proxy": np.nan,
+                    "max_dd": np.nan,
+                    "hit_rate": np.nan,
+                    "avg_daily_pnl": np.nan,
+                    "n": len(p),
+                }
+            )
             continue
         mean = p.mean()
         std = p.std()
@@ -49,18 +50,20 @@ def conditional_metrics(
         cagr = (1.0 + mean) ** 252 - 1.0 if mean > -1 else np.nan  # rough daily proxy
         cum = (1 + p).cumprod()
         peak = cum.cummax()
-        dd = (cum / peak - 1.0)
+        dd = cum / peak - 1.0
         max_dd = dd.min() if len(dd) else np.nan
         hit_rate = (p > 0).mean() if len(p) else np.nan
-        rows.append({
-            "regime": r,
-            "sharpe": float(sharpe),
-            "cagr_proxy": float(cagr),
-            "max_dd": float(max_dd),
-            "hit_rate": float(hit_rate),
-            "avg_daily_pnl": float(mean),
-            "n": int(len(p)),
-        })
+        rows.append(
+            {
+                "regime": r,
+                "sharpe": float(sharpe),
+                "cagr_proxy": float(cagr),
+                "max_dd": float(max_dd),
+                "hit_rate": float(hit_rate),
+                "avg_daily_pnl": float(mean),
+                "n": int(len(p)),
+            }
+        )
     return pd.DataFrame(rows)
 
 

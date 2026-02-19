@@ -2,6 +2,7 @@
 Read-only REST research API using FastAPI. No secrets, no auth.
 Research-only; no execution.
 """
+
 from __future__ import annotations
 
 import os
@@ -24,6 +25,7 @@ else:
 def _db_path() -> str:
     try:
         from . import config
+
         return config.db_path()
     except Exception:
         return "dex_data.sqlite"

@@ -1,6 +1,7 @@
 """
 Walk-forward / out-of-sample validation. No lookahead; fit only on train, simulate on test.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
@@ -12,6 +13,7 @@ import pandas as pd
 def bars_per_day(freq: str) -> float:
     """Bars per calendar day for given freq."""
     from .features import bars_per_day as _bpd
+
     return _bpd(freq)
 
 
@@ -79,13 +81,15 @@ def run_walkforward_backtest(
     """
     import sys
     from pathlib import Path
+
     _root = Path(__file__).resolve().parent.parent
     _cli = _root / "cli"
     if str(_root) not in sys.path:
         sys.path.insert(0, str(_root))
     if str(_cli) not in sys.path:
         sys.path.insert(0, str(_cli))
-    from backtest import run_trend_strategy, run_vol_breakout_strategy, metrics as backtest_metrics
+    from backtest import metrics as backtest_metrics
+    from backtest import run_trend_strategy, run_vol_breakout_strategy
 
     params = params or {}
     costs = costs or {}
@@ -104,17 +108,25 @@ def run_walkforward_backtest(
     for fold_idx, (train_idx, test_idx) in enumerate(folds):
         train_ts = train_idx
         test_ts = test_idx
-        train_bars_sub = bars_df[bars_df["ts_utc"].isin(train_ts)]
+        bars_df[bars_df["ts_utc"].isin(train_ts)]
         test_bars_sub = bars_df[bars_df["ts_utc"].isin(test_ts)]
         if test_bars_sub.empty:
             continue
         if strategy == "trend":
             trades_df, equity = run_trend_strategy(
-                test_bars_sub, freq, fee_bps=fee_bps, position_pct=position_pct, **{k: v for k, v in params.items() if k not in ("position_pct",)}
+                test_bars_sub,
+                freq,
+                fee_bps=fee_bps,
+                position_pct=position_pct,
+                **{k: v for k, v in params.items() if k not in ("position_pct",)},
             )
         else:
             trades_df, equity = run_vol_breakout_strategy(
-                test_bars_sub, freq, fee_bps=fee_bps, position_pct=position_pct, **{k: v for k, v in params.items() if k not in ("position_pct",)}
+                test_bars_sub,
+                freq,
+                fee_bps=fee_bps,
+                position_pct=position_pct,
+                **{k: v for k, v in params.items() if k not in ("position_pct",)},
             )
         if equity is None or (hasattr(equity, "empty") and equity.empty):
             continue

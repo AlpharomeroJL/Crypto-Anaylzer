@@ -1,4 +1,5 @@
 """Contract tests for the demo CLI and poll --run-seconds flag."""
+
 import sys
 import time
 from pathlib import Path
@@ -40,6 +41,7 @@ def test_demo_preflight_needs_config(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     # Patch _root so demo looks in tmp_path
     import cli.demo as demo_mod
+
     monkeypatch.setattr(demo_mod, "_root", tmp_path)
     result = demo_mod.main()
     assert result == 2

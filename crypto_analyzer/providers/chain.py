@@ -5,6 +5,7 @@ A chain tries providers in priority order. If the primary fails (after retries),
 the next provider is tried. Circuit breakers skip providers known to be down.
 Last-known-good caching prevents data gaps during total outages.
 """
+
 from __future__ import annotations
 
 import logging
@@ -95,7 +96,8 @@ class SpotPriceChain:
         if cached is not None:
             logger.warning(
                 "All spot providers failed for %s, using last-known-good from %s",
-                symbol, cached.provider_name,
+                symbol,
+                cached.provider_name,
             )
             return SpotQuote(
                 symbol=cached.symbol,
@@ -105,9 +107,7 @@ class SpotPriceChain:
                 status=ProviderStatus.DEGRADED,
             )
 
-        raise RuntimeError(
-            f"All spot providers failed for {symbol}: {'; '.join(errors)}"
-        )
+        raise RuntimeError(f"All spot providers failed for {symbol}: {'; '.join(errors)}")
 
     def get_health(self) -> Dict[str, ProviderHealth]:
         """Return health status for all providers in the chain."""
@@ -181,7 +181,8 @@ class DexSnapshotChain:
         if cached is not None:
             logger.warning(
                 "All DEX providers failed for %s:%s, using last-known-good",
-                chain_id, pair_address,
+                chain_id,
+                pair_address,
             )
             return DexSnapshot(
                 chain_id=cached.chain_id,
@@ -201,14 +202,9 @@ class DexSnapshotChain:
                 raw_json=cached.raw_json,
             )
 
-        raise RuntimeError(
-            f"All DEX providers failed for {chain_id}:{pair_address}: "
-            f"{'; '.join(errors)}"
-        )
+        raise RuntimeError(f"All DEX providers failed for {chain_id}:{pair_address}: {'; '.join(errors)}")
 
-    def search_pairs(
-        self, query: str, chain_id: str = "solana"
-    ) -> list[Dict[str, Any]]:
+    def search_pairs(self, query: str, chain_id: str = "solana") -> list[Dict[str, Any]]:
         """Search pairs using the first available provider."""
         for provider in self._providers:
             name = provider.provider_name

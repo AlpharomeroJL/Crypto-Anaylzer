@@ -8,6 +8,7 @@ Verifies that:
 - Last-known-good caching fills gaps during total outages
 - Data quality gates reject invalid quotes
 """
+
 from __future__ import annotations
 
 import time
@@ -25,6 +26,7 @@ from crypto_analyzer.providers.resilience import CircuitBreaker, RetryConfig
 # ---------------------------------------------------------------------------
 # Helpers: mock providers
 # ---------------------------------------------------------------------------
+
 
 class MockSpotProvider:
     def __init__(self, name: str, prices: dict | None = None, fail: bool = False):
@@ -87,6 +89,7 @@ class MockDexProvider:
 # ---------------------------------------------------------------------------
 # Spot chain tests
 # ---------------------------------------------------------------------------
+
 
 class TestSpotPriceChain:
     def test_primary_provider_used_when_healthy(self):
@@ -172,6 +175,7 @@ class TestSpotPriceChain:
 # DEX chain tests
 # ---------------------------------------------------------------------------
 
+
 class TestDexSnapshotChain:
     def test_primary_dex_provider_used(self):
         primary = MockDexProvider("dexscreener")
@@ -215,6 +219,7 @@ class TestDexSnapshotChain:
 # Circuit breaker tests
 # ---------------------------------------------------------------------------
 
+
 class TestCircuitBreaker:
     def test_starts_closed(self):
         cb = CircuitBreaker(provider_name="test", failure_threshold=3)
@@ -232,9 +237,7 @@ class TestCircuitBreaker:
         assert cb.is_open
 
     def test_half_open_after_cooldown(self):
-        cb = CircuitBreaker(
-            provider_name="test", failure_threshold=1, cooldown_seconds=0.1
-        )
+        cb = CircuitBreaker(provider_name="test", failure_threshold=1, cooldown_seconds=0.1)
         cb.record_failure("error")
         assert cb.state == "OPEN"
 
@@ -281,6 +284,7 @@ class TestCircuitBreaker:
 # ---------------------------------------------------------------------------
 # Retry behavior tests
 # ---------------------------------------------------------------------------
+
 
 class TestRetryBehavior:
     def test_retries_on_transient_failure(self):

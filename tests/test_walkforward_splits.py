@@ -1,8 +1,9 @@
 """Walk-forward split boundaries: no overlap, correct lengths."""
-import pandas as pd
-import pytest
+
 import sys
 from pathlib import Path
+
+import pandas as pd
 
 _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))

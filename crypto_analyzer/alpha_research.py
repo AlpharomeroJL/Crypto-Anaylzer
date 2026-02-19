@@ -2,6 +2,7 @@
 Cross-sectional alpha research: IC, decay, turnover, signal builders.
 Institutional factor testing; research-only, no execution.
 """
+
 from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
@@ -9,13 +10,12 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from .features import period_return_bars
 from .factors import (
     build_factor_matrix,
     compute_ols_betas,
     compute_residual_returns,
-    compute_residual_lookback_return,
 )
+from .features import period_return_bars
 
 
 def compute_forward_returns(returns_df: pd.DataFrame, horizon_bars: int) -> pd.DataFrame:
@@ -104,7 +104,15 @@ def ic_summary(ic_ts: pd.Series) -> Dict[str, float]:
     r = ic_ts.dropna()
     n = len(r)
     if n < 2:
-        return {"mean_ic": np.nan, "std_ic": np.nan, "t_stat": np.nan, "hit_rate": np.nan, "ic_95_lo": np.nan, "ic_95_hi": np.nan, "n_obs": n}
+        return {
+            "mean_ic": np.nan,
+            "std_ic": np.nan,
+            "t_stat": np.nan,
+            "hit_rate": np.nan,
+            "ic_95_lo": np.nan,
+            "ic_95_hi": np.nan,
+            "n_obs": n,
+        }
     mean_ic = float(r.mean())
     std_ic = float(r.std(ddof=1))
     t_stat = (mean_ic / std_ic) * np.sqrt(n) if std_ic != 0 else np.nan
@@ -140,7 +148,15 @@ def ic_decay(
         fwd = compute_forward_returns(returns_df, h)
         ic_ts = information_coefficient(signal_df, fwd, method=method)
         s = ic_summary(ic_ts)
-        rows.append({"horizon_bars": h, "mean_ic": s["mean_ic"], "std_ic": s["std_ic"], "n_obs": s["n_obs"], "t_stat": s["t_stat"]})
+        rows.append(
+            {
+                "horizon_bars": h,
+                "mean_ic": s["mean_ic"],
+                "std_ic": s["std_ic"],
+                "n_obs": s["n_obs"],
+                "t_stat": s["t_stat"],
+            }
+        )
     return pd.DataFrame(rows)
 
 
@@ -189,7 +205,7 @@ def signal_momentum_24h(returns_df: pd.DataFrame, freq: str) -> pd.DataFrame:
         r = returns_df[col].dropna()
         if len(r) < bars_24h:
             continue
-        out[col] = (np.exp(r.rolling(bars_24h).sum()) - 1.0)
+        out[col] = np.exp(r.rolling(bars_24h).sum()) - 1.0
     return out
 
 
@@ -221,7 +237,9 @@ def signal_residual_momentum_24h(
         resid = compute_residual_returns(y, X, betas, float(intercept))
         if len(resid) < bars_24h:
             continue
-        ret_24h = resid.rolling(bars_24h).apply(lambda x: np.exp(x.sum()) - 1.0 if len(x) == bars_24h else np.nan, raw=False)
+        ret_24h = resid.rolling(bars_24h).apply(
+            lambda x: np.exp(x.sum()) - 1.0 if len(x) == bars_24h else np.nan, raw=False
+        )
         out[col] = ret_24h
     return out.replace([np.inf, -np.inf], np.nan)
 

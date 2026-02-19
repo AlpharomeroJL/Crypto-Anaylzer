@@ -1,8 +1,10 @@
 """Factor/residual alignment: residuals computed and aligned when both factors exist."""
-import numpy as np
-import pandas as pd
+
 import sys
 from pathlib import Path
+
+import numpy as np
+import pandas as pd
 
 _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
@@ -10,8 +12,8 @@ sys.path.insert(0, str(_root))
 from crypto_analyzer.factors import (
     build_factor_matrix,
     compute_ols_betas,
-    compute_residual_returns,
     compute_residual_lookback_return,
+    compute_residual_returns,
     compute_residual_vol,
 )
 

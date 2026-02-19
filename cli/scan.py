@@ -4,6 +4,7 @@ Scanner: Top Opportunities from DEX bar data.
 Modes: momentum, volatility_breakout, mean_reversion.
 Output: terminal table, CSV, JSON. Optional --alert for threshold-crossing signals only.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -21,16 +22,22 @@ from crypto_analyzer.config import (
     STABLE_SYMBOLS,
     db_path,
     exclude_stable_pairs,
+)
+from crypto_analyzer.config import (
     min_bars as config_min_bars,
+)
+from crypto_analyzer.config import (
     min_liquidity_usd as config_min_liq,
+)
+from crypto_analyzer.config import (
     min_vol_h24 as config_min_vol,
 )
 from crypto_analyzer.data import append_spot_returns_to_returns_df, get_factor_returns, load_bars, load_snapshots
 from crypto_analyzer.factors import (
     build_factor_matrix,
     compute_ols_betas,
-    compute_residual_returns,
     compute_residual_lookback_return,
+    compute_residual_returns,
     compute_residual_vol,
 )
 from crypto_analyzer.features import (
@@ -46,8 +53,8 @@ from crypto_analyzer.features import (
     compute_drawdown_from_equity,
     compute_drawdown_from_log_returns,
     compute_excess_cum_return,
-    compute_excess_lookback_return,
     compute_excess_log_returns,
+    compute_excess_lookback_return,
     compute_lookback_return,
     compute_rolling_beta,
     compute_rolling_corr,
@@ -102,19 +109,21 @@ def _get_bars_or_from_snapshots(
         liq = g["liquidity_usd"].resample(freq).last().reindex(close.index).ffill().bfill()
         v24 = g["vol_h24"].resample(freq).last().reindex(close.index).ffill().bfill()
         for ts in close.index:
-            rows.append({
-                "ts_utc": ts,
-                "chain_id": cid,
-                "pair_address": addr,
-                "base_symbol": g["base_symbol"].iloc[-1],
-                "quote_symbol": g["quote_symbol"].iloc[-1],
-                "close": close.loc[ts],
-                "log_return": lr.get(ts, np.nan),
-                "cum_return": cr.get(ts, np.nan),
-                "roll_vol": rv.get(ts, np.nan),
-                "liquidity_usd": liq.get(ts, np.nan),
-                "vol_h24": v24.get(ts, np.nan),
-            })
+            rows.append(
+                {
+                    "ts_utc": ts,
+                    "chain_id": cid,
+                    "pair_address": addr,
+                    "base_symbol": g["base_symbol"].iloc[-1],
+                    "quote_symbol": g["quote_symbol"].iloc[-1],
+                    "close": close.loc[ts],
+                    "log_return": lr.get(ts, np.nan),
+                    "cum_return": cr.get(ts, np.nan),
+                    "roll_vol": rv.get(ts, np.nan),
+                    "liquidity_usd": liq.get(ts, np.nan),
+                    "vol_h24": v24.get(ts, np.nan),
+                }
+            )
     return pd.DataFrame(rows) if rows else pd.DataFrame()
 
 
@@ -136,9 +145,11 @@ def _apply_quality_filters(
         valid = cnt[cnt >= min_bars_count].index
         df = df[df.set_index(["chain_id", "pair_address"]).index.isin(valid)].reset_index(drop=True)
     if exclude_stable and "base_symbol" in df.columns and "quote_symbol" in df.columns:
+
         def is_stable(r):
             b, q = str(r.get("base_symbol", "")).upper(), str(r.get("quote_symbol", "")).upper()
             return b in STABLE_SYMBOLS and q in STABLE_SYMBOLS
+
         df = df[~df.apply(is_stable, axis=1)]
     return df
 
@@ -161,10 +172,26 @@ def _compute_trading_metrics(
     beta_compress_threshold: float = 0.15,
 ) -> pd.DataFrame:
     """Per-pair return_24h, ..., beta_btc_24/72, beta_compression, beta_state, beta_hat_used, excess_*, regime."""
-    base_cols = ["chain_id", "pair_address", "return_24h", "annual_vol", "annual_sharpe", "max_drawdown", "beta_vs_btc",
-                 "corr_btc_24", "beta_btc_24", "corr_btc_72", "beta_btc_72",
-                 "beta_compression", "beta_state", "beta_hat_used",
-                 "excess_return_24h", "excess_total_cum_return", "excess_max_drawdown", "regime"]
+    base_cols = [
+        "chain_id",
+        "pair_address",
+        "return_24h",
+        "annual_vol",
+        "annual_sharpe",
+        "max_drawdown",
+        "beta_vs_btc",
+        "corr_btc_24",
+        "beta_btc_24",
+        "corr_btc_72",
+        "beta_btc_72",
+        "beta_compression",
+        "beta_state",
+        "beta_hat_used",
+        "excess_return_24h",
+        "excess_total_cum_return",
+        "excess_max_drawdown",
+        "regime",
+    ]
     if bars.empty:
         return pd.DataFrame(columns=base_cols)
     periods_yr = periods_per_year(freq)
@@ -187,7 +214,11 @@ def _compute_trading_metrics(
         r_dd = r.tail(dd_lookback_bars) if dd_lookback_bars and len(r) >= dd_lookback_bars else r
         _, max_dd = compute_drawdown_from_log_returns(r_dd)
         factor_aligned = factor_returns.reindex(r.index).dropna() if factor_returns is not None else None
-        beta_btc = compute_beta_vs_factor(r, factor_aligned) if factor_aligned is not None and len(factor_aligned) >= 2 else np.nan
+        beta_btc = (
+            compute_beta_vs_factor(r, factor_aligned)
+            if factor_aligned is not None and len(factor_aligned) >= 2
+            else np.nan
+        )
         corr_24 = corr_72 = beta_24 = beta_72 = np.nan
         if factor_aligned is not None and len(factor_aligned) >= 2:
             rc24 = compute_rolling_corr(r, factor_aligned, win_short)
@@ -203,8 +234,14 @@ def _compute_trading_metrics(
             if not rb72.empty and rb72.notna().any():
                 beta_72 = float(rb72.dropna().iloc[-1])
         short_vol = r.rolling(vol_short_window).std(ddof=1).iloc[-1] if len(r) >= vol_short_window else np.nan
-        medium_vol = r.rolling(min(vol_medium_window, len(r))).std(ddof=1).iloc[-1] if len(r) >= vol_medium_window else short_vol
-        regime = classify_vol_regime(short_vol, medium_vol) if not (np.isnan(short_vol) or np.isnan(medium_vol) or medium_vol == 0) else "unknown"
+        medium_vol = (
+            r.rolling(min(vol_medium_window, len(r))).std(ddof=1).iloc[-1] if len(r) >= vol_medium_window else short_vol
+        )
+        regime = (
+            classify_vol_regime(short_vol, medium_vol)
+            if not (np.isnan(short_vol) or np.isnan(medium_vol) or medium_vol == 0)
+            else "unknown"
+        )
         beta_compression = compute_beta_compression(beta_24, beta_72)
         beta_state = classify_beta_state(beta_24, beta_72, beta_compress_threshold)
         beta_hat_used = beta_72 if (beta_72 is not None and not np.isnan(beta_72)) else beta_btc
@@ -214,30 +251,34 @@ def _compute_trading_metrics(
             r_excess = compute_excess_log_returns(r, factor_aligned, float(beta_hat))
             if len(r_excess) >= 2:
                 excess_cum = compute_excess_cum_return(r_excess)
-                excess_return_24h = compute_excess_lookback_return(r_excess, n_24h) if len(r_excess) >= n_24h else np.nan
+                excess_return_24h = (
+                    compute_excess_lookback_return(r_excess, n_24h) if len(r_excess) >= n_24h else np.nan
+                )
                 excess_total_cum_return = float(excess_cum.iloc[-1]) if len(excess_cum) else np.nan
                 excess_equity = np.exp(r_excess.cumsum())
                 _, excess_max_drawdown = compute_drawdown_from_equity(excess_equity)
-        rows.append({
-            "chain_id": cid,
-            "pair_address": addr,
-            "return_24h": return_24h,
-            "annual_vol": annual_vol,
-            "annual_sharpe": annual_sharpe,
-            "max_drawdown": max_dd,
-            "beta_vs_btc": beta_btc,
-            "corr_btc_24": corr_24,
-            "beta_btc_24": beta_24,
-            "corr_btc_72": corr_72,
-            "beta_btc_72": beta_72,
-            "beta_compression": beta_compression,
-            "beta_state": beta_state,
-            "beta_hat_used": beta_hat_used,
-            "excess_return_24h": excess_return_24h,
-            "excess_total_cum_return": excess_total_cum_return,
-            "excess_max_drawdown": excess_max_drawdown,
-            "regime": regime,
-        })
+        rows.append(
+            {
+                "chain_id": cid,
+                "pair_address": addr,
+                "return_24h": return_24h,
+                "annual_vol": annual_vol,
+                "annual_sharpe": annual_sharpe,
+                "max_drawdown": max_dd,
+                "beta_vs_btc": beta_btc,
+                "corr_btc_24": corr_24,
+                "beta_btc_24": beta_24,
+                "corr_btc_72": corr_72,
+                "beta_btc_72": beta_72,
+                "beta_compression": beta_compression,
+                "beta_state": beta_state,
+                "beta_hat_used": beta_hat_used,
+                "excess_return_24h": excess_return_24h,
+                "excess_total_cum_return": excess_total_cum_return,
+                "excess_max_drawdown": excess_max_drawdown,
+                "regime": regime,
+            }
+        )
     return pd.DataFrame(rows)
 
 
@@ -305,7 +346,9 @@ def _add_capacity_slippage_tradable(
     capacity_usd = (max_pos_liq_pct * liq).values
     out["capacity_usd"] = capacity_usd
     with np.errstate(divide="ignore", invalid="ignore"):
-        est_bps = np.where(capacity_usd > 0, np.minimum(500.0, slippage_bps_at_full * ref_position_usd / capacity_usd), 500.0)
+        est_bps = np.where(
+            capacity_usd > 0, np.minimum(500.0, slippage_bps_at_full * ref_position_usd / capacity_usd), 500.0
+        )
     out["est_slippage_bps"] = est_bps
     out["tradable"] = est_bps <= max_slippage_bps_tradable
     return out
@@ -333,16 +376,18 @@ def scan_momentum(
             continue
         ret_24h = (close.iloc[-1] / close.iloc[0]) - 1.0
         label = f"{g['base_symbol'].iloc[-1]}/{g['quote_symbol'].iloc[-1]}"
-        out.append({
-            "chain_id": cid,
-            "pair_address": addr,
-            "label": label,
-            "return_24h": ret_24h,
-            "return_zscore": np.nan,
-            "close": g["close"].iloc[-1],
-            "liquidity_usd": g["liquidity_usd"].iloc[-1] if "liquidity_usd" in g.columns else None,
-            "vol_h24": g["vol_h24"].iloc[-1] if "vol_h24" in g.columns else None,
-        })
+        out.append(
+            {
+                "chain_id": cid,
+                "pair_address": addr,
+                "label": label,
+                "return_24h": ret_24h,
+                "return_zscore": np.nan,
+                "close": g["close"].iloc[-1],
+                "liquidity_usd": g["liquidity_usd"].iloc[-1] if "liquidity_usd" in g.columns else None,
+                "vol_h24": g["vol_h24"].iloc[-1] if "vol_h24" in g.columns else None,
+            }
+        )
     res = pd.DataFrame(out).sort_values("return_24h", ascending=False).head(top)
     return res
 
@@ -383,15 +428,17 @@ def scan_volatility_breakout(
         if not liq_stable:
             continue
         label = f"{g['base_symbol'].iloc[-1]}/{g['quote_symbol'].iloc[-1]}"
-        out.append({
-            "chain_id": cid,
-            "pair_address": addr,
-            "label": label,
-            "return_zscore": z,
-            "last_log_return": r.iloc[-1],
-            "close": g["close"].iloc[-1],
-            "liquidity_usd": g["liquidity_usd"].iloc[-1] if "liquidity_usd" in g.columns else None,
-        })
+        out.append(
+            {
+                "chain_id": cid,
+                "pair_address": addr,
+                "label": label,
+                "return_zscore": z,
+                "last_log_return": r.iloc[-1],
+                "close": g["close"].iloc[-1],
+                "liquidity_usd": g["liquidity_usd"].iloc[-1] if "liquidity_usd" in g.columns else None,
+            }
+        )
     return pd.DataFrame(out).sort_values("return_zscore", ascending=False).head(top)
 
 
@@ -408,7 +455,11 @@ def scan_residual_momentum(
     if bars.empty or returns_df.empty:
         return pd.DataFrame()
     metrics_df = _compute_trading_metrics(
-        bars, freq, ret_lookback_bars=lookback_bars, factor_returns=factor_returns, beta_compress_threshold=beta_compress_threshold,
+        bars,
+        freq,
+        ret_lookback_bars=lookback_bars,
+        factor_returns=factor_returns,
+        beta_compress_threshold=beta_compress_threshold,
     )
     metrics_df = _add_residual_columns(metrics_df, returns_df, freq, lookback_bars)
     if "residual_return_24h" not in metrics_df.columns or metrics_df["residual_return_24h"].isna().all():
@@ -425,17 +476,19 @@ def scan_residual_momentum(
         if pd.isna(res_24):
             continue
         label = f"{g['base_symbol'].iloc[-1]}/{g['quote_symbol'].iloc[-1]}"
-        rows.append({
-            "chain_id": cid,
-            "pair_address": addr,
-            "label": label,
-            "return_24h": m.get("return_24h"),
-            "return_zscore": np.nan,
-            "residual_return_24h": res_24,
-            "close": g["close"].iloc[-1],
-            "liquidity_usd": g["liquidity_usd"].iloc[-1] if "liquidity_usd" in g.columns else None,
-            "vol_h24": g["vol_h24"].iloc[-1] if "vol_h24" in g.columns else None,
-        })
+        rows.append(
+            {
+                "chain_id": cid,
+                "pair_address": addr,
+                "label": label,
+                "return_24h": m.get("return_24h"),
+                "return_zscore": np.nan,
+                "residual_return_24h": res_24,
+                "close": g["close"].iloc[-1],
+                "liquidity_usd": g["liquidity_usd"].iloc[-1] if "liquidity_usd" in g.columns else None,
+                "vol_h24": g["vol_h24"].iloc[-1] if "vol_h24" in g.columns else None,
+            }
+        )
     res = pd.DataFrame(rows).sort_values("residual_return_24h", ascending=False).head(top)
     return res
 
@@ -469,15 +522,17 @@ def scan_mean_reversion(
         if not (recent > 0).any():
             continue
         label = f"{g['base_symbol'].iloc[-1]}/{g['quote_symbol'].iloc[-1]}"
-        out.append({
-            "chain_id": cid,
-            "pair_address": addr,
-            "label": label,
-            "return_zscore": z,
-            "last_log_return": r.iloc[-1],
-            "close": g["close"].iloc[-1],
-            "liquidity_usd": g["liquidity_usd"].iloc[-1] if "liquidity_usd" in g.columns else None,
-        })
+        out.append(
+            {
+                "chain_id": cid,
+                "pair_address": addr,
+                "label": label,
+                "return_zscore": z,
+                "last_log_return": r.iloc[-1],
+                "close": g["close"].iloc[-1],
+                "liquidity_usd": g["liquidity_usd"].iloc[-1] if "liquidity_usd" in g.columns else None,
+            }
+        )
     return pd.DataFrame(out).sort_values("return_zscore").head(top)
 
 
@@ -505,7 +560,9 @@ def run_scan(
     max_slippage_bps_tradable: float = DEFAULT_MAX_SLIPPAGE_BPS_TRADABLE,
 ) -> Tuple[pd.DataFrame, float, float, List[str]]:
     """Run scan pipeline; return (result_df, disp_latest, disp_z_latest, filter_reasons)."""
-    min_liq = min_liquidity if min_liquidity is not None else (config_min_liq() if callable(config_min_liq) else 250_000)
+    min_liq = (
+        min_liquidity if min_liquidity is not None else (config_min_liq() if callable(config_min_liq) else 250_000)
+    )
     min_vol = min_vol_h24 if min_vol_h24 is not None else (config_min_vol() if callable(config_min_vol) else 500_000)
     min_bars_count = min_bars if min_bars is not None else (config_min_bars() if callable(config_min_bars) else 48)
     exclude = exclude_stable and (exclude_stable_pairs() if callable(exclude_stable_pairs) else True)
@@ -523,7 +580,15 @@ def run_scan(
     if mode == "momentum":
         res = scan_momentum(bars, freq, top, lookback_bars=ret_lb)
     elif mode == "residual_momentum":
-        res = scan_residual_momentum(bars, freq, top, returns_df=returns_df, lookback_bars=ret_lb, factor_returns=factor_ret, beta_compress_threshold=beta_compress_threshold)
+        res = scan_residual_momentum(
+            bars,
+            freq,
+            top,
+            returns_df=returns_df,
+            lookback_bars=ret_lb,
+            factor_returns=factor_ret,
+            beta_compress_threshold=beta_compress_threshold,
+        )
     elif mode == "volatility_breakout":
         res = scan_volatility_breakout(bars, freq, top, z_threshold=z)
     else:
@@ -533,16 +598,33 @@ def run_scan(
         return pd.DataFrame(), np.nan, np.nan, []
 
     metrics_df = _compute_trading_metrics(
-        bars, freq, ret_lookback_bars=ret_lb, factor_returns=factor_ret, beta_compress_threshold=beta_compress_threshold,
+        bars,
+        freq,
+        ret_lookback_bars=ret_lb,
+        factor_returns=factor_ret,
+        beta_compress_threshold=beta_compress_threshold,
     )
     metrics_df = _add_residual_columns(metrics_df, returns_df, freq, ret_lb)
     if not metrics_df.empty:
         metric_cols = (
-            "return_24h", "annual_vol", "annual_sharpe", "max_drawdown", "beta_vs_btc",
-            "corr_btc_24", "beta_btc_24", "corr_btc_72", "beta_btc_72",
-            "beta_compression", "beta_state", "beta_hat_used",
-            "excess_return_24h", "excess_total_cum_return", "excess_max_drawdown",
-            "residual_return_24h", "residual_annual_vol", "residual_max_drawdown",
+            "return_24h",
+            "annual_vol",
+            "annual_sharpe",
+            "max_drawdown",
+            "beta_vs_btc",
+            "corr_btc_24",
+            "beta_btc_24",
+            "corr_btc_72",
+            "beta_btc_72",
+            "beta_compression",
+            "beta_state",
+            "beta_hat_used",
+            "excess_return_24h",
+            "excess_total_cum_return",
+            "excess_max_drawdown",
+            "residual_return_24h",
+            "residual_annual_vol",
+            "residual_max_drawdown",
             "regime",
         )
         for c in metric_cols:
@@ -550,7 +632,9 @@ def run_scan(
                 res = res.drop(columns=[c])
         res = res.merge(metrics_df, on=["chain_id", "pair_address"], how="left")
 
-    res = _add_capacity_slippage_tradable(res, max_pos_liq_pct=max_pos_liq_pct, max_slippage_bps_tradable=max_slippage_bps_tradable)
+    res = _add_capacity_slippage_tradable(
+        res, max_pos_liq_pct=max_pos_liq_pct, max_slippage_bps_tradable=max_slippage_bps_tradable
+    )
 
     res_pre = res.copy()
     pre_filter_count = len(res)
@@ -604,7 +688,11 @@ def run_scan(
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="DEX scanner: top opportunities")
-    ap.add_argument("--mode", choices=["momentum", "residual_momentum", "volatility_breakout", "mean_reversion", "cs_multifactor"], default="momentum")
+    ap.add_argument(
+        "--mode",
+        choices=["momentum", "residual_momentum", "volatility_breakout", "mean_reversion", "cs_multifactor"],
+        default="momentum",
+    )
     ap.add_argument("--db", default=None, help="SQLite path")
     ap.add_argument("--freq", default="1h", help="Bar frequency (5min, 15min, 1h, 1D)")
     ap.add_argument("--top", type=int, default=20)
@@ -615,7 +703,9 @@ def main() -> int:
     ap.add_argument("--z", type=float, default=2.0, help="Z-score threshold (vol breakout or mean rev)")
     ap.add_argument("--ret-lookback-hours", type=float, default=24, help="Lookback hours for return_24h (default 24)")
     ap.add_argument("--ret-lookback-bars", type=int, default=None, help="Override: lookback bars for return (advanced)")
-    ap.add_argument("--dd-lookback", type=int, default=None, help="Max drawdown over last N bars only (default: full history)")
+    ap.add_argument(
+        "--dd-lookback", type=int, default=None, help="Max drawdown over last N bars only (default: full history)"
+    )
     ap.add_argument("--include-correlation", action="store_true", help="Print correlation matrix (per freq)")
     ap.add_argument(
         "--corr-window",
@@ -631,20 +721,39 @@ def main() -> int:
         default=72,
         help="Which rolling beta column to use for --min-beta/--alert (24 or 72 bars; default 72)",
     )
-    ap.add_argument("--min-corr", type=float, default=None, metavar="R",
-                    help="Filter: min rolling corr vs BTC_spot (uses --corr-window)")
-    ap.add_argument("--min-beta", type=float, default=None, metavar="B",
-                    help="Filter: min rolling beta vs BTC_spot (uses --beta-window)")
-    ap.add_argument("--min-excess-return", type=float, default=None, metavar="R",
-                    help="Filter: min excess_return_24h (BTC-hedged)")
-    ap.add_argument("--beta-compress-threshold", type=float, default=0.15, metavar="T",
-                    help="Threshold for beta_state: compressed if beta_24 < beta_72 - T (default 0.15)")
-    ap.add_argument("--only-beta-compressed", action="store_true",
-                    help="Keep only rows where beta_state == compressed")
-    ap.add_argument("--only-beta-expanded", action="store_true",
-                    help="Keep only rows where beta_state == expanded")
-    ap.add_argument("--min-dispersion-z", type=float, default=None, metavar="Z",
-                    help="Require dispersion z-score >= Z (global; no rows if below)")
+    ap.add_argument(
+        "--min-corr",
+        type=float,
+        default=None,
+        metavar="R",
+        help="Filter: min rolling corr vs BTC_spot (uses --corr-window)",
+    )
+    ap.add_argument(
+        "--min-beta",
+        type=float,
+        default=None,
+        metavar="B",
+        help="Filter: min rolling beta vs BTC_spot (uses --beta-window)",
+    )
+    ap.add_argument(
+        "--min-excess-return", type=float, default=None, metavar="R", help="Filter: min excess_return_24h (BTC-hedged)"
+    )
+    ap.add_argument(
+        "--beta-compress-threshold",
+        type=float,
+        default=0.15,
+        metavar="T",
+        help="Threshold for beta_state: compressed if beta_24 < beta_72 - T (default 0.15)",
+    )
+    ap.add_argument("--only-beta-compressed", action="store_true", help="Keep only rows where beta_state == compressed")
+    ap.add_argument("--only-beta-expanded", action="store_true", help="Keep only rows where beta_state == expanded")
+    ap.add_argument(
+        "--min-dispersion-z",
+        type=float,
+        default=None,
+        metavar="Z",
+        help="Require dispersion z-score >= Z (global; no rows if below)",
+    )
     ap.add_argument("--alert", action="store_true", help="Print only signals crossing thresholds")
     ap.add_argument("--debug", action="store_true", help="Print pre-filter table and row count")
     ap.add_argument("--csv", default=None, metavar="FILE", help="Export CSV path")
@@ -652,9 +761,19 @@ def main() -> int:
     args = ap.parse_args()
 
     db = args.db or (db_path() if callable(db_path) else db_path())
-    min_liq = args.min_liquidity if args.min_liquidity is not None else (config_min_liq() if callable(config_min_liq) else 250_000)
-    min_vol = args.min_vol_h24 if args.min_vol_h24 is not None else (config_min_vol() if callable(config_min_vol) else 500_000)
-    min_bars_count = args.min_bars if args.min_bars is not None else (config_min_bars() if callable(config_min_bars) else 48)
+    min_liq = (
+        args.min_liquidity
+        if args.min_liquidity is not None
+        else (config_min_liq() if callable(config_min_liq) else 250_000)
+    )
+    min_vol = (
+        args.min_vol_h24
+        if args.min_vol_h24 is not None
+        else (config_min_vol() if callable(config_min_vol) else 500_000)
+    )
+    min_bars_count = (
+        args.min_bars if args.min_bars is not None else (config_min_bars() if callable(config_min_bars) else 48)
+    )
     exclude_stable = not args.no_exclude_stable and (exclude_stable_pairs() if callable(exclude_stable_pairs) else True)
 
     bars = _get_bars_or_from_snapshots(args.freq, db, min_liq, min_vol, min_bars_count)
@@ -667,7 +786,9 @@ def main() -> int:
     # Build returns_df (DEX bars), then add spot columns so factor = BTC_spot; do this before any metrics.
     returns_df, meta = _bars_to_returns_df_and_meta(bars)
     returns_df, meta = append_spot_returns_to_returns_df(returns_df, meta, db, args.freq)
-    factor_ret = get_factor_returns(returns_df, meta, db, args.freq, factor_symbol="BTC") if not returns_df.empty else None
+    factor_ret = (
+        get_factor_returns(returns_df, meta, db, args.freq, factor_symbol="BTC") if not returns_df.empty else None
+    )
 
     # Print correlation matrix once per run (before scan/filter output).
     if args.include_correlation and returns_df.shape[1] >= 2:
@@ -684,13 +805,22 @@ def main() -> int:
     if args.mode == "momentum":
         res = scan_momentum(bars, args.freq, args.top, lookback_bars=ret_lookback_bars)
     elif args.mode == "residual_momentum":
-        res = scan_residual_momentum(bars, args.freq, args.top, returns_df=returns_df, lookback_bars=ret_lookback_bars, factor_returns=factor_ret, beta_compress_threshold=getattr(args, "beta_compress_threshold", 0.15))
+        res = scan_residual_momentum(
+            bars,
+            args.freq,
+            args.top,
+            returns_df=returns_df,
+            lookback_bars=ret_lookback_bars,
+            factor_returns=factor_ret,
+            beta_compress_threshold=getattr(args, "beta_compress_threshold", 0.15),
+        )
     elif args.mode == "volatility_breakout":
         res = scan_volatility_breakout(bars, args.freq, args.top, z_threshold=args.z)
     elif args.mode == "cs_multifactor":
         try:
             from crypto_analyzer.cs_factors import build_cs_factor_frame
             from crypto_analyzer.cs_model import combine_factors
+
             cs_df = build_cs_factor_frame(bars, args.freq, lookback=ret_lookback_bars)
             if cs_df.empty:
                 res = pd.DataFrame()
@@ -702,7 +832,15 @@ def main() -> int:
                 parts = latest["pair_key"].str.split(":", n=1, expand=True)
                 latest["chain_id"] = parts[0]
                 latest["pair_address"] = parts[1]
-                label_map = {f"{r['chain_id']}:{r['pair_address']}": f"{r.get('base_symbol', '')}/" f"{r.get('quote_symbol', '')}" for _, r in bars.drop_duplicates(["chain_id", "pair_address"]).iterrows()} if not bars.empty else {}
+                label_map = (
+                    {
+                        f"{r['chain_id']}:{r['pair_address']}": f"{r.get('base_symbol', '')}/"
+                        f"{r.get('quote_symbol', '')}"
+                        for _, r in bars.drop_duplicates(["chain_id", "pair_address"]).iterrows()
+                    }
+                    if not bars.empty
+                    else {}
+                )
                 latest["label"] = latest["pair_key"].map(label_map).fillna(latest["pair_key"])
                 latest["return_24h"] = np.nan
                 res = latest[["chain_id", "pair_address", "label", "signal", "return_24h"]].reset_index(drop=True)
@@ -717,7 +855,8 @@ def main() -> int:
         return 0
 
     metrics_df = _compute_trading_metrics(
-        bars, args.freq,
+        bars,
+        args.freq,
         ret_lookback_bars=ret_lookback_bars,
         dd_lookback_bars=args.dd_lookback,
         factor_returns=factor_ret,
@@ -726,11 +865,24 @@ def main() -> int:
     metrics_df = _add_residual_columns(metrics_df, returns_df, args.freq, ret_lookback_bars)
     if not metrics_df.empty:
         metric_cols = (
-            "return_24h", "annual_vol", "annual_sharpe", "max_drawdown", "beta_vs_btc",
-            "corr_btc_24", "beta_btc_24", "corr_btc_72", "beta_btc_72",
-            "beta_compression", "beta_state", "beta_hat_used",
-            "excess_return_24h", "excess_total_cum_return", "excess_max_drawdown",
-            "residual_return_24h", "residual_annual_vol", "residual_max_drawdown",
+            "return_24h",
+            "annual_vol",
+            "annual_sharpe",
+            "max_drawdown",
+            "beta_vs_btc",
+            "corr_btc_24",
+            "beta_btc_24",
+            "corr_btc_72",
+            "beta_btc_72",
+            "beta_compression",
+            "beta_state",
+            "beta_hat_used",
+            "excess_return_24h",
+            "excess_total_cum_return",
+            "excess_max_drawdown",
+            "residual_return_24h",
+            "residual_annual_vol",
+            "residual_max_drawdown",
             "regime",
         )
         for c in metric_cols:
@@ -767,7 +919,9 @@ def main() -> int:
         if len(disp_series) >= w_disp:
             disp_z = compute_dispersion_zscore(disp_series, w_disp)
             disp_z_latest = float(disp_z.iloc[-1]) if not disp_z.empty and disp_z.notna().any() else np.nan
-    if getattr(args, "min_dispersion_z", None) is not None and (np.isnan(disp_z_latest) or disp_z_latest < args.min_dispersion_z):
+    if getattr(args, "min_dispersion_z", None) is not None and (
+        np.isnan(disp_z_latest) or disp_z_latest < args.min_dispersion_z
+    ):
         res = res.iloc[0:0]
 
     if getattr(args, "debug", False) and not res_pre.empty:
@@ -791,12 +945,17 @@ def main() -> int:
             v = row.get("excess_return_24h")
             if pd.notna(v) and v < args.min_excess_return:
                 reasons.append(f"excess_return_24h={float(v):.4f} < min-excess-return={args.min_excess_return}")
-        if getattr(args, "min_dispersion_z", None) is not None and (np.isnan(disp_z_latest) or disp_z_latest < args.min_dispersion_z):
+        if getattr(args, "min_dispersion_z", None) is not None and (
+            np.isnan(disp_z_latest) or disp_z_latest < args.min_dispersion_z
+        ):
             reasons.append(f"dispersion_z_latest={disp_z_latest:.2f} < min-dispersion-z={args.min_dispersion_z}")
         if reasons:
             print("Filtered out because", "; ".join(reasons) + ".")
     if (getattr(args, "debug", False) or pre_filter_count > 0) and returns_df.shape[1] >= 2 and not disp_series.empty:
-        print(f"Dispersion latest: {float(disp_series.iloc[-1]):.6f}" + (f"  z: {disp_z_latest:.2f}" if not np.isnan(disp_z_latest) else ""))
+        print(
+            f"Dispersion latest: {float(disp_series.iloc[-1]):.6f}"
+            + (f"  z: {disp_z_latest:.2f}" if not np.isnan(disp_z_latest) else "")
+        )
 
     if args.alert and args.mode == "momentum" and not res.empty and (res["return_24h"] < 0.01).all():
         return 0

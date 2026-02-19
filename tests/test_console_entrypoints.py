@@ -1,4 +1,5 @@
 """Verify CLI modules expose a main() callable without executing them."""
+
 from __future__ import annotations
 
 import importlib.util

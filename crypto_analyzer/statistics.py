@@ -2,14 +2,15 @@
 Statistical rigor: block bootstrap, confidence intervals, significance.
 Research-only; no execution.
 """
+
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
-from .features import bars_per_year, periods_per_year
+from .features import bars_per_year
 
 
 def block_bootstrap_pnl(
@@ -94,9 +95,7 @@ def reality_check_simple(results_dict: Dict[str, float], threshold: int = 10) ->
     returns a warning message. Otherwise returns None.
     """
     if len(results_dict) > threshold:
-        return (
-            f"Reality check: {len(results_dict)} strategies tested. Consider multiple-testing correction (e.g. Bonferroni, FDR)."
-        )
+        return f"Reality check: {len(results_dict)} strategies tested. Consider multiple-testing correction (e.g. Bonferroni, FDR)."
     return None
 
 

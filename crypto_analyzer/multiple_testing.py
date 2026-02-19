@@ -2,11 +2,11 @@
 Overfitting defenses: Deflated Sharpe, White's Reality Check style warning, PBO proxy.
 Research-only. See docs for disclaimers.
 """
+
 from __future__ import annotations
 
 import math
-import warnings
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 import numpy as np
 import pandas as pd
@@ -53,7 +53,7 @@ def deflated_sharpe_ratio(
         kurt = float(pnl.kurtosis()) if skew_kurtosis_optional else 0.0  # excess kurtosis
     except Exception:
         skew, kurt = 0.0, 0.0
-    var_sr = (1.0 + 0.5 * raw_sr ** 2 - skew * raw_sr + (kurt / 4.0) * raw_sr ** 2) / n
+    var_sr = (1.0 + 0.5 * raw_sr**2 - skew * raw_sr + (kurt / 4.0) * raw_sr**2) / n
     var_sr = max(var_sr, 1e-12)
     std_sr = math.sqrt(var_sr)
     # E[max SR] under null (N iid trials): approximation E[max] ≈ sqrt(V[SR]) * sqrt(2*log(N))
@@ -84,8 +84,7 @@ def reality_check_warning(
     (White's Reality Check style: avoid overfitting to best outcome).
     """
     parts = [
-        "Multiple testing: you tested %d signals and %d portfolios."
-        % (num_signals_tested, num_portfolios_tested),
+        "Multiple testing: you tested %d signals and %d portfolios." % (num_signals_tested, num_portfolios_tested),
     ]
     if num_signals_tested > 5 or num_portfolios_tested > 5:
         parts.append(
@@ -93,9 +92,7 @@ def reality_check_warning(
             "and avoid selecting the single best backtest without robustness checks."
         )
     if num_signals_tested > 20 or num_portfolios_tested > 20:
-        parts.append(
-            "Consider Bonferroni or FDR correction on p-values, or report median performance across variants."
-        )
+        parts.append("Consider Bonferroni or FDR correction on p-values, or report median performance across variants.")
     return " ".join(parts)
 
 

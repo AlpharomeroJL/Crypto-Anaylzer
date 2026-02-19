@@ -4,6 +4,7 @@ Run: python -m crypto_analyzer.doctor
 Exit: 0 all OK, 2 env/deps, 3 DB/schema, 4 pipeline smoke.
 Research-only; no execution.
 """
+
 from __future__ import annotations
 
 import os
@@ -25,6 +26,7 @@ def _in_venv() -> bool:
 def _get_db_path() -> str:
     try:
         from .config import db_path
+
         p = db_path() if callable(db_path) else db_path
         path = p() if callable(p) else str(p)
     except Exception:
@@ -41,7 +43,7 @@ def check_env() -> bool:
         return True
     print("[FAIL] Not running inside a virtual environment.")
     print("  Fix: Run  .\\.venv\\Scripts\\Activate  then use  python -m crypto_analyzer.doctor")
-    print(f"  Or:  .\\.venv\\Scripts\\python.exe -m crypto_analyzer.doctor")
+    print("  Or:  .\\.venv\\Scripts\\python.exe -m crypto_analyzer.doctor")
     return False
 
 
@@ -68,12 +70,15 @@ def check_db() -> bool:
     if not os.path.isfile(db):
         print(f"[FAIL] DB not found: {db}")
         print("  Create DB: .\\.venv\\Scripts\\python.exe dex_poll_to_sqlite.py --interval 60")
-        print("  Or universe: .\\.venv\\Scripts\\python.exe dex_poll_to_sqlite.py --universe --universe-chain solana --universe-query USDC --universe-query USDT --interval 60")
+        print(
+            "  Or universe: .\\.venv\\Scripts\\python.exe dex_poll_to_sqlite.py --universe --universe-chain solana --universe-query USDC --universe-query USDT --interval 60"
+        )
         print("  (If universe returns 0 pairs, try broader queries: --universe-query USDC --universe-query USDT)")
         return False
     print(f"[OK] DB exists  {db}")
 
     import sqlite3
+
     try:
         with sqlite3.connect(db) as con:
             cur = con.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
@@ -110,6 +115,7 @@ def check_integrity() -> None:
     """Print non-positive price counts per table/column (informational)."""
     try:
         from .config import price_column
+
         price_col = price_column() if callable(price_column) else "dex_price_usd"
     except Exception:
         price_col = "dex_price_usd"
@@ -120,7 +126,8 @@ def check_integrity() -> None:
         ("bars_1h", "close"),
     ]
     try:
-        from .integrity import count_non_positive_prices, bad_row_rate
+        from .integrity import bad_row_rate, count_non_positive_prices
+
         results = count_non_positive_prices(db, checks)
         rate_results = bad_row_rate(db, checks)
     except Exception:
@@ -157,6 +164,7 @@ def check_pipeline_smoke() -> bool:
         # Minimal metric: mean return (one period) if we have data
         if not returns_df.empty and returns_df.size > 0:
             import numpy as np
+
             mean_ret = float(np.nanmean(returns_df.values))
             print(f"[OK] pipeline  bars loaded, universe size={n}, mean_return_1bar={mean_ret:.6f}")
         else:
@@ -175,6 +183,7 @@ def check_dataset_id() -> None:
         return
     try:
         from .dataset import compute_dataset_fingerprint, dataset_id_from_fingerprint
+
         fp = compute_dataset_fingerprint(db)
         did = dataset_id_from_fingerprint(fp)
         # Build compact summary
@@ -182,7 +191,11 @@ def check_dataset_id() -> None:
         min_ts = None
         max_ts = None
         for t in fp.tables:
-            short = t.table.replace("sol_monitor_", "").replace("_snapshots", "snap").replace("spot_price_snapshots", "spot_snap")
+            short = (
+                t.table.replace("sol_monitor_", "")
+                .replace("_snapshots", "snap")
+                .replace("spot_price_snapshots", "spot_snap")
+            )
             parts.append(f"{short}={t.row_count}")
             if t.min_ts and (min_ts is None or t.min_ts < min_ts):
                 min_ts = t.min_ts
@@ -199,23 +212,30 @@ def _warn_universe_zero_if_enabled() -> None:
     """If universe.enabled, run one-shot fetch; warn if 0 pairs accepted."""
     try:
         from .config import get_config
+
         u = get_config().get("universe") or {}
         if not u.get("enabled"):
             return
         import sys
+
         sys.path.insert(0, str(_REPO_ROOT))
         sys.path.insert(0, str(_REPO_ROOT / "cli"))
         from poll import fetch_dex_universe_top_pairs, load_universe_config
+
         cfg = load_universe_config(str(_REPO_ROOT / "config.yaml"))
         chain = cfg.get("chain_id", "solana")
         queries = cfg.get("queries") or ["USDC", "USDT", "SOL"]
         pairs = fetch_dex_universe_top_pairs(
-            chain_id=chain, page_size=20,
-            min_liquidity_usd=0, min_vol_h24=0,
+            chain_id=chain,
+            page_size=20,
+            min_liquidity_usd=0,
+            min_vol_h24=0,
             queries=queries,
         )
         if len(pairs) == 0:
-            print("[WARN] Universe enabled but one-shot fetch returned 0 accepted pairs. Try broader queries: --universe-query USDC --universe-query USDT")
+            print(
+                "[WARN] Universe enabled but one-shot fetch returned 0 accepted pairs. Try broader queries: --universe-query USDC --universe-query USDT"
+            )
     except Exception:
         pass
 

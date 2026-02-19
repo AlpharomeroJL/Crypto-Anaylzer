@@ -3,29 +3,35 @@
 Daily report: markdown + CSV. Top momentum, top vol, regime shifts, notable liquidity drops.
 Optional: save charts as PNG for top 5. Designed for cron/Task Scheduler.
 """
+
 from __future__ import annotations
 
 import argparse
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-import sys
 import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from crypto_analyzer.config import db_path, default_freq, min_bars as config_min_bars
-from crypto_analyzer.data import append_spot_returns_to_returns_df, get_factor_returns, load_bars, load_snapshots, load_spot_price_resampled
+from crypto_analyzer.config import db_path, default_freq
+from crypto_analyzer.config import min_bars as config_min_bars
+from crypto_analyzer.data import (
+    append_spot_returns_to_returns_df,
+    get_factor_returns,
+    load_bars,
+    load_snapshots,
+    load_spot_price_resampled,
+)
 from crypto_analyzer.factors import (
     build_factor_matrix,
     compute_ols_betas,
-    compute_residual_returns,
     compute_residual_lookback_return,
+    compute_residual_returns,
     compute_residual_vol,
 )
-from crypto_analyzer.regimes import classify_market_regime, explain_regime
-from crypto_analyzer.signals import detect_signals, ensure_signals_table, load_signals, log_signals
 from crypto_analyzer.features import (
     annualize_sharpe,
     classify_beta_state,
@@ -37,20 +43,21 @@ from crypto_analyzer.features import (
     compute_dispersion_zscore,
     compute_drawdown_from_equity,
     compute_drawdown_from_log_returns,
-    compute_excess_cum_return,
-    compute_excess_lookback_return,
     compute_excess_log_returns,
+    compute_excess_lookback_return,
     compute_lookback_return,
     compute_lookback_return_from_price,
+    compute_ratio_series,
     compute_rolling_beta,
     compute_rolling_corr,
-    compute_ratio_series,
     dispersion_window_for_freq,
     log_returns,
     period_return_bars,
     periods_per_year,
     rolling_windows_for_freq,
 )
+from crypto_analyzer.regimes import classify_market_regime, explain_regime
+from crypto_analyzer.signals import detect_signals, load_signals, log_signals
 
 
 def _vol_window_bars(freq: str) -> int:
@@ -81,11 +88,17 @@ def run_momentum_scan(bars: pd.DataFrame, freq: str, top: int = 10) -> pd.DataFr
         annual_sharpe = annualize_sharpe(float(sharpe) if not np.isnan(sharpe) else np.nan, freq)
         _, max_dd = compute_drawdown_from_log_returns(r)
         label = f"{g['base_symbol'].iloc[-1]}/{g['quote_symbol'].iloc[-1]}"
-        out.append({
-            "chain_id": cid, "pair_address": addr, "label": label,
-            "return_24h": return_24h, "annual_vol": annual_vol,
-            "annual_sharpe": annual_sharpe, "max_drawdown": max_dd,
-        })
+        out.append(
+            {
+                "chain_id": cid,
+                "pair_address": addr,
+                "label": label,
+                "return_24h": return_24h,
+                "annual_vol": annual_vol,
+                "annual_sharpe": annual_sharpe,
+                "max_drawdown": max_dd,
+            }
+        )
     return pd.DataFrame(out).sort_values("return_24h", ascending=False).head(top)
 
 
@@ -112,11 +125,17 @@ def run_vol_scan(bars: pd.DataFrame, freq: str, top: int = 10) -> pd.DataFrame:
         annual_sharpe = annualize_sharpe(float(sharpe) if not np.isnan(sharpe) else np.nan, freq)
         _, max_dd = compute_drawdown_from_log_returns(r)
         label = f"{g['base_symbol'].iloc[-1]}/{g['quote_symbol'].iloc[-1]}"
-        out.append({
-            "chain_id": cid, "pair_address": addr, "label": label,
-            "return_24h": return_24h, "annual_vol": annual_vol,
-            "annual_sharpe": annual_sharpe, "max_drawdown": max_dd,
-        })
+        out.append(
+            {
+                "chain_id": cid,
+                "pair_address": addr,
+                "label": label,
+                "return_24h": return_24h,
+                "annual_vol": annual_vol,
+                "annual_sharpe": annual_sharpe,
+                "max_drawdown": max_dd,
+            }
+        )
     return pd.DataFrame(out).sort_values("annual_vol", ascending=False).head(top)
 
 
@@ -154,13 +173,20 @@ def run_residual_leaders(bars: pd.DataFrame, freq: str, db_path_override: str, t
         res_vol = compute_residual_vol(resid_series, n_24h, freq)
         resid_equity = np.exp(resid_series.cumsum())
         _, res_dd = compute_drawdown_from_equity(resid_equity)
-        rows.append({
-            "label": meta.get(pair_id, pair_id),
-            "residual_return_24h": res_24,
-            "residual_annual_vol": res_vol,
-            "residual_max_drawdown": res_dd,
-        })
-    df = pd.DataFrame(rows).dropna(subset=["residual_return_24h"]).sort_values("residual_return_24h", ascending=False).head(top)
+        rows.append(
+            {
+                "label": meta.get(pair_id, pair_id),
+                "residual_return_24h": res_24,
+                "residual_annual_vol": res_vol,
+                "residual_max_drawdown": res_dd,
+            }
+        )
+    df = (
+        pd.DataFrame(rows)
+        .dropna(subset=["residual_return_24h"])
+        .sort_values("residual_return_24h", ascending=False)
+        .head(top)
+    )
     return df
 
 
@@ -183,10 +209,15 @@ def run_risk_snapshot(bars: pd.DataFrame, freq: str, top_vol: int = 10, top_dd: 
         annual_vol = float(vol * np.sqrt(periods_yr)) if not np.isnan(vol) else np.nan
         _, max_dd = compute_drawdown_from_log_returns(r)
         label = f"{g['base_symbol'].iloc[-1]}/{g['quote_symbol'].iloc[-1]}"
-        rows.append({
-            "chain_id": cid, "pair_address": addr, "label": label,
-            "annual_vol": annual_vol, "max_drawdown": max_dd,
-        })
+        rows.append(
+            {
+                "chain_id": cid,
+                "pair_address": addr,
+                "label": label,
+                "annual_vol": annual_vol,
+                "max_drawdown": max_dd,
+            }
+        )
     df = pd.DataFrame(rows)
     if df.empty:
         return pd.DataFrame(), pd.DataFrame()
@@ -198,18 +229,40 @@ def run_risk_snapshot(bars: pd.DataFrame, freq: str, top_vol: int = 10, top_dd: 
 def run_market_structure(bars: pd.DataFrame, freq: str, db_path_override: str) -> tuple:
     """Correlation, beta, rolling, regime, beta_state table, ratio table, dispersion stats."""
     if bars.empty:
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), np.nan, np.nan
+        return (
+            pd.DataFrame(),
+            pd.DataFrame(),
+            pd.DataFrame(),
+            pd.DataFrame(),
+            pd.DataFrame(),
+            pd.DataFrame(),
+            np.nan,
+            np.nan,
+        )
     bars = bars.copy()
     bars["pair_id"] = bars["chain_id"].astype(str) + ":" + bars["pair_address"].astype(str)
     bars["label"] = bars["base_symbol"].fillna("").astype(str) + "/" + bars["quote_symbol"].fillna("").astype(str)
     returns_df = bars.pivot_table(index="ts_utc", columns="pair_id", values="log_return").dropna(how="all")
     meta = bars.groupby("pair_id")["label"].last().to_dict()
     if returns_df.empty or returns_df.shape[1] < 1:
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), np.nan, np.nan
+        return (
+            pd.DataFrame(),
+            pd.DataFrame(),
+            pd.DataFrame(),
+            pd.DataFrame(),
+            pd.DataFrame(),
+            pd.DataFrame(),
+            np.nan,
+            np.nan,
+        )
     returns_df, meta = append_spot_returns_to_returns_df(returns_df, meta, db_path_override, freq)
     factor_ret = get_factor_returns(returns_df, meta, db_path_override, freq)
     btc_price = load_spot_price_resampled(db_path_override, "BTC", freq)
-    corr_df = compute_correlation_matrix(returns_df).rename(index=meta, columns=meta) if returns_df.shape[1] >= 2 else pd.DataFrame()
+    corr_df = (
+        compute_correlation_matrix(returns_df).rename(index=meta, columns=meta)
+        if returns_df.shape[1] >= 2
+        else pd.DataFrame()
+    )
     win_short, win_long = rolling_windows_for_freq(freq)
     beta_compress_threshold = 0.15
     rows_beta = []
@@ -229,7 +282,11 @@ def run_market_structure(bars: pd.DataFrame, freq: str, db_path_override: str) -
             continue
         label = meta.get(f"{cid}:{addr}", f"{cid}/{addr}")
         factor_aligned = factor_ret.reindex(r.index).dropna() if factor_ret is not None else None
-        beta = compute_beta_vs_factor(r, factor_aligned) if factor_aligned is not None and len(factor_aligned) >= 2 else np.nan
+        beta = (
+            compute_beta_vs_factor(r, factor_aligned)
+            if factor_aligned is not None and len(factor_aligned) >= 2
+            else np.nan
+        )
         rows_beta.append({"label": label, "beta_vs_btc": beta})
         corr_24 = corr_72 = beta_24 = beta_72 = np.nan
         if factor_aligned is not None and len(factor_aligned) >= 2:
@@ -247,28 +304,50 @@ def run_market_structure(bars: pd.DataFrame, freq: str, db_path_override: str) -
                 beta_72 = float(rb72.dropna().iloc[-1])
         beta_compression = compute_beta_compression(beta_24, beta_72)
         beta_state = classify_beta_state(beta_24, beta_72, beta_compress_threshold)
-        rows_beta_state.append({"label": label, "beta_btc_24": beta_24, "beta_btc_72": beta_72, "beta_compression": beta_compression, "beta_state": beta_state})
+        rows_beta_state.append(
+            {
+                "label": label,
+                "beta_btc_24": beta_24,
+                "beta_btc_72": beta_72,
+                "beta_compression": beta_compression,
+                "beta_state": beta_state,
+            }
+        )
         beta_hat = beta_72 if (beta_72 is not None and not np.isnan(beta_72)) else beta
         excess_return_24h = np.nan
         if factor_aligned is not None and len(factor_aligned) >= 2 and beta_hat is not None and not np.isnan(beta_hat):
             r_excess = compute_excess_log_returns(r, factor_aligned, float(beta_hat))
             if len(r_excess) >= 2:
-                excess_return_24h = compute_excess_lookback_return(r_excess, n_24h) if len(r_excess) >= n_24h else np.nan
-        rows_rolling.append({
-            "label": label, "corr_btc_24": corr_24, "corr_btc_72": corr_72,
-            "beta_btc_24": beta_24, "beta_btc_72": beta_72, "excess_return_24h": excess_return_24h,
-        })
+                excess_return_24h = (
+                    compute_excess_lookback_return(r_excess, n_24h) if len(r_excess) >= n_24h else np.nan
+                )
+        rows_rolling.append(
+            {
+                "label": label,
+                "corr_btc_24": corr_24,
+                "corr_btc_72": corr_72,
+                "beta_btc_24": beta_24,
+                "beta_btc_72": beta_72,
+                "excess_return_24h": excess_return_24h,
+            }
+        )
         ratio_return_24h = ratio_level = np.nan
         if not btc_price.empty:
             price_series = g["close"].dropna()
             ratio_series = compute_ratio_series(price_series, btc_price)
             if len(ratio_series) >= 2:
-                ratio_return_24h = compute_lookback_return_from_price(ratio_series, n_24h) if len(ratio_series) >= n_24h else np.nan
+                ratio_return_24h = (
+                    compute_lookback_return_from_price(ratio_series, n_24h) if len(ratio_series) >= n_24h else np.nan
+                )
                 ratio_level = float(ratio_series.iloc[-1])
         rows_ratio.append({"label": label, "ratio_return_24h": ratio_return_24h, "ratio_level": ratio_level})
         short_vol = r.rolling(vol_short).std(ddof=1).iloc[-1] if len(r) >= vol_short else np.nan
         medium_vol = r.rolling(min(vol_medium, len(r))).std(ddof=1).iloc[-1] if len(r) >= vol_medium else short_vol
-        regime = classify_vol_regime(short_vol, medium_vol) if not (np.isnan(short_vol) or np.isnan(medium_vol) or medium_vol == 0) else "unknown"
+        regime = (
+            classify_vol_regime(short_vol, medium_vol)
+            if not (np.isnan(short_vol) or np.isnan(medium_vol) or medium_vol == 0)
+            else "unknown"
+        )
         rows_regime.append({"label": label, "regime": regime})
     beta_df = pd.DataFrame(rows_beta)
     rolling_df = pd.DataFrame(rows_rolling)
@@ -346,30 +425,49 @@ def main() -> int:
     momentum_df = run_momentum_scan(bars, freq, top=args.top)
     vol_df = run_vol_scan(bars, freq, top=args.top)
     top_vol_df, worst_dd_df = run_risk_snapshot(bars, freq, top_vol=10, top_dd=10)
-    corr_df, beta_df, rolling_btc_df, regime_summary_df, beta_state_df, ratio_df, disp_latest, disp_z_latest = run_market_structure(bars, freq, db)
+    corr_df, beta_df, rolling_btc_df, regime_summary_df, beta_state_df, ratio_df, disp_latest, disp_z_latest = (
+        run_market_structure(bars, freq, db)
+    )
     residual_leaders_df = run_residual_leaders(bars, freq, db, top=args.top)
 
     # Market regime: one label from dispersion_z, vol_regime, beta_state
-    vol_regime = (regime_summary_df["regime"].mode().iloc[0] if not regime_summary_df.empty and "regime" in regime_summary_df.columns else "unknown")
-    beta_state = (beta_state_df["beta_state"].mode().iloc[0] if not beta_state_df.empty and "beta_state" in beta_state_df.columns else "unknown")
+    vol_regime = (
+        regime_summary_df["regime"].mode().iloc[0]
+        if not regime_summary_df.empty and "regime" in regime_summary_df.columns
+        else "unknown"
+    )
+    beta_state = (
+        beta_state_df["beta_state"].mode().iloc[0]
+        if not beta_state_df.empty and "beta_state" in beta_state_df.columns
+        else "unknown"
+    )
     market_regime_label = classify_market_regime(disp_z_latest, vol_regime, beta_state)
     regime_explanation = explain_regime(market_regime_label)
 
     # Signals: detect from latest metrics, log, then load last 24h
     signal_rows = []
-    res_by_label = residual_leaders_df.set_index("label")["residual_return_24h"] if not residual_leaders_df.empty else pd.Series(dtype=float)
+    res_by_label = (
+        residual_leaders_df.set_index("label")["residual_return_24h"]
+        if not residual_leaders_df.empty
+        else pd.Series(dtype=float)
+    )
     if not rolling_btc_df.empty:
         for _, row in rolling_btc_df.iterrows():
             lbl = row.get("label", "")
             b24 = row.get("beta_btc_24")
             b72 = row.get("beta_btc_72")
             res_24 = res_by_label.get(lbl, np.nan) if not res_by_label.empty else np.nan
-            signal_rows.extend(detect_signals(beta_btc_24=b24, beta_btc_72=b72, dispersion_z=disp_z_latest, residual_return_24h=res_24, label=lbl))
+            signal_rows.extend(
+                detect_signals(
+                    beta_btc_24=b24, beta_btc_72=b72, dispersion_z=disp_z_latest, residual_return_24h=res_24, label=lbl
+                )
+            )
     if signal_rows:
         log_signals(db, signal_rows)
     signals_24h = load_signals(db, last_n=500)
     if not signals_24h.empty and "ts_utc" in signals_24h.columns:
         from datetime import timedelta
+
         cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
         signals_24h = signals_24h[signals_24h["ts_utc"] >= cutoff]
 
@@ -377,6 +475,7 @@ def main() -> int:
     regime = regime_shift(bars, window=24) if not bars.empty else "no_data"
 
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
     def _table(df: pd.DataFrame) -> str:
         if df.empty:
             return "*No data*"
@@ -394,7 +493,9 @@ def main() -> int:
         _table(vol_df),
         "",
         "## Residual leaders (top by residual_return_24h vs BTC_spot/ETH_spot)",
-        _table(residual_leaders_df.round(4)) if not residual_leaders_df.empty else "*No factor data or insufficient overlap*",
+        _table(residual_leaders_df.round(4))
+        if not residual_leaders_df.empty
+        else "*No factor data or insufficient overlap*",
         "",
         "## Market Regime",
         f"dispersion_z: {disp_z_latest:.2f}" if not np.isnan(disp_z_latest) else "dispersion_z: N/A",
@@ -423,7 +524,13 @@ def main() -> int:
         _table(rolling_btc_df.round(4)) if not rolling_btc_df.empty else "*No data*",
         "",
         "### Excess return (BTC-hedged) — label, excess_return_24h, beta_btc_72, corr_btc_24",
-        _table(rolling_btc_df[["label", "excess_return_24h", "beta_btc_72", "corr_btc_24"]].sort_values("excess_return_24h", ascending=False).round(4)) if not rolling_btc_df.empty and "excess_return_24h" in rolling_btc_df.columns else "*No data*",
+        _table(
+            rolling_btc_df[["label", "excess_return_24h", "beta_btc_72", "corr_btc_24"]]
+            .sort_values("excess_return_24h", ascending=False)
+            .round(4)
+        )
+        if not rolling_btc_df.empty and "excess_return_24h" in rolling_btc_df.columns
+        else "*No data*",
         "",
         "### Volatility regime summary",
         _table(regime_summary_df),
@@ -437,7 +544,9 @@ def main() -> int:
         "## Dispersion",
         f"Latest dispersion: {disp_latest:.6f}" if not np.isnan(disp_latest) else "*N/A*",
         f"Latest dispersion z-score: {disp_z_latest:.2f}" if not np.isnan(disp_z_latest) else "*N/A*",
-        "Interpretation: z > +1 → high dispersion (relative value); z < -1 → low dispersion (macro beta)." if not np.isnan(disp_z_latest) else "",
+        "Interpretation: z > +1 → high dispersion (relative value); z < -1 → low dispersion (macro beta)."
+        if not np.isnan(disp_z_latest)
+        else "",
         "",
         "## Regime (vol trend)",
         regime,
@@ -467,10 +576,14 @@ def main() -> int:
     if args.save_charts and not momentum_df.empty and not bars.empty:
         try:
             import matplotlib
+
             matplotlib.use("Agg")
             import matplotlib.pyplot as plt
+
             for i, row in momentum_df.head(5).iterrows():
-                g = bars[(bars["chain_id"] == row["chain_id"]) & (bars["pair_address"] == row["pair_address"])].sort_values("ts_utc")
+                g = bars[
+                    (bars["chain_id"] == row["chain_id"]) & (bars["pair_address"] == row["pair_address"])
+                ].sort_values("ts_utc")
                 if g.empty:
                     continue
                 fig, ax = plt.subplots(1, 1)

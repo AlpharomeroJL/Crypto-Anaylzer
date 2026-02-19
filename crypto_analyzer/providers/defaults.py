@@ -4,6 +4,7 @@ Default provider registry configuration.
 Registers built-in providers and builds chains from config.yaml settings.
 To add a new provider, register it here and add it to the priority list.
 """
+
 from __future__ import annotations
 
 import logging
@@ -43,6 +44,7 @@ def load_provider_config() -> Dict[str, List[str]]:
     """
     try:
         from crypto_analyzer.config import get_config
+
         cfg = get_config()
         providers = cfg.get("providers", {})
         return {

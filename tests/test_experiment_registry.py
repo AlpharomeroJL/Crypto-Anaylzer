@@ -2,15 +2,13 @@
 Tests for the SQLite experiment registry (crypto_analyzer.experiments).
 Uses a temp file for isolation.
 """
+
 from __future__ import annotations
 
-import os
 import sqlite3
 import sys
-import tempfile
 from pathlib import Path
 
-import pandas as pd
 import pytest
 
 _root = Path(__file__).resolve().parent.parent
@@ -18,11 +16,11 @@ sys.path.insert(0, str(_root))
 
 from crypto_analyzer.experiments import (
     ensure_experiment_tables,
-    record_experiment_run,
-    load_experiments,
-    load_experiment_metrics,
-    load_metric_history,
     load_distinct_metric_names,
+    load_experiment_metrics,
+    load_experiments,
+    load_metric_history,
+    record_experiment_run,
 )
 
 
@@ -103,7 +101,7 @@ class TestRecordAndLoad:
 
     def test_load_metric_history(self, tmp_db):
         for i in range(5):
-            row = {"run_id": f"run_{i}", "ts_utc": f"2025-01-0{i+1}T00:00:00+00:00"}
+            row = {"run_id": f"run_{i}", "ts_utc": f"2025-01-0{i + 1}T00:00:00+00:00"}
             record_experiment_run(tmp_db, row, {"sharpe": float(i)})
 
         hist = load_metric_history(tmp_db, "sharpe", limit=100)

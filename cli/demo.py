@@ -3,6 +3,7 @@
 One-command demo: preflight, collect minimal data, materialize, generate report.
 Research-only; no execution layer.
 """
+
 from __future__ import annotations
 
 import os
@@ -18,9 +19,9 @@ _py = sys.executable
 
 def _run(args: list[str], label: str, check: bool = True) -> int:
     """Run a subprocess with the venv Python, printing the label."""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  {label}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
     result = subprocess.run([_py] + args, cwd=str(_root))
     if check and result.returncode != 0:
         print(f"\nFAILED: {label} (exit {result.returncode})")
@@ -39,6 +40,7 @@ def main() -> int:
 
     # Step 2: Check if DB exists; if not, poll briefly
     from crypto_analyzer.config import db_path as _db_path_fn
+
     _dbp = _db_path_fn() if callable(_db_path_fn) else _db_path_fn
     db = str(_dbp() if callable(_dbp) else _dbp)
     if not os.path.isabs(db):
@@ -47,8 +49,7 @@ def main() -> int:
     if not os.path.isfile(db):
         print("\nNo database found. Running a short data collection (30s)...")
         _run(
-            ["cli/poll.py", "--universe", "--universe-chain", "solana",
-             "--interval", "5", "--run-seconds", "30"],
+            ["cli/poll.py", "--universe", "--universe-chain", "solana", "--interval", "5", "--run-seconds", "30"],
             "Step 2a: Collect minimal data (30s poll)",
         )
     else:
@@ -73,9 +74,9 @@ def main() -> int:
     )
 
     # Step 6: Next steps
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("  Demo complete!")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
     print("Next steps (copy-paste into your terminal):\n")
     print("  Start API:")
     print("    .\\scripts\\run.ps1 api --host 127.0.0.1 --port 8001\n")

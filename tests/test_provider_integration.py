@@ -4,6 +4,7 @@ Integration smoke test: one poll cycle with mocked HTTP to a temp SQLite DB.
 Verifies the full path from provider -> chain -> db_writer -> SQLite without
 any live network calls.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -116,26 +117,36 @@ class TestMockedPollCycle:
         # Create mock providers instead of patching HTTP
         class FakeCoinbase:
             provider_name = "coinbase"
+
             def get_spot(self, symbol):
                 prices = {"SOL": 150.0, "ETH": 3000.0, "BTC": 50000.0}
                 return SpotQuote(
-                    symbol=symbol, price_usd=prices.get(symbol, 100.0),
+                    symbol=symbol,
+                    price_usd=prices.get(symbol, 100.0),
                     provider_name="coinbase",
                     fetched_at_utc="2026-01-01T00:00:00+00:00",
                 )
 
         class FakeDex:
             provider_name = "dexscreener"
+
             def get_snapshot(self, chain_id, pair_address):
                 return DexSnapshot(
-                    chain_id=chain_id, pair_address=pair_address,
-                    dex_id="orca", base_symbol="SOL", quote_symbol="USDC",
-                    dex_price_usd=150.0, dex_price_native=1.0,
-                    liquidity_usd=1000000.0, vol_h24=500000.0,
-                    txns_h24_buys=100, txns_h24_sells=80,
+                    chain_id=chain_id,
+                    pair_address=pair_address,
+                    dex_id="orca",
+                    base_symbol="SOL",
+                    quote_symbol="USDC",
+                    dex_price_usd=150.0,
+                    dex_price_native=1.0,
+                    liquidity_usd=1000000.0,
+                    vol_h24=500000.0,
+                    txns_h24_buys=100,
+                    txns_h24_sells=80,
                     provider_name="dexscreener",
                     fetched_at_utc="2026-01-01T00:00:00+00:00",
                 )
+
             def search_pairs(self, query, chain_id="solana"):
                 return []
 
@@ -176,10 +187,7 @@ class TestMockedPollCycle:
         assert cur.fetchone()[0] == 1
 
         # Verify provenance
-        cur = temp_db.execute(
-            "SELECT provider_name, fetch_status FROM spot_price_snapshots "
-            "WHERE symbol = 'BTC'"
-        )
+        cur = temp_db.execute("SELECT provider_name, fetch_status FROM spot_price_snapshots WHERE symbol = 'BTC'")
         row = cur.fetchone()
         assert row[0] == "coinbase"
         assert row[1] == "OK"
@@ -194,14 +202,17 @@ class TestMockedPollCycle:
 
         class FailingProvider:
             provider_name = "coinbase"
+
             def get_spot(self, symbol):
                 raise RuntimeError("Coinbase is down")
 
         class WorkingProvider:
             provider_name = "kraken"
+
             def get_spot(self, symbol):
                 return SpotQuote(
-                    symbol=symbol, price_usd=149.50,
+                    symbol=symbol,
+                    price_usd=149.50,
                     provider_name="kraken",
                     fetched_at_utc="2026-01-01T00:00:00+00:00",
                 )
@@ -216,9 +227,7 @@ class TestMockedPollCycle:
         writer.write_spot_price("2026-01-01T00:00:00+00:00", quote)
         writer.commit()
 
-        cur = temp_db.execute(
-            "SELECT provider_name, fetch_status FROM spot_price_snapshots"
-        )
+        cur = temp_db.execute("SELECT provider_name, fetch_status FROM spot_price_snapshots")
         row = cur.fetchone()
         assert row[0] == "kraken"
         assert row[1] == "OK"

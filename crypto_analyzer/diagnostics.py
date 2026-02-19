@@ -2,9 +2,10 @@
 Diagnostics: fragility, stability, parameter sensitivity, regime concentration.
 Research-only. All functions degrade gracefully with small universes.
 """
+
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 import pandas as pd
@@ -96,7 +97,7 @@ def asset_concentration(weights_df: pd.DataFrame) -> dict:
     out["max_weight"] = float(w.max().max()) if w.size else np.nan
     try:
         # Herfindahl: sum of squared weights (per row then average or last)
-        h = (w ** 2).sum(axis=1)
+        h = (w**2).sum(axis=1)
         out["herfindahl"] = float(h.iloc[-1]) if len(h) else np.nan
     except Exception:
         pass

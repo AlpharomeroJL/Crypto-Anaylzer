@@ -1,4 +1,5 @@
 """Tests for new experiment metadata columns: hypothesis, tags, dataset_id, params."""
+
 from __future__ import annotations
 
 import json
@@ -6,7 +7,6 @@ import sqlite3
 import sys
 from pathlib import Path
 
-import pandas as pd
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -17,7 +17,6 @@ from crypto_analyzer.experiments import (
     parse_tags,
     record_experiment_run,
 )
-
 
 _OLD_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS experiments (
@@ -109,12 +108,24 @@ class TestFiltering:
     def _seed(self, tmp_db):
         self.db = tmp_db
         rows = [
-            {"run_id": "r1", "ts_utc": "2025-07-01T00:00:00+00:00",
-             "tags_json": ["alpha", "value"], "hypothesis": "momentum works"},
-            {"run_id": "r2", "ts_utc": "2025-07-02T00:00:00+00:00",
-             "tags_json": ["beta"], "hypothesis": "reversion idea"},
-            {"run_id": "r3", "ts_utc": "2025-07-03T00:00:00+00:00",
-             "tags_json": ["alpha", "quality"], "hypothesis": "quality factor"},
+            {
+                "run_id": "r1",
+                "ts_utc": "2025-07-01T00:00:00+00:00",
+                "tags_json": ["alpha", "value"],
+                "hypothesis": "momentum works",
+            },
+            {
+                "run_id": "r2",
+                "ts_utc": "2025-07-02T00:00:00+00:00",
+                "tags_json": ["beta"],
+                "hypothesis": "reversion idea",
+            },
+            {
+                "run_id": "r3",
+                "ts_utc": "2025-07-03T00:00:00+00:00",
+                "tags_json": ["alpha", "quality"],
+                "hypothesis": "quality factor",
+            },
         ]
         for r in rows:
             record_experiment_run(self.db, r)

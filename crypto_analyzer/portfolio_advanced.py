@@ -2,6 +2,7 @@
 Advanced portfolio construction: constraints, neutralities, diagnostics.
 Uses heuristic optimizer (no cvxpy). Research-only.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, Optional, Tuple

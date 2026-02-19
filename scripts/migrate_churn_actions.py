@@ -1,4 +1,5 @@
 """One-off: normalize universe_churn_log action from added/removed to add/remove."""
+
 import sqlite3
 
 conn = sqlite3.connect("dex_data.sqlite")

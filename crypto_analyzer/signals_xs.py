@@ -2,6 +2,7 @@
 Cross-sectional signal framework: z-score, winsorize, neutralize, orthogonalize.
 Research-only; no execution.
 """
+
 from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
@@ -137,9 +138,7 @@ def orthogonalize_signals(
             if valid.sum() < 3:
                 out.loc[t] = S.loc[t]
                 continue
-            resid = _ols_residual_cross_section(
-                np.where(valid, y, 0.0), np.where(np.isfinite(X), X, 0.0)
-            )
+            resid = _ols_residual_cross_section(np.where(valid, y, 0.0), np.where(np.isfinite(X), X, 0.0))
             out.loc[t] = np.where(valid, resid, np.nan)
         orth[name] = out
     # Report: average absolute cross-correlation before/after
@@ -244,10 +243,13 @@ def value_vs_beta(
     Institutional composite: residual_momentum_24h neutralized to beta + vol + liquidity.
     """
     from .alpha_research import signal_residual_momentum_24h
+
     sig = signal_residual_momentum_24h(returns_df, freq)
     if sig is None or sig.empty:
         return None
-    exposures = build_exposure_panel(returns_df, pd.DataFrame(), factor_returns=factor_returns, freq=freq, liquidity_panel=liquidity_panel)
+    exposures = build_exposure_panel(
+        returns_df, pd.DataFrame(), factor_returns=factor_returns, freq=freq, liquidity_panel=liquidity_panel
+    )
     to_use = {k: v for k, v in exposures.items() if v is not None and not v.empty and v.shape[0] >= 3}
     if not to_use:
         return sig
@@ -263,6 +265,7 @@ def clean_momentum(
     Momentum 24h orthogonalized against beta and vol (institutional composite).
     """
     from .alpha_research import signal_momentum_24h
+
     mom = signal_momentum_24h(returns_df, freq)
     if mom.empty:
         return mom

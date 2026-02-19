@@ -1,18 +1,18 @@
 """Cumulative return from log returns; drawdown correctness."""
-import numpy as np
-import pandas as pd
-import pytest
+
 import sys
 from pathlib import Path
+
+import numpy as np
+import pandas as pd
 
 _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
 
 from crypto_analyzer.features import (
-    log_returns,
-    cumulative_returns_log,
-    compute_drawdown_from_log_returns,
     compute_drawdown_from_equity,
+    cumulative_returns_log,
+    log_returns,
 )
 
 

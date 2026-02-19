@@ -2,21 +2,20 @@
 Reproducible run registry: manifests with git, env fingerprint, data window, outputs, metrics.
 Research-only; no execution.
 """
+
 from __future__ import annotations
 
 import hashlib
 import json
-import os
 import platform
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from .artifacts import ensure_dir, snapshot_outputs, write_json
+from .artifacts import ensure_dir, write_json
 from .spec import spec_summary
 
 
@@ -103,11 +102,16 @@ def append_run_registry(out_dir: str | Path, run_id: str, manifest_path: str) ->
     """Append one JSON line to out_dir/run_registry.jsonl (run_id, manifest path, timestamp)."""
     out_dir = Path(out_dir)
     registry_path = out_dir / "run_registry.jsonl"
-    line = json.dumps({
-        "run_id": run_id,
-        "manifest_path": manifest_path,
-        "timestamp": now_utc_iso(),
-    }) + "\n"
+    line = (
+        json.dumps(
+            {
+                "run_id": run_id,
+                "manifest_path": manifest_path,
+                "timestamp": now_utc_iso(),
+            }
+        )
+        + "\n"
+    )
     try:
         with open(registry_path, "a", encoding="utf-8") as f:
             f.write(line)
@@ -142,15 +146,17 @@ def load_manifests(out_dir: str | Path) -> pd.DataFrame:
                 m = json.load(f)
             spec = m.get("spec") or {}
             outputs = m.get("outputs") or {}
-            rows.append({
-                "run_id": m.get("run_id"),
-                "created_utc": m.get("created_utc"),
-                "name": m.get("name"),
-                "git_commit": m.get("git_commit"),
-                "spec_version": spec.get("research_spec_version", ""),
-                "outputs": ", ".join(outputs.keys()) if isinstance(outputs, dict) else str(outputs),
-                "path": str(path),
-            })
+            rows.append(
+                {
+                    "run_id": m.get("run_id"),
+                    "created_utc": m.get("created_utc"),
+                    "name": m.get("name"),
+                    "git_commit": m.get("git_commit"),
+                    "spec_version": spec.get("research_spec_version", ""),
+                    "outputs": ", ".join(outputs.keys()) if isinstance(outputs, dict) else str(outputs),
+                    "path": str(path),
+                }
+            )
         except Exception:
             continue
     return pd.DataFrame(rows)

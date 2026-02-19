@@ -1,11 +1,11 @@
 """
 Artifact I/O and hashing for reports. Research-only.
 """
+
 from __future__ import annotations
 
 import hashlib
 import json
-import os
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -85,5 +85,6 @@ def df_to_download_bytes(df: pd.DataFrame) -> bytes:
 def timestamped_filename(prefix: str, ext: str, sep: str = "_") -> str:
     """Return a filename like prefix_YYYYMMDD_HHMM.ext using UTC."""
     from datetime import datetime, timezone
+
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
     return f"{prefix}{sep}{ts}.{ext}"

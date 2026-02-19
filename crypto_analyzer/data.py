@@ -1,6 +1,7 @@
 """
 Normalized data layer: load from SQLite and return clean pandas DataFrames.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -12,16 +13,28 @@ import pandas as pd
 from .config import (
     db_path,
     db_table,
-    price_column,
-    min_liquidity_usd as config_min_liq,
-    min_vol_h24 as config_min_vol,
     is_btc_pair,
+    price_column,
+)
+from .config import (
     factor_symbol as config_factor_symbol,
+)
+from .config import (
+    min_liquidity_usd as config_min_liq,
+)
+from .config import (
+    min_vol_h24 as config_min_vol,
 )
 
 NORMAL_COLUMNS = [
-    "ts_utc", "chain_id", "pair_address", "base_symbol", "quote_symbol",
-    "price_usd", "liquidity_usd", "vol_h24",
+    "ts_utc",
+    "chain_id",
+    "pair_address",
+    "base_symbol",
+    "quote_symbol",
+    "price_usd",
+    "liquidity_usd",
+    "vol_h24",
 ]
 
 
@@ -37,8 +50,14 @@ def load_snapshots(
     path = db_path_override or (db_path() if callable(db_path) else db_path)
     table = table_override or (db_table() if callable(db_table) else db_table)
     price_col = price_col_override or (price_column() if callable(price_column) else price_column)
-    min_liq = min_liquidity_usd if min_liquidity_usd is not None else (config_min_liq() if callable(config_min_liq) else config_min_liq)
-    min_vol = min_vol_h24 if min_vol_h24 is not None else (config_min_vol() if callable(config_min_vol) else config_min_vol)
+    min_liq = (
+        min_liquidity_usd
+        if min_liquidity_usd is not None
+        else (config_min_liq() if callable(config_min_liq) else config_min_liq)
+    )
+    min_vol = (
+        min_vol_h24 if min_vol_h24 is not None else (config_min_vol() if callable(config_min_vol) else config_min_vol)
+    )
 
     where = ""
     params: List[str] = []
@@ -69,7 +88,12 @@ def load_snapshots(
     df = df[df["price_usd"] > 0]
     if n_bad > 0:
         import warnings
-        warnings.warn(f"load_snapshots: dropped {int(n_bad)} rows with non-positive price_usd (table {table})", UserWarning, stacklevel=2)
+
+        warnings.warn(
+            f"load_snapshots: dropped {int(n_bad)} rows with non-positive price_usd (table {table})",
+            UserWarning,
+            stacklevel=2,
+        )
     if apply_filters and (min_liq is not None or min_vol is not None):
         mask = pd.Series(True, index=df.index)
         if min_liq is not None and "liquidity_usd" in df.columns:
@@ -82,9 +106,11 @@ def load_snapshots(
     df = df.reset_index(drop=True)
     try:
         from .integrity import assert_monotonic_time_index
+
         w = assert_monotonic_time_index(df, col="ts_utc")
         if w:
             import warnings
+
             warnings.warn(f"load_snapshots: {w}", UserWarning, stacklevel=2)
     except Exception:
         pass
@@ -132,16 +158,21 @@ def load_bars(
     df = df[df["close"] > 0]
     if n_bad > 0:
         import warnings
-        warnings.warn(f"load_bars: dropped {int(n_bad)} rows with non-positive close (table {table})", UserWarning, stacklevel=2)
+
+        warnings.warn(
+            f"load_bars: dropped {int(n_bad)} rows with non-positive close (table {table})", UserWarning, stacklevel=2
+        )
     if min_bars is not None:
         counts = df.groupby(["chain_id", "pair_address"]).size()
         valid = counts[counts >= min_bars].index
         df = df[df.set_index(["chain_id", "pair_address"]).index.isin(valid)].reset_index(drop=True)
     try:
         from .integrity import assert_monotonic_time_index
+
         w = assert_monotonic_time_index(df, col="ts_utc")
         if w:
             import warnings
+
             warnings.warn(f"load_bars: {w}", UserWarning, stacklevel=2)
     except Exception:
         pass
@@ -222,7 +253,12 @@ def load_spot_series(db_path_override: Optional[str] = None, symbol: str = "BTC"
     df = df[df["spot_price_usd"] > 0]
     if n_bad > 0:
         import warnings
-        warnings.warn(f"load_spot_series: dropped {int(n_bad)} rows with non-positive spot_price_usd (symbol={symbol})", UserWarning, stacklevel=2)
+
+        warnings.warn(
+            f"load_spot_series: dropped {int(n_bad)} rows with non-positive spot_price_usd (symbol={symbol})",
+            UserWarning,
+            stacklevel=2,
+        )
     return df.set_index("ts_utc")["spot_price_usd"].sort_index()
 
 

@@ -5,6 +5,7 @@ Uses the public Dexscreener API (no authentication required):
   GET https://api.dexscreener.com/latest/dex/pairs/{chain}/{address}
   GET https://api.dexscreener.com/latest/dex/search?q={query}
 """
+
 from __future__ import annotations
 
 import json
@@ -65,18 +66,12 @@ def _pick_pair_from_payload(data: dict) -> Dict[str, Any]:
             if isinstance(item, dict):
                 return item
 
-    if data.get("chainId") and (
-        data.get("priceUsd") is not None or data.get("liquidity")
-    ):
+    if data.get("chainId") and (data.get("priceUsd") is not None or data.get("liquidity")):
         return data
 
     if data.get("pair") is None and data.get("pairs") is None:
-        raise RuntimeError(
-            "Dex returned no data for this pair (may be delisted or invalid)."
-        )
-    raise RuntimeError(
-        f"Unexpected Dex response shape. Keys: {list(data.keys())}"
-    )
+        raise RuntimeError("Dex returned no data for this pair (may be delisted or invalid).")
+    raise RuntimeError(f"Unexpected Dex response shape. Keys: {list(data.keys())}")
 
 
 class DexscreenerDexProvider:
@@ -125,14 +120,13 @@ class DexscreenerDexProvider:
             raw_json=json.dumps(pair, separators=(",", ":"), ensure_ascii=False),
         )
 
-    def search_pairs(
-        self, query: str, chain_id: str = "solana"
-    ) -> List[Dict[str, Any]]:
+    def search_pairs(self, query: str, chain_id: str = "solana") -> List[Dict[str, Any]]:
         url = f"{DEX_BASE_URL}/latest/dex/search?q={query}"
         try:
             resp = requests.get(url, timeout=HTTP_TIMEOUT_S)
             if resp.status_code == 429:
                 import time
+
                 time.sleep(2.0)
                 resp = requests.get(url, timeout=HTTP_TIMEOUT_S)
             resp.raise_for_status()
@@ -145,8 +139,4 @@ class DexscreenerDexProvider:
             return []
 
         chain_lower = chain_id.lower()
-        return [
-            x for x in pairs_raw
-            if isinstance(x, dict)
-            and (x.get("chainId") or "").strip().lower() == chain_lower
-        ]
+        return [x for x in pairs_raw if isinstance(x, dict) and (x.get("chainId") or "").strip().lower() == chain_lower]

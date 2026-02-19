@@ -1,6 +1,7 @@
 """
 Feature engineering from bar data: returns, volatility, drawdown, momentum, trend.
 """
+
 from __future__ import annotations
 
 from typing import Optional, Tuple

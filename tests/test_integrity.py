@@ -1,4 +1,5 @@
 """Integrity: monotonic time, no zero prices, no forward-looking alignment."""
+
 from __future__ import annotations
 
 import os
@@ -7,15 +8,14 @@ import tempfile
 from pathlib import Path
 
 import pandas as pd
-import pytest
 
 from crypto_analyzer.integrity import (
     assert_monotonic_time_index,
-    assert_no_negative_or_zero_prices,
     assert_no_forward_looking,
-    validate_alignment,
-    count_non_positive_prices,
+    assert_no_negative_or_zero_prices,
     bad_row_rate,
+    count_non_positive_prices,
+    validate_alignment,
 )
 
 

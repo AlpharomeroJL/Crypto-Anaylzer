@@ -5,6 +5,7 @@ Extensible plugin system for CEX spot price feeds and DEX snapshot sources.
 Providers are registered via a config-driven priority chain with automatic
 fallback, circuit breakers, retry/backoff, and last-known-good behavior.
 """
+
 from __future__ import annotations
 
 from .base import (

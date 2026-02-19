@@ -1,25 +1,24 @@
 """Milestone 4: signals_xs, risk_model, portfolio_advanced, evaluation, multiple_testing, experiments."""
-import numpy as np
-import pandas as pd
+
 import sys
 import tempfile
-import os
 from pathlib import Path
+
+import numpy as np
+import pandas as pd
 
 _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
 
+from crypto_analyzer.evaluation import conditional_metrics
+from crypto_analyzer.experiments import load_experiments, log_experiment
+from crypto_analyzer.multiple_testing import deflated_sharpe_ratio, pbo_proxy_walkforward
+from crypto_analyzer.portfolio_advanced import optimize_long_short_portfolio
+from crypto_analyzer.risk_model import ensure_psd
 from crypto_analyzer.signals_xs import (
-    zscore_cross_section,
-    winsorize_cross_section,
     neutralize_signal_to_exposures,
     orthogonalize_signals,
 )
-from crypto_analyzer.risk_model import ensure_psd, ewma_cov, shrink_cov_to_diagonal, estimate_covariance
-from crypto_analyzer.portfolio_advanced import optimize_long_short_portfolio
-from crypto_analyzer.evaluation import conditional_metrics, stability_report
-from crypto_analyzer.multiple_testing import deflated_sharpe_ratio, pbo_proxy_walkforward
-from crypto_analyzer.experiments import log_experiment, load_experiments
 
 
 def test_neutralize_signal_reduces_corr_to_beta():
@@ -119,11 +118,13 @@ def test_deflated_sharpe_sane_ordering():
 
 def test_pbo_proxy_range():
     """PBO proxy should be in [0, 1] when we have valid splits."""
-    df = pd.DataFrame({
-        "split_id": [0, 1, 2, 3, 4],
-        "train_sharpe": [0.5, 0.6, 0.4, 0.7, 0.3],
-        "test_sharpe": [0.1, -0.2, 0.3, 0.0, 0.2],
-    })
+    df = pd.DataFrame(
+        {
+            "split_id": [0, 1, 2, 3, 4],
+            "train_sharpe": [0.5, 0.6, 0.4, 0.7, 0.3],
+            "test_sharpe": [0.1, -0.2, 0.3, 0.0, 0.2],
+        }
+    )
     out = pbo_proxy_walkforward(df)
     assert "pbo_proxy" in out
     pbo = out["pbo_proxy"]

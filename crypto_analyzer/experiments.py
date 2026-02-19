@@ -3,9 +3,9 @@ Experiment registry backed by SQLite. Persists run metadata, metrics, and artifa
 so runs can be compared over time. Complements (does not replace) JSON manifest flow.
 Research-only.
 """
+
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import sqlite3
@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
-
 
 # ---------------------------------------------------------------------------
 # Schema
@@ -82,6 +81,7 @@ def ensure_experiment_tables(conn: sqlite3.Connection) -> None:
 # ---------------------------------------------------------------------------
 # Write
 # ---------------------------------------------------------------------------
+
 
 def record_experiment_run(
     db_path: str | Path,
@@ -163,6 +163,7 @@ def record_experiment_run(
 # Read
 # ---------------------------------------------------------------------------
 
+
 def load_experiments(db_or_dir: str | Path, limit: int = 200) -> pd.DataFrame:
     """
     Load experiment rows.
@@ -209,9 +210,7 @@ def load_experiment_metrics(db_path: str | Path, run_id: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-def load_metric_history(
-    db_path: str | Path, metric_name: str, limit: int = 500
-) -> pd.DataFrame:
+def load_metric_history(db_path: str | Path, metric_name: str, limit: int = 500) -> pd.DataFrame:
     """Load metric_value over time for a given metric_name across all runs."""
     db_path = str(db_path)
     if not os.path.isfile(db_path):
@@ -251,6 +250,7 @@ def load_distinct_metric_names(db_path: str | Path) -> List[str]:
 # ---------------------------------------------------------------------------
 # Helpers – tag parsing and filtered loading
 # ---------------------------------------------------------------------------
+
 
 def parse_tags(s: str) -> list[str]:
     """Split a comma-separated tag string into a cleaned list."""
@@ -292,9 +292,11 @@ def load_experiments_filtered(
 # Legacy compatibility – keep log_experiment / load_experiments(dir) working
 # ---------------------------------------------------------------------------
 
+
 def _git_hash() -> Optional[str]:
     try:
         import subprocess
+
         r = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             capture_output=True,

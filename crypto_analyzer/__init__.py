@@ -8,6 +8,7 @@ walk-forward backtesting with overfitting controls.
 
 Research-only; no trading or execution.
 """
+
 from __future__ import annotations
 
 __version__ = "0.3.0"

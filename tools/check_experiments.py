@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""
+r"""
 Print a quick summary of the experiment registry (SQLite).
 Usage: .\.venv\Scripts\python.exe tools/check_experiments.py [--db reports/experiments.db]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -13,8 +14,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from crypto_analyzer.experiments import (
-    load_experiments,
     load_distinct_metric_names,
+    load_experiments,
     load_metric_history,
 )
 
@@ -30,7 +31,7 @@ def main() -> int:
         host_part = dsn.split("@")[-1].split("/")[0] if "@" in dsn else dsn[:40]
         print(f"Backend: Postgres (host={host_part})")
     else:
-        print(f"Backend: SQLite")
+        print("Backend: SQLite")
     if not os.path.isfile(db) and not dsn:
         print(f"No experiment DB at {db}. Run reportv2 first.")
         return 0
@@ -43,7 +44,9 @@ def main() -> int:
     else:
         print(f"Last {len(exps)} experiments:")
         for _, row in exps.iterrows():
-            print(f"  {row['run_id']}  {row['ts_utc']}  git={row.get('git_commit', '?')}  spec={row.get('spec_version', '?')}")
+            print(
+                f"  {row['run_id']}  {row['ts_utc']}  git={row.get('git_commit', '?')}  spec={row.get('spec_version', '?')}"
+            )
         print()
 
     mnames = load_distinct_metric_names(db)

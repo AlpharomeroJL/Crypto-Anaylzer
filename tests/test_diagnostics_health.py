@@ -1,16 +1,15 @@
 """Diagnostics: health summary returns expected keys; functions degrade gracefully."""
+
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
-import pytest
 
 from crypto_analyzer.diagnostics import (
-    rolling_ic_stability,
-    regime_concentration,
     asset_concentration,
-    cost_sensitivity,
     build_health_summary,
+    cost_sensitivity,
+    regime_concentration,
+    rolling_ic_stability,
 )
 
 

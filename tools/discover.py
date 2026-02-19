@@ -99,9 +99,9 @@ def fmt_num(x: Any) -> str:
     except Exception:
         return str(x)
     if abs(xf) >= 1_000_000:
-        return f"{xf/1_000_000:.2f}M"
+        return f"{xf / 1_000_000:.2f}M"
     if abs(xf) >= 1_000:
-        return f"{xf/1_000:.2f}K"
+        return f"{xf / 1_000:.2f}K"
     if abs(xf) >= 1:
         return f"{xf:.6g}"
     return f"{xf:.8f}"
@@ -137,7 +137,7 @@ def main() -> int:
     filtered = [p for p in pairs if is_sol_usdc_solana(p)]
     if not filtered:
         print("No SOL/USDC pairs found on Solana from this search.")
-        print("Tip: try a broader query like: python dex_discover.py \"SOL USDC\"")
+        print('Tip: try a broader query like: python dex_discover.py "SOL USDC"')
         return 0
 
     ranked = sorted(filtered, key=score_pair, reverse=True)

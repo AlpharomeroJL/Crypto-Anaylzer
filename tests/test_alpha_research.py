@@ -1,6 +1,8 @@
 """Alpha research: IC sign, IC decay smoke, turnover bounds."""
+
 import sys
 from pathlib import Path
+
 _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
 
@@ -9,11 +11,11 @@ import pandas as pd
 
 from crypto_analyzer.alpha_research import (
     compute_forward_returns,
-    information_coefficient,
     ic_decay,
     ic_summary,
-    turnover_from_ranks,
+    information_coefficient,
     signal_momentum_24h,
+    turnover_from_ranks,
 )
 
 

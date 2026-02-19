@@ -1,4 +1,5 @@
 """Allow python -m crypto_analyzer to print help."""
+
 from __future__ import annotations
 
 from . import __version__

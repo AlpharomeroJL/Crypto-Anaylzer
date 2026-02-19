@@ -6,6 +6,7 @@ All ingestion writes go through this layer to ensure:
 2. Data quality gates reject invalid records before writing
 3. Consistent error handling and logging
 """
+
 from __future__ import annotations
 
 import logging
@@ -31,7 +32,9 @@ class DbWriter:
         if not quote.is_valid() and quote.status == ProviderStatus.DOWN:
             logger.warning(
                 "Rejected spot write for %s: status=%s price=%s",
-                quote.symbol, quote.status.value, quote.price_usd,
+                quote.symbol,
+                quote.status.value,
+                quote.price_usd,
             )
             return False
 
@@ -69,7 +72,9 @@ class DbWriter:
         if not snapshot.is_valid() and snapshot.status == ProviderStatus.DOWN:
             logger.warning(
                 "Rejected DEX write for %s:%s: status=%s",
-                snapshot.chain_id, snapshot.pair_address, snapshot.status.value,
+                snapshot.chain_id,
+                snapshot.pair_address,
+                snapshot.status.value,
             )
             return False
 
@@ -108,9 +113,7 @@ class DbWriter:
         )
         return True
 
-    def write_spot_prices_batch(
-        self, ts_utc: str, quotes: List[SpotQuote]
-    ) -> int:
+    def write_spot_prices_batch(self, ts_utc: str, quotes: List[SpotQuote]) -> int:
         """Write multiple spot prices. Returns count of successfully written."""
         written = 0
         for quote in quotes:

@@ -8,6 +8,7 @@ Usage:
   python clear_db_data.py          # Dry run: show row counts, do nothing.
   python clear_db_data.py --yes    # Permanently delete all table data (run with poller stopped).
 """
+
 import argparse
 import os
 import sqlite3

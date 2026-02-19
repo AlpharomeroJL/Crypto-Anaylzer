@@ -7,6 +7,7 @@ All providers implement one of two protocols:
 
 Data is returned via frozen dataclasses for immutability and type safety.
 """
+
 from __future__ import annotations
 
 import enum
@@ -17,6 +18,7 @@ from typing import Any, Dict, Optional, Protocol, runtime_checkable
 
 class ProviderStatus(enum.Enum):
     """Health status of a data provider."""
+
     OK = "OK"
     DEGRADED = "DEGRADED"
     DOWN = "DOWN"
@@ -25,6 +27,7 @@ class ProviderStatus(enum.Enum):
 @dataclass(frozen=True)
 class SpotQuote:
     """Immutable spot price quote from a CEX provider."""
+
     symbol: str
     price_usd: float
     provider_name: str
@@ -33,16 +36,13 @@ class SpotQuote:
     error_message: Optional[str] = None
 
     def is_valid(self) -> bool:
-        return (
-            self.price_usd is not None
-            and self.price_usd > 0
-            and self.status == ProviderStatus.OK
-        )
+        return self.price_usd is not None and self.price_usd > 0 and self.status == ProviderStatus.OK
 
 
 @dataclass(frozen=True)
 class DexSnapshot:
     """Immutable DEX pair snapshot from a DEX provider."""
+
     chain_id: str
     pair_address: str
     dex_id: Optional[str]
@@ -61,16 +61,13 @@ class DexSnapshot:
     raw_json: Optional[str] = None
 
     def is_valid(self) -> bool:
-        return (
-            self.dex_price_usd is not None
-            and self.dex_price_usd > 0
-            and self.status == ProviderStatus.OK
-        )
+        return self.dex_price_usd is not None and self.dex_price_usd > 0 and self.status == ProviderStatus.OK
 
 
 @dataclass
 class ProviderHealth:
     """Mutable health state for a single provider instance."""
+
     provider_name: str
     status: ProviderStatus = ProviderStatus.OK
     last_ok_at: Optional[str] = None
@@ -117,8 +114,6 @@ class DexSnapshotProvider(Protocol):
         """Fetch current snapshot for a DEX pair."""
         ...
 
-    def search_pairs(
-        self, query: str, chain_id: str = "solana"
-    ) -> list[Dict[str, Any]]:
+    def search_pairs(self, query: str, chain_id: str = "solana") -> list[Dict[str, Any]]:
         """Search for pairs matching a query string. Returns raw pair dicts."""
         ...

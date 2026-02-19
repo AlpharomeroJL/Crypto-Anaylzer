@@ -3,45 +3,51 @@
 Research report: universe, IC summary, IC decay, portfolio backtest, regime conditioning.
 Research-only; no execution. Requires >= 3 assets for cross-sectional analysis.
 """
+
 from __future__ import annotations
 
 import argparse
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from crypto_analyzer.config import db_path
-from crypto_analyzer.research_universe import get_research_assets
 from crypto_analyzer.alpha_research import (
+    compute_dispersion_series,
     compute_forward_returns,
-    information_coefficient,
-    ic_summary,
+    dispersion_zscore_series,
     ic_decay,
+    ic_summary,
+    information_coefficient,
     rank_signal_df,
-    turnover_from_ranks,
-    signal_momentum_24h,
-    signal_residual_momentum_24h,
     signal_beta_compression,
     signal_dispersion_conditioned,
-    compute_dispersion_series,
-    dispersion_zscore_series,
+    signal_momentum_24h,
+    signal_residual_momentum_24h,
+)
+from crypto_analyzer.artifacts import ensure_dir, snapshot_outputs, timestamped_filename
+from crypto_analyzer.config import db_path
+from crypto_analyzer.data import get_factor_returns
+from crypto_analyzer.governance import make_run_manifest, save_manifest
+from crypto_analyzer.integrity import (
+    assert_monotonic_time_index,
+    assert_no_negative_or_zero_prices,
+    bad_row_rate,
+    count_non_positive_prices,
+    validate_alignment,
 )
 from crypto_analyzer.portfolio import (
+    apply_costs_to_portfolio,
     long_short_from_ranks,
     portfolio_returns_from_weights,
     turnover_from_weights,
-    apply_costs_to_portfolio,
 )
-from crypto_analyzer.statistics import significance_summary, reality_check_simple
-from crypto_analyzer.data import get_factor_returns
-from crypto_analyzer.integrity import assert_monotonic_time_index, assert_no_negative_or_zero_prices, validate_alignment, count_non_positive_prices, bad_row_rate
-from crypto_analyzer.artifacts import ensure_dir, snapshot_outputs, timestamped_filename
-from crypto_analyzer.governance import make_run_manifest, save_manifest
+from crypto_analyzer.research_universe import get_research_assets
+from crypto_analyzer.statistics import reality_check_simple, significance_summary
 
 MIN_ASSETS = 3
 DEFAULT_TOP_K = 3
@@ -58,8 +64,11 @@ def _table(df: pd.DataFrame) -> str:
 
 def main() -> int:
     import sys
+
     if sys.prefix == sys.base_prefix:
-        print("Not running inside venv. Use .\\scripts\\run.ps1 report or .\\.venv\\Scripts\\python.exe ...", flush=True)
+        print(
+            "Not running inside venv. Use .\\scripts\\run.ps1 report or .\\.venv\\Scripts\\python.exe ...", flush=True
+        )
     ap = argparse.ArgumentParser(description="Research report: IC, decay, portfolio, regime")
     ap.add_argument("--freq", default="1h")
     ap.add_argument("--top-k", type=int, default=DEFAULT_TOP_K)
@@ -74,8 +83,19 @@ def main() -> int:
     ap.add_argument("--no-save-manifest", dest="save_manifest", action="store_false")
     ap.add_argument("--db", default=None)
     ap.add_argument("--save-charts", action="store_true")
-    ap.add_argument("--strict-integrity", dest="strict_integrity", action="store_true", help="Exit 4 if bad row rate exceeds threshold")
-    ap.add_argument("--strict-integrity-pct", dest="strict_integrity_pct", type=float, default=5.0, help="Max allowed bad row %% (default 5); used with --strict-integrity")
+    ap.add_argument(
+        "--strict-integrity",
+        dest="strict_integrity",
+        action="store_true",
+        help="Exit 4 if bad row rate exceeds threshold",
+    )
+    ap.add_argument(
+        "--strict-integrity-pct",
+        dest="strict_integrity_pct",
+        type=float,
+        default=5.0,
+        help="Max allowed bad row %% (default 5); used with --strict-integrity",
+    )
     args = ap.parse_args()
 
     db = args.db or (db_path() if callable(db_path) else db_path())
@@ -91,6 +111,7 @@ def main() -> int:
     # Integrity diagnostic: non-positive price counts per table/column
     try:
         from crypto_analyzer.config import price_column
+
         price_col = price_column() if callable(price_column) else "dex_price_usd"
     except Exception:
         price_col = "dex_price_usd"
@@ -119,7 +140,9 @@ def main() -> int:
     ]
 
     if n_assets < MIN_ASSETS:
-        lines.append(f"**Need >= {MIN_ASSETS} assets for cross-sectional research.** Current: {n_assets}. Add more DEX pairs or ensure spot series exist.")
+        lines.append(
+            f"**Need >= {MIN_ASSETS} assets for cross-sectional research.** Current: {n_assets}. Add more DEX pairs or ensure spot series exist."
+        )
         lines.append("")
         report_path = out_dir / timestamped_filename("research_report", "md", sep="_")
         with open(report_path, "w", encoding="utf-8") as f:
@@ -151,8 +174,14 @@ def main() -> int:
     sig_resid = signal_residual_momentum_24h(returns_df, args.freq)
     sig_beta = signal_beta_compression(returns_df, factor_ret) if factor_ret is not None else pd.DataFrame()
     disp_series = compute_dispersion_series(returns_df)
-    disp_z = dispersion_zscore_series(disp_series, DISPERSION_WINDOW) if len(disp_series) >= DISPERSION_WINDOW else pd.Series(dtype=float)
-    sig_disp = signal_dispersion_conditioned(sig_mom, disp_z) if not sig_mom.empty and not disp_z.empty else pd.DataFrame()
+    disp_z = (
+        dispersion_zscore_series(disp_series, DISPERSION_WINDOW)
+        if len(disp_series) >= DISPERSION_WINDOW
+        else pd.Series(dtype=float)
+    )
+    sig_disp = (
+        signal_dispersion_conditioned(sig_mom, disp_z) if not sig_mom.empty and not disp_z.empty else pd.DataFrame()
+    )
 
     signals_to_report = [
         ("momentum_24h", sig_mom),
@@ -191,7 +220,9 @@ def main() -> int:
 
     # 4) Portfolio backtest
     lines.append("## 4) Portfolio backtest (research-only)")
-    lines.append(f"Long/short: top {args.top_k} / bottom {args.bottom_k}. Fee: {args.fee_bps} bps, Slippage: {args.slippage_bps} bps.")
+    lines.append(
+        f"Long/short: top {args.top_k} / bottom {args.bottom_k}. Fee: {args.fee_bps} bps, Slippage: {args.slippage_bps} bps."
+    )
     lines.append("")
 
     for name, sig_df in signals_to_report:
@@ -219,8 +250,12 @@ def main() -> int:
         max_dd = float(dd.max()) if len(dd) else np.nan
         avg_turnover = float(turnover_ser.mean()) if turnover_ser.notna().any() else 0
         lines.append(f"### {name}")
-        lines.append(f"Gross total return: {gross_total:.4f}  |  Net total return: {net_total:.4f}  |  Cost drag %: {cost_drag:.2f}")
-        lines.append(f"Sharpe (net): {summ['sharpe_annual']:.4f}  |  95% CI: [{summ['sharpe_ci_95_lo']:.4f}, {summ['sharpe_ci_95_hi']:.4f}]")
+        lines.append(
+            f"Gross total return: {gross_total:.4f}  |  Net total return: {net_total:.4f}  |  Cost drag %: {cost_drag:.2f}"
+        )
+        lines.append(
+            f"Sharpe (net): {summ['sharpe_annual']:.4f}  |  95% CI: [{summ['sharpe_ci_95_lo']:.4f}, {summ['sharpe_ci_95_hi']:.4f}]"
+        )
         lines.append(f"Max drawdown: {max_dd:.4f}  |  Avg turnover: {avg_turnover:.4f}")
         lines.append("")
 
@@ -242,6 +277,7 @@ def main() -> int:
                 r = port_ret.loc[mask]
                 if len(r) >= 2 and r.std() and r.std() != 0:
                     from crypto_analyzer.features import bars_per_year
+
                     sh = r.mean() / r.std() * np.sqrt(bars_per_year(args.freq))
                     rows.append({"regime": label, "n_bars": len(r), "mean_ret": r.mean(), "sharpe_approx": sh})
             if rows:
@@ -281,8 +317,10 @@ def main() -> int:
     if args.save_charts and n_assets >= MIN_ASSETS and not sig_mom.empty:
         try:
             import matplotlib
+
             matplotlib.use("Agg")
             import matplotlib.pyplot as plt
+
             fwd1 = compute_forward_returns(returns_df, 1)
             ic_ts = information_coefficient(sig_mom, fwd1, method="spearman")
             if not ic_ts.empty and ic_ts.notna().any():
@@ -320,11 +358,19 @@ def main() -> int:
                 "n_assets": n_assets,
                 "bars_per_asset_summary": int(returns_df.shape[0]) if not returns_df.empty else 0,
             }
-            metrics_summary = {k: (v.get("mean_ic", np.nan) if isinstance(v, dict) else v) for k, v in (ic_results or {}).items()}
+            metrics_summary = {
+                k: (v.get("mean_ic", np.nan) if isinstance(v, dict) else v) for k, v in (ic_results or {}).items()
+            }
             outputs_with_hashes = snapshot_outputs(output_paths)
             manifest = make_run_manifest(
                 name=getattr(args, "run_name", None) or "research_report",
-                args={"freq": args.freq, "top_k": args.top_k, "bottom_k": args.bottom_k, "fee_bps": args.fee_bps, "slippage_bps": args.slippage_bps},
+                args={
+                    "freq": args.freq,
+                    "top_k": args.top_k,
+                    "bottom_k": args.bottom_k,
+                    "fee_bps": args.fee_bps,
+                    "slippage_bps": args.slippage_bps,
+                },
                 data_window=data_window,
                 outputs=outputs_with_hashes,
                 metrics=metrics_summary,

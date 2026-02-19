@@ -2,6 +2,7 @@
 Dataset versioning: fingerprint and deterministic dataset_id for reproducibility.
 Research-only; no DB writes.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -11,7 +12,6 @@ import sqlite3
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
-
 
 KNOWN_TABLES = [
     "sol_monitor_snapshots",
@@ -69,9 +69,7 @@ def _table_summary(conn: sqlite3.Connection, table: str) -> Optional[TableSummar
     max_ts: Optional[str] = None
     if ts_col is not None:
         try:
-            cur = conn.execute(
-                f"SELECT MIN([{ts_col}]), MAX([{ts_col}]) FROM [{table}]"
-            )
+            cur = conn.execute(f"SELECT MIN([{ts_col}]), MAX([{ts_col}]) FROM [{table}]")
             row = cur.fetchone()
             if row:
                 min_ts = row[0]
@@ -91,9 +89,7 @@ def _integrity_summary(conn: sqlite3.Connection) -> Dict[str, Any]:
     result: Dict[str, Any] = {}
     for table, col in checks:
         try:
-            cur = conn.execute(
-                f"SELECT COUNT(*) FROM [{table}] WHERE [{col}] IS NOT NULL AND [{col}] <= 0"
-            )
+            cur = conn.execute(f"SELECT COUNT(*) FROM [{table}] WHERE [{col}] IS NOT NULL AND [{col}] <= 0")
             bad = cur.fetchone()[0]
             cur2 = conn.execute(f"SELECT COUNT(*) FROM [{table}]")
             total = cur2.fetchone()[0]

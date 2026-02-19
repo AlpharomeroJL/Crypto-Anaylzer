@@ -5,6 +5,7 @@ Materialize resampled OHLCV-style bars into SQLite tables bars_{freq}.
 - 1D: from bars_1h (open=first, high=max, low=min, close=last; liquidity/vol=last).
 Idempotent: UPSERT so safe to run daily.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -114,16 +115,20 @@ def _materialize_1d_from_1h(path: str, window: int) -> int:
     rows_to_insert = []
     for (chain_id, pair_address), g in bars_1h.groupby(["chain_id", "pair_address"]):
         g = g.sort_values("ts_utc").set_index("ts_utc")
-        resampled = g.resample("1D").agg(
-            open=("open", "first"),
-            high=("high", "max"),
-            low=("low", "min"),
-            close=("close", "last"),
-            liquidity_usd=("liquidity_usd", "last"),
-            vol_h24=("vol_h24", "last"),
-            base_symbol=("base_symbol", "last"),
-            quote_symbol=("quote_symbol", "last"),
-        ).dropna(subset=["close"])
+        resampled = (
+            g.resample("1D")
+            .agg(
+                open=("open", "first"),
+                high=("high", "max"),
+                low=("low", "min"),
+                close=("close", "last"),
+                liquidity_usd=("liquidity_usd", "last"),
+                vol_h24=("vol_h24", "last"),
+                base_symbol=("base_symbol", "last"),
+                quote_symbol=("quote_symbol", "last"),
+            )
+            .dropna(subset=["close"])
+        )
         if len(resampled) < 2:
             continue
         if (resampled[["open", "high", "low", "close"]] <= 0).any().any():

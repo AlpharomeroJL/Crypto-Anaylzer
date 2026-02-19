@@ -5,6 +5,7 @@ and last-known-good caching.
 These wrap provider calls to handle transient failures gracefully without
 letting bad data propagate to the database.
 """
+
 from __future__ import annotations
 
 import logging
@@ -20,6 +21,7 @@ T = TypeVar("T")
 @dataclass
 class RetryConfig:
     """Configuration for retry with exponential backoff."""
+
     max_retries: int = 3
     base_delay_s: float = 0.5
     max_delay_s: float = 10.0
@@ -43,6 +45,7 @@ class CircuitBreaker:
     - HALF_OPEN -> CLOSED: If the probe succeeds.
     - HALF_OPEN -> OPEN: If the probe fails.
     """
+
     provider_name: str
     failure_threshold: int = 3
     cooldown_seconds: float = 60.0
@@ -80,7 +83,9 @@ class CircuitBreaker:
             self._state = "OPEN"
             logger.warning(
                 "Circuit breaker OPEN for %s after %d failures: %s",
-                self.provider_name, self._failure_count, error[:200],
+                self.provider_name,
+                self._failure_count,
+                error[:200],
             )
 
     def reset(self) -> None:
@@ -131,10 +136,7 @@ def resilient_call(
     cfg = retry_config or RetryConfig()
 
     if circuit_breaker and circuit_breaker.is_open:
-        raise RuntimeError(
-            f"Circuit breaker OPEN for {circuit_breaker.provider_name}: "
-            f"{circuit_breaker.last_error}"
-        )
+        raise RuntimeError(f"Circuit breaker OPEN for {circuit_breaker.provider_name}: {circuit_breaker.last_error}")
 
     last_err: Optional[Exception] = None
     for attempt in range(1, cfg.max_retries + 1):
@@ -146,9 +148,7 @@ def resilient_call(
         except Exception as exc:
             last_err = exc
             err_msg = f"{type(exc).__name__}: {exc}"
-            logger.debug(
-                "Attempt %d/%d failed: %s", attempt, cfg.max_retries, err_msg
-            )
+            logger.debug("Attempt %d/%d failed: %s", attempt, cfg.max_retries, err_msg)
             if attempt < cfg.max_retries:
                 delay = min(
                     cfg.base_delay_s * (cfg.backoff_factor ** (attempt - 1)),

@@ -2,11 +2,11 @@
 Load config from config.yaml with optional env overrides.
 Single source of truth for DB path, table, price column, filters, and defaults.
 """
+
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Optional
 
 # Defaults if no YAML or env
 _DEFAULTS = {

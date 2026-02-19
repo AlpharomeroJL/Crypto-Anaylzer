@@ -2,6 +2,7 @@
 Cross-sectional signal combiner: aggregate factor scores into composite signal.
 Research-only; no execution.
 """
+
 from __future__ import annotations
 
 from typing import Dict, Optional
@@ -59,12 +60,7 @@ def _combine_rank_sum(df: pd.DataFrame) -> pd.DataFrame:
     ranked = df.copy()
     ranked["rank"] = ranked.groupby(["ts_utc", "factor_name"])["value"].rank(method="average")
 
-    agg = (
-        ranked.groupby(["ts_utc", "pair_key"])["rank"]
-        .sum()
-        .reset_index()
-        .rename(columns={"rank": "signal"})
-    )
+    agg = ranked.groupby(["ts_utc", "pair_key"])["rank"].sum().reset_index().rename(columns={"rank": "signal"})
     return _filter_min_assets(agg)
 
 

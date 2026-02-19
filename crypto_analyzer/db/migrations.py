@@ -4,6 +4,7 @@ Idempotent database migrations.
 All schema changes use CREATE TABLE IF NOT EXISTS and guarded ALTER TABLE
 so they can be re-run safely at any time.
 """
+
 from __future__ import annotations
 
 import logging
@@ -12,9 +13,7 @@ import sqlite3
 logger = logging.getLogger(__name__)
 
 
-def _safe_add_column(
-    conn: sqlite3.Connection, table: str, column: str, col_type: str
-) -> None:
+def _safe_add_column(conn: sqlite3.Connection, table: str, column: str, col_type: str) -> None:
     """Add a column if it doesn't already exist."""
     try:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type};")
@@ -52,10 +51,7 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         );
         """
     )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_sol_monitor_ts "
-        "ON sol_monitor_snapshots(ts_utc);"
-    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_sol_monitor_ts ON sol_monitor_snapshots(ts_utc);")
 
     conn.execute(
         """
@@ -68,10 +64,7 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         );
         """
     )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_spot_ts_symbol "
-        "ON spot_price_snapshots(ts_utc, symbol);"
-    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_spot_ts_symbol ON spot_price_snapshots(ts_utc, symbol);")
 
     # Provenance fields on spot_price_snapshots
     _safe_add_column(conn, "spot_price_snapshots", "provider_name", "TEXT")
@@ -101,10 +94,7 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         );
         """
     )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_universe_allowlist_ts "
-        "ON universe_allowlist(ts_utc);"
-    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_universe_allowlist_ts ON universe_allowlist(ts_utc);")
     _safe_add_column(conn, "universe_allowlist", "reason_added", "TEXT")
 
     conn.execute(

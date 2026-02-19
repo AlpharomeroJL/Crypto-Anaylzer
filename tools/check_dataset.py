@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Print dataset_id and fingerprint summary. No external deps beyond existing."""
+
 from __future__ import annotations
 
 import os
@@ -20,6 +21,7 @@ def main() -> int:
     # Resolve DB path
     try:
         from crypto_analyzer.config import db_path
+
         p = db_path() if callable(db_path) else db_path
         db = str(p() if callable(p) else p)
     except Exception:

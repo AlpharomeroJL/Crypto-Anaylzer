@@ -2,6 +2,7 @@
 System health check: run critical commands and generate a structured report.
 Inspection only; does not modify project logic.
 """
+
 from __future__ import annotations
 
 import os
@@ -25,7 +26,10 @@ ALL_COUNT_TABLES = BAR_TABLES + OTHER_TABLES
 CRITICAL_COMMANDS = [
     ("cli/materialize.py", [sys.executable, "cli/materialize.py"]),
     ("cli/analyze.py --freq 1h --window 24", [sys.executable, "cli/analyze.py", "--freq", "1h", "--window", "24"]),
-    ("cli/scan.py --mode momentum --freq 1h --top 5", [sys.executable, "cli/scan.py", "--mode", "momentum", "--freq", "1h", "--top", "5"]),
+    (
+        "cli/scan.py --mode momentum --freq 1h --top 5",
+        [sys.executable, "cli/scan.py", "--mode", "momentum", "--freq", "1h", "--top", "5"],
+    ),
     ("cli/report_daily.py", [sys.executable, "cli/report_daily.py"]),
     ("cli/research_report.py --freq 1h", [sys.executable, "cli/research_report.py", "--freq", "1h"]),
     ("cli/research_report_v2.py --freq 1h", [sys.executable, "cli/research_report_v2.py", "--freq", "1h"]),
@@ -39,6 +43,7 @@ def get_db_path() -> str:
     """Resolve DB path from config; relative paths against repo root."""
     try:
         from crypto_analyzer.config import db_path as _db_path
+
         raw = _db_path() if callable(_db_path) else _db_path
     except Exception:
         raw = "dex_data.sqlite"
@@ -63,7 +68,9 @@ def collect_environment() -> dict:
             cwd=REPO_ROOT,
             timeout=10,
         )
-        out["pip_version"] = (r.stdout or r.stderr or "").strip() if (r.returncode == 0 or r.stdout or r.stderr) else "unknown"
+        out["pip_version"] = (
+            (r.stdout or r.stderr or "").strip() if (r.returncode == 0 or r.stdout or r.stderr) else "unknown"
+        )
     except Exception:
         out["pip_version"] = "unknown"
     return out
@@ -84,9 +91,7 @@ def check_database(db_path: str) -> tuple[dict, list[str]]:
     info["exists"] = True
     try:
         with sqlite3.connect(db_path) as con:
-            cur = con.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-            )
+            cur = con.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
             info["tables"] = [row[0] for row in cur.fetchall()]
             for table in ALL_COUNT_TABLES:
                 if table not in info["tables"]:
@@ -192,14 +197,18 @@ def build_report(
     if db_info.get("error"):
         lines.append(f"- Error: {db_info['error']}")
 
-    lines.extend([
-        "",
-        "## CLI Results",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            "## CLI Results",
+            "",
+        ]
+    )
     for r in cli_results:
         lines.append(f"### {r['name']}")
-        lines.append(f"- Status: **{r['status']}** | return code: {r.get('return_code', 'N/A')} | duration: {r.get('duration_sec')}s")
+        lines.append(
+            f"- Status: **{r['status']}** | return code: {r.get('return_code', 'N/A')} | duration: {r.get('duration_sec')}s"
+        )
         if r.get("error"):
             lines.append(f"- Error: {r['error']}")
         if r.get("stderr"):
@@ -209,13 +218,15 @@ def build_report(
             lines.append(f"  {ln}")
         lines.append("")
 
-    lines.extend([
-        "## Streamlit import",
-        f"- Status: **{streamlit_status}**",
-        "",
-        "## Test Results",
-        "",
-    ])
+    lines.extend(
+        [
+            "## Streamlit import",
+            f"- Status: **{streamlit_status}**",
+            "",
+            "## Test Results",
+            "",
+        ]
+    )
     pytest_result = next((x for x in cli_results if "pytest" in x["name"]), None)
     if pytest_result:
         lines.append(f"- Status: **{pytest_result['status']}** (return code {pytest_result.get('return_code')})")
@@ -225,10 +236,12 @@ def build_report(
         lines.append("- (pytest not run or not in CLI results)")
     lines.append("")
 
-    lines.extend([
-        "## Warnings",
-        "",
-    ])
+    lines.extend(
+        [
+            "## Warnings",
+            "",
+        ]
+    )
     if all_warnings:
         for w in all_warnings:
             lines.append(f"- {w}")
@@ -272,8 +285,14 @@ def main() -> int:
         pass
     report_path = reports_dir / f"system_health_{timestamp_utc}.md"
     report_content = build_report(
-        env, db_info, db_warnings, cli_results,
-        streamlit_status, streamlit_error, all_warnings, timestamp_utc,
+        env,
+        db_info,
+        db_warnings,
+        cli_results,
+        streamlit_status,
+        streamlit_error,
+        all_warnings,
+        timestamp_utc,
     )
     try:
         with open(report_path, "w", encoding="utf-8") as f:
@@ -283,9 +302,10 @@ def main() -> int:
 
     # 6) Console summary
     cli_pass = all(r["status"] == "PASS" for r in cli_results)
-    db_ok = db_info.get("exists") and not db_info.get("error")
-    bars_ok = not any(
-        db_info.get("row_counts", {}).get(t) == 0 for t in BAR_TABLES
+    db_info.get("exists") and not db_info.get("error")
+    not any(
+        db_info.get("row_counts", {}).get(t) == 0
+        for t in BAR_TABLES
         if db_info.get("row_counts", {}).get(t) is not None
     )
     streamlit_ok = streamlit_status == "PASS"

@@ -1,18 +1,20 @@
 """Tests for cross-sectional factor construction (cs_factors)."""
+
 from __future__ import annotations
 
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import pandas as pd
 
 from crypto_analyzer.cs_factors import (
+    build_cs_factor_frame,
+    cs_zscore,
     safe_log,
     winsorize_series,
-    cs_zscore,
-    build_cs_factor_frame,
 )
 
 N_ASSETS = 5
@@ -32,15 +34,17 @@ def _make_bars() -> pd.DataFrame:
         log_ret = np.random.randn(N_TIMESTAMPS) * 0.02
         close = 100 * np.exp(np.cumsum(log_ret))
         for t_idx in range(N_TIMESTAMPS):
-            rows.append({
-                "ts_utc": ts[t_idx],
-                "chain_id": cid,
-                "pair_address": addr,
-                "close": close[t_idx],
-                "log_return": log_ret[t_idx],
-                "liquidity_usd": liquidity[t_idx],
-                "vol_h24": vol[t_idx],
-            })
+            rows.append(
+                {
+                    "ts_utc": ts[t_idx],
+                    "chain_id": cid,
+                    "pair_address": addr,
+                    "close": close[t_idx],
+                    "log_return": log_ret[t_idx],
+                    "liquidity_usd": liquidity[t_idx],
+                    "vol_h24": vol[t_idx],
+                }
+            )
     return pd.DataFrame(rows)
 
 
@@ -136,11 +140,7 @@ def test_build_cs_factor_frame_momentum_alignment():
     snapshot = mom[mom["ts_utc"] == last_ts].set_index("pair_key")["value"]
     df = bars.copy()
     df["pair_key"] = df["chain_id"].astype(str) + ":" + df["pair_address"].astype(str)
-    manual = (
-        df[df["ts_utc"] <= last_ts]
-        .groupby("pair_key")["log_return"]
-        .apply(lambda x: x.tail(lookback).sum())
-    )
+    manual = df[df["ts_utc"] <= last_ts].groupby("pair_key")["log_return"].apply(lambda x: x.tail(lookback).sum())
     common = snapshot.index.intersection(manual.index)
     corr = np.corrcoef(snapshot.loc[common].values, manual.loc[common].values)[0, 1]
     assert corr > 0.9

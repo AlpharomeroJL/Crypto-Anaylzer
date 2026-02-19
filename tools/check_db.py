@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Quick sanity check for dex_data.sqlite: tables and spot_price_snapshots row count."""
+
 import sqlite3
 
 DB_PATH = "dex_data.sqlite"

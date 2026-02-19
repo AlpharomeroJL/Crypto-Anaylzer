@@ -4,57 +4,72 @@ Milestone 4 research report: orthogonalized signals, advanced portfolio,
 deflated Sharpe, PBO proxy, regime-conditioned metrics, lead/lag.
 Research-only. Does not replace research_report.py.
 """
+
 from __future__ import annotations
 
 import argparse
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from crypto_analyzer.config import db_path
-from crypto_analyzer.research_universe import get_research_assets
-from crypto_analyzer.data import get_factor_returns
 from crypto_analyzer.alpha_research import (
+    compute_dispersion_series,
     compute_forward_returns,
-    information_coefficient,
-    ic_summary,
+    dispersion_zscore_series,
     rank_signal_df,
     signal_momentum_24h,
-    signal_residual_momentum_24h,
-    compute_dispersion_series,
-    dispersion_zscore_series,
 )
-from crypto_analyzer.signals_xs import (
-    zscore_cross_section,
-    orthogonalize_signals,
-    build_exposure_panel,
-    value_vs_beta,
-    clean_momentum,
+from crypto_analyzer.artifacts import (
+    compute_file_sha256,
+    ensure_dir,
+    snapshot_outputs,
+    timestamped_filename,
+    write_json,
 )
+from crypto_analyzer.config import db_path
+from crypto_analyzer.data import get_factor_returns
+from crypto_analyzer.dataset import compute_dataset_fingerprint, dataset_id_from_fingerprint, fingerprint_to_json
+from crypto_analyzer.diagnostics import build_health_summary, rolling_ic_stability
+from crypto_analyzer.evaluation import conditional_metrics, lead_lag_analysis
+from crypto_analyzer.experiments import log_experiment, record_experiment_run
+from crypto_analyzer.factors import build_factor_matrix, rolling_multifactor_ols
+from crypto_analyzer.governance import (
+    get_env_fingerprint,
+    get_git_commit,
+    make_run_manifest,
+    now_utc_iso,
+    save_manifest,
+    stable_run_id,
+)
+from crypto_analyzer.integrity import (
+    assert_monotonic_time_index,
+    assert_no_negative_or_zero_prices,
+    bad_row_rate,
+    count_non_positive_prices,
+)
+from crypto_analyzer.multiple_testing import deflated_sharpe_ratio, pbo_proxy_walkforward, reality_check_warning
 from crypto_analyzer.portfolio import (
+    apply_costs_to_portfolio,
     long_short_from_ranks,
     portfolio_returns_from_weights,
     turnover_from_weights,
-    apply_costs_to_portfolio,
 )
 from crypto_analyzer.portfolio_advanced import optimize_long_short_portfolio
+from crypto_analyzer.research_universe import get_research_assets
 from crypto_analyzer.risk_model import estimate_covariance
-from crypto_analyzer.evaluation import conditional_metrics, stability_report, lead_lag_analysis
-from crypto_analyzer.multiple_testing import deflated_sharpe_ratio, reality_check_warning, pbo_proxy_walkforward
-from crypto_analyzer.experiments import log_experiment, load_experiments, record_experiment_run
-from crypto_analyzer.factors import build_factor_matrix, rolling_multifactor_ols
-from crypto_analyzer.integrity import assert_monotonic_time_index, assert_no_negative_or_zero_prices, validate_alignment, count_non_positive_prices, bad_row_rate
-from crypto_analyzer.artifacts import ensure_dir, snapshot_outputs, write_json, timestamped_filename, compute_file_sha256
-from crypto_analyzer.governance import make_run_manifest, save_manifest, get_git_commit, get_env_fingerprint, now_utc_iso, stable_run_id
-from crypto_analyzer.diagnostics import build_health_summary, rolling_ic_stability
+from crypto_analyzer.signals_xs import (
+    build_exposure_panel,
+    clean_momentum,
+    orthogonalize_signals,
+    value_vs_beta,
+)
 from crypto_analyzer.statistics import safe_nanmean
-from crypto_analyzer.dataset import compute_dataset_fingerprint, dataset_id_from_fingerprint, fingerprint_to_json
 
 MIN_ASSETS = 3
 DEFAULT_TOP_K = 3
@@ -70,9 +85,14 @@ def _table(df: pd.DataFrame) -> str:
 
 def main() -> int:
     import sys
+
     if sys.prefix == sys.base_prefix:
-        print("Not running inside venv. Use .\\scripts\\run.ps1 reportv2 or .\\.venv\\Scripts\\python.exe ...", flush=True)
-    ap = argparse.ArgumentParser(description="M4 research report: signals hygiene, advanced portfolio, deflated Sharpe, PBO, regime")
+        print(
+            "Not running inside venv. Use .\\scripts\\run.ps1 reportv2 or .\\.venv\\Scripts\\python.exe ...", flush=True
+        )
+    ap = argparse.ArgumentParser(
+        description="M4 research report: signals hygiene, advanced portfolio, deflated Sharpe, PBO, regime"
+    )
     ap.add_argument("--freq", default="1h")
     ap.add_argument("--signals", default="clean_momentum,value_vs_beta", help="Comma-separated signal names")
     ap.add_argument("--portfolio", choices=["simple", "advanced", "qp_ls"], default="advanced")
@@ -89,8 +109,19 @@ def main() -> int:
     ap.add_argument("--fee-bps", type=float, default=30)
     ap.add_argument("--slippage-bps", type=float, default=10)
     ap.add_argument("--db", default=None)
-    ap.add_argument("--strict-integrity", dest="strict_integrity", action="store_true", help="Exit 4 if bad row rate exceeds threshold")
-    ap.add_argument("--strict-integrity-pct", dest="strict_integrity_pct", type=float, default=5.0, help="Max allowed bad row %% (default 5); used with --strict-integrity")
+    ap.add_argument(
+        "--strict-integrity",
+        dest="strict_integrity",
+        action="store_true",
+        help="Exit 4 if bad row rate exceeds threshold",
+    )
+    ap.add_argument(
+        "--strict-integrity-pct",
+        dest="strict_integrity_pct",
+        type=float,
+        default=5.0,
+        help="Max allowed bad row %% (default 5); used with --strict-integrity",
+    )
     ap.add_argument("--hypothesis", default=None, help="Hypothesis text for experiment registry")
     ap.add_argument("--tags", default=None, help="Comma-separated tags for experiment registry")
     ap.add_argument("--dataset-id", default=None, help="Explicit dataset ID (overrides computed)")
@@ -105,6 +136,7 @@ def main() -> int:
     # Integrity diagnostic: non-positive price counts per table/column (informative; loaders filter at read time)
     try:
         from crypto_analyzer.config import price_column
+
         price_col = price_column() if callable(price_column) else "dex_price_usd"
     except Exception:
         price_col = "dex_price_usd"
@@ -140,7 +172,7 @@ def main() -> int:
         f"| freq | {args.freq} |",
         f"| fee_bps | {getattr(args, 'fee_bps', 30)} |",
         f"| slippage_bps | {getattr(args, 'slippage_bps', 10)} |",
-        f"| cost model | fee + slippage (bps) |",
+        "| cost model | fee + slippage (bps) |",
         f"| cov_method | {args.cov_method} |",
         f"| portfolio | {args.portfolio} |",
         f"| deflated_sharpe n_trials | {getattr(args, 'n_trials', 50)} |",
@@ -212,7 +244,6 @@ def main() -> int:
         if sig_df is None or sig_df.empty:
             continue
         ranks = rank_signal_df(sig_df)
-        from crypto_analyzer.portfolio import long_short_from_ranks
         weights_df = long_short_from_ranks(ranks, args.top_k, args.bottom_k, gross_leverage=1.0)
         if args.portfolio == "advanced" and n_assets >= MIN_ASSETS:
             last_t = ranks.index[-1] if len(ranks) else None
@@ -224,12 +255,18 @@ def main() -> int:
                 if factor_ret is not None:
                     exp = build_exposure_panel(returns_df, meta_df, factor_returns=factor_ret, freq=args.freq)
                     if "beta_btc_72" in exp and not exp["beta_btc_72"].empty:
-                        b = exp["beta_btc_72"].loc[last_t] if last_t in exp["beta_btc_72"].index else exp["beta_btc_72"].iloc[-1]
+                        b = (
+                            exp["beta_btc_72"].loc[last_t]
+                            if last_t in exp["beta_btc_72"].index
+                            else exp["beta_btc_72"].iloc[-1]
+                        )
                         constraints["betas"] = b
                 w, diag = optimize_long_short_portfolio(er, cov, constraints)
                 if not w.empty:
                     lines.append(f"### {name} (advanced diagnostics)")
-                    lines.append(f"Beta: {diag.get('achieved_beta', np.nan):.4f}  Gross: {diag.get('gross_leverage', 0):.4f}  Net: {diag.get('net_exposure', 0):.4f}  N_assets: {diag.get('n_assets', 0)}")
+                    lines.append(
+                        f"Beta: {diag.get('achieved_beta', np.nan):.4f}  Gross: {diag.get('gross_leverage', 0):.4f}  Net: {diag.get('net_exposure', 0):.4f}  N_assets: {diag.get('n_assets', 0)}"
+                    )
                     lines.append("")
 
         if weights_df.empty:
@@ -242,7 +279,15 @@ def main() -> int:
         port_ret_net = port_ret_net.dropna()
         portfolio_pnls[name] = port_ret_net
         if len(port_ret_net) >= 2:
-            walk_forward_rows.append({"strategy": name, "train_sharpe": np.nan, "test_sharpe": float(port_ret_net.mean() / port_ret_net.std()) if port_ret_net.std() and port_ret_net.std() > 0 else np.nan})
+            walk_forward_rows.append(
+                {
+                    "strategy": name,
+                    "train_sharpe": np.nan,
+                    "test_sharpe": float(port_ret_net.mean() / port_ret_net.std())
+                    if port_ret_net.std() and port_ret_net.std() > 0
+                    else np.nan,
+                }
+            )
 
     # ---- Deflated Sharpe ----
     lines.append("## 4) Overfitting defenses")
@@ -251,7 +296,9 @@ def main() -> int:
         if len(pnl) < 10:
             continue
         dsr = deflated_sharpe_ratio(pnl, args.freq, args.n_trials, skew_kurtosis_optional=True)
-        lines.append(f"- **{name}**: raw_sr={dsr.get('raw_sr', np.nan):.4f}  deflated_sr={dsr.get('deflated_sr', np.nan):.4f}")
+        lines.append(
+            f"- **{name}**: raw_sr={dsr.get('raw_sr', np.nan):.4f}  deflated_sr={dsr.get('deflated_sr', np.nan):.4f}"
+        )
     wf_df = pd.DataFrame(walk_forward_rows) if walk_forward_rows else pd.DataFrame()
     pbo = pbo_proxy_walkforward(wf_df)
     lines.append(f"PBO proxy: {pbo.get('pbo_proxy', np.nan)}  ({pbo.get('explanation', '')})")
@@ -261,7 +308,11 @@ def main() -> int:
     # ---- Regime-conditioned ----
     lines.append("## 5) Regime-conditioned performance")
     disp_series = compute_dispersion_series(returns_df) if not returns_df.empty else pd.Series(dtype=float)
-    disp_z = dispersion_zscore_series(disp_series, DISPERSION_WINDOW) if len(disp_series) >= DISPERSION_WINDOW else pd.Series(dtype=float)
+    disp_z = (
+        dispersion_zscore_series(disp_series, DISPERSION_WINDOW)
+        if len(disp_series) >= DISPERSION_WINDOW
+        else pd.Series(dtype=float)
+    )
     regime_series = pd.Series(index=returns_df.index, dtype=str)
     if not disp_z.empty:
         regime_series = disp_z.apply(lambda z: "high_disp" if z > 1 else ("low_disp" if z < -1 else "mid"))
@@ -285,8 +336,10 @@ def main() -> int:
             if args.save_charts and out_dir:
                 try:
                     import matplotlib
+
                     matplotlib.use("Agg")
                     import matplotlib.pyplot as plt
+
                     fig, ax = plt.subplots(1, 1)
                     ll.plot(ax=ax)
                     ax.set_xlabel("Lag (bars)")
@@ -318,6 +371,7 @@ def main() -> int:
             sig_first = next(iter(signals_dict.values()))
             if sig_first is not None and not sig_first.empty:
                 from crypto_analyzer.alpha_research import information_coefficient
+
                 fwd1 = compute_forward_returns(returns_df, 1)
                 ic_ts = information_coefficient(sig_first, fwd1, method="spearman")
                 signal_stability = rolling_ic_stability(ic_ts, window=min(24, max(2, len(ic_ts) // 2)))
@@ -342,9 +396,7 @@ def main() -> int:
     try:
         factor_matrix = build_factor_matrix(returns_df)
         if not factor_matrix.empty:
-            betas_dict, r2_mf, resid_mf = rolling_multifactor_ols(
-                returns_df, factor_matrix, window=72, min_obs=24
-            )
+            betas_dict, r2_mf, resid_mf = rolling_multifactor_ols(returns_df, factor_matrix, window=72, min_obs=24)
             if "BTC_spot" in betas_dict and not betas_dict["BTC_spot"].empty:
                 mf_metrics["beta_btc_mean"] = float(betas_dict["BTC_spot"].mean(skipna=True).mean())
             if "ETH_spot" in betas_dict and not betas_dict["ETH_spot"].empty:
@@ -358,8 +410,15 @@ def main() -> int:
     try:
         log_experiment(
             run_name=f"research_v2_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}",
-            config_dict={"freq": args.freq, "signals": args.signals, "portfolio": args.portfolio, "cov_method": args.cov_method},
-            metrics_dict={k: float(v.mean() / v.std()) if v.std() and v.std() > 0 else np.nan for k, v in portfolio_pnls.items()},
+            config_dict={
+                "freq": args.freq,
+                "signals": args.signals,
+                "portfolio": args.portfolio,
+                "cov_method": args.cov_method,
+            },
+            metrics_dict={
+                k: float(v.mean() / v.std()) if v.std() and v.std() > 0 else np.nan for k, v in portfolio_pnls.items()
+            },
             artifacts_paths=[str(report_path)],
             out_dir=str(out_dir / "experiments"),
         )
@@ -375,11 +434,18 @@ def main() -> int:
                 "n_assets": n_assets,
                 "bars_per_asset_summary": int(returns_df.shape[0]) if not returns_df.empty else 0,
             }
-            metrics_summary = {k: float(v.mean() / v.std()) if v.std() and v.std() > 0 else np.nan for k, v in portfolio_pnls.items()}
+            metrics_summary = {
+                k: float(v.mean() / v.std()) if v.std() and v.std() > 0 else np.nan for k, v in portfolio_pnls.items()
+            }
             outputs_with_hashes = snapshot_outputs(output_paths)
             manifest = make_run_manifest(
                 name=getattr(args, "run_name", None) or "research_report_v2",
-                args={"freq": args.freq, "signals": args.signals, "portfolio": args.portfolio, "cov_method": args.cov_method},
+                args={
+                    "freq": args.freq,
+                    "signals": args.signals,
+                    "portfolio": args.portfolio,
+                    "cov_method": args.cov_method,
+                },
                 data_window=data_window,
                 outputs=outputs_with_hashes,
                 metrics=metrics_summary,
@@ -391,10 +457,14 @@ def main() -> int:
 
     # ---- SQLite experiment registry ----
     try:
-        from crypto_analyzer.spec import RESEARCH_SPEC_VERSION
-        import hashlib as _hl, json as _js
+        import hashlib as _hl
+        import json as _js
 
-        pnl_sharpes = {k: float(v.mean() / v.std()) if v.std() and v.std() > 0 else float("nan") for k, v in portfolio_pnls.items()}
+        from crypto_analyzer.spec import RESEARCH_SPEC_VERSION
+
+        pnl_sharpes = {
+            k: float(v.mean() / v.std()) if v.std() and v.std() > 0 else float("nan") for k, v in portfolio_pnls.items()
+        }
         canonical_metrics: dict = {
             "universe_size": float(n_assets),
         }
@@ -410,7 +480,9 @@ def main() -> int:
                 eq = (1 + pnl).cumprod()
                 dd = (eq.cummax() - eq) / eq.cummax()
                 canonical_metrics[f"max_drawdown_{k}"] = float(dd.max()) if not dd.empty else float("nan")
-            canonical_metrics["max_drawdown"] = float(np.nanmax([canonical_metrics.get(f"max_drawdown_{k}", float("nan")) for k in portfolio_pnls]))
+            canonical_metrics["max_drawdown"] = float(
+                np.nanmax([canonical_metrics.get(f"max_drawdown_{k}", float("nan")) for k in portfolio_pnls])
+            )
 
         if signals_dict:
             fwd1 = compute_forward_returns(returns_df, 1)
@@ -438,7 +510,10 @@ def main() -> int:
 
         canonical_metrics.update(mf_metrics)
 
-        config_blob = _js.dumps({"freq": args.freq, "signals": args.signals, "portfolio": args.portfolio, "cov_method": args.cov_method}, sort_keys=True)
+        config_blob = _js.dumps(
+            {"freq": args.freq, "signals": args.signals, "portfolio": args.portfolio, "cov_method": args.cov_method},
+            sort_keys=True,
+        )
         config_hash = _hl.sha256(config_blob.encode()).hexdigest()[:16]
         env_fp = str(get_env_fingerprint())
 
@@ -448,8 +523,14 @@ def main() -> int:
 
         experiment_db_path = os.environ.get("EXPERIMENT_DB_PATH", str(out_dir / "experiments.db"))
         from crypto_analyzer.experiments import parse_tags
+
         tags_list = parse_tags(args.tags) if getattr(args, "tags", None) else []
-        params_dict = {"freq": args.freq, "signals": args.signals, "portfolio": args.portfolio, "cov_method": args.cov_method}
+        params_dict = {
+            "freq": args.freq,
+            "signals": args.signals,
+            "portfolio": args.portfolio,
+            "cov_method": args.cov_method,
+        }
         if "sharpe" not in canonical_metrics:
             params_dict["sharpe_unavailable_reason"] = "insufficient_assets_or_no_valid_pnl"
         # Dataset versioning
@@ -474,10 +555,7 @@ def main() -> int:
             "params_json": params_dict,
         }
 
-        artifacts_for_db = [
-            {"artifact_path": p, "sha256": compute_file_sha256(p)}
-            for p in output_paths
-        ]
+        artifacts_for_db = [{"artifact_path": p, "sha256": compute_file_sha256(p)} for p in output_paths]
 
         record_experiment_run(
             db_path=experiment_db_path,

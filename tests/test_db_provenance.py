@@ -7,6 +7,7 @@ Verifies that:
 - Provider health is persisted and loadable
 - Migrations are idempotent
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -47,10 +48,7 @@ class TestDbWriter:
         writer.commit()
         assert result is True
 
-        cur = db_conn.execute(
-            "SELECT symbol, spot_price_usd, provider_name, fetch_status "
-            "FROM spot_price_snapshots"
-        )
+        cur = db_conn.execute("SELECT symbol, spot_price_usd, provider_name, fetch_status FROM spot_price_snapshots")
         row = cur.fetchone()
         assert row is not None
         assert row[0] == "BTC"
@@ -72,9 +70,7 @@ class TestDbWriter:
         writer.commit()
         assert result is True
 
-        cur = db_conn.execute(
-            "SELECT fetch_status FROM spot_price_snapshots WHERE symbol = 'ETH'"
-        )
+        cur = db_conn.execute("SELECT fetch_status FROM spot_price_snapshots WHERE symbol = 'ETH'")
         row = cur.fetchone()
         assert row[0] == "DEGRADED"
 
@@ -110,16 +106,11 @@ class TestDbWriter:
             fetched_at_utc="2026-01-01T00:00:00+00:00",
         )
 
-        result = writer.write_dex_snapshot(
-            "2026-01-01T00:00:00+00:00", snapshot, 150.0, "coinbase"
-        )
+        result = writer.write_dex_snapshot("2026-01-01T00:00:00+00:00", snapshot, 150.0, "coinbase")
         writer.commit()
         assert result is True
 
-        cur = db_conn.execute(
-            "SELECT chain_id, pair_address, provider_name, fetch_status "
-            "FROM sol_monitor_snapshots"
-        )
+        cur = db_conn.execute("SELECT chain_id, pair_address, provider_name, fetch_status FROM sol_monitor_snapshots")
         row = cur.fetchone()
         assert row[0] == "solana"
         assert row[1] == "abc123"
@@ -195,9 +186,7 @@ class TestMigrations:
         run_migrations(db_conn)
         run_migrations(db_conn)
 
-        cur = db_conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        )
+        cur = db_conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = {row[0] for row in cur.fetchall()}
         assert "sol_monitor_snapshots" in tables
         assert "spot_price_snapshots" in tables

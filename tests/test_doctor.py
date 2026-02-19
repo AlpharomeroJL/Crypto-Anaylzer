@@ -1,6 +1,7 @@
 """
 Tests for crypto_analyzer.doctor: exit codes, DB checks, minimal schema.
 """
+
 from __future__ import annotations
 
 import os
@@ -8,8 +9,6 @@ import sqlite3
 import sys
 import tempfile
 from pathlib import Path
-
-import pytest
 
 # Ensure package on path when running tests from repo root
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))

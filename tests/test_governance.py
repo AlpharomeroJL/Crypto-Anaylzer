@@ -1,22 +1,21 @@
 """Governance: manifest creation, save/load, file hashing."""
+
 from __future__ import annotations
 
 import json
 import tempfile
 from pathlib import Path
 
-import pytest
-
-from crypto_analyzer.governance import (
-    get_git_commit,
-    get_env_fingerprint,
-    stable_run_id,
-    now_utc_iso,
-    make_run_manifest,
-    save_manifest,
-    load_manifests,
-)
 from crypto_analyzer.artifacts import compute_file_sha256, snapshot_outputs
+from crypto_analyzer.governance import (
+    get_env_fingerprint,
+    get_git_commit,
+    load_manifests,
+    make_run_manifest,
+    now_utc_iso,
+    save_manifest,
+    stable_run_id,
+)
 
 
 def test_get_git_commit_returns_string():
@@ -71,6 +70,7 @@ def test_save_manifest_writes_file():
 
 def test_load_manifests_returns_dataframe():
     import pandas as pd
+
     with tempfile.TemporaryDirectory() as tmp:
         m = make_run_manifest("t", {}, {}, {}, {}, "")
         save_manifest(tmp, m)

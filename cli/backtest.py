@@ -4,22 +4,23 @@ Backtest on bars_{freq}. Strategies: trend (EMA20 > EMA50 + vol filter), volatil
 Fees (bps), slippage proxy from liquidity, fixed-fraction position sizing.
 Output: equity curve, drawdown plot, trades CSV, summary table.
 """
+
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
-import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from crypto_analyzer.config import db_path, default_freq, default_window, min_bars as config_min_bars
+from crypto_analyzer.config import db_path, default_freq
+from crypto_analyzer.config import min_bars as config_min_bars
 from crypto_analyzer.data import load_bars
 from crypto_analyzer.features import bars_per_year, ema, log_returns, rolling_volatility
-
 
 # Default fees and slippage (documented in README)
 DEFAULT_FEE_BPS = 30
@@ -59,7 +60,7 @@ def run_trend_strategy(
         e20 = ema(close, ema_fast)
         e50 = ema(close, ema_slow)
         vol = rolling_volatility(log_returns(close), vol_window)
-        long_signal = (e20 > e50)
+        long_signal = e20 > e50
         if vol_max is not None:
             long_signal = long_signal & (vol < vol_max)
         # Position: 1 when long, 0 when flat
@@ -68,8 +69,12 @@ def run_trend_strategy(
         # Strategy log return (position * log return) minus fee/slippage on turnover
         prev_pos = position.shift(1).fillna(0)
         turnover = (position - prev_pos).abs()
-        fee = (turnover * (fee_bps / 10_000))
-        liq = g["liquidity_usd"] if "liquidity_usd" in g.columns else pd.Series(index=g.index, data=LIQUIDITY_SLIPPAGE_SCALE)
+        fee = turnover * (fee_bps / 10_000)
+        liq = (
+            g["liquidity_usd"]
+            if "liquidity_usd" in g.columns
+            else pd.Series(index=g.index, data=LIQUIDITY_SLIPPAGE_SCALE)
+        )
         slip_bps = slippage_bps_fixed if slippage_bps_fixed is not None else liq.map(lambda x: slippage_bps(x))
         slip = turnover * (slip_bps / 10_000)
         strategy_ret = position.shift(1).fillna(0) * ret - fee - slip
@@ -84,9 +89,27 @@ def run_trend_strategy(
         exits = g.loc[pos_diff < 0, ["ts_utc", "chain_id", "pair_address", "close"]].copy()
         exits["side"] = "exit"
         for _, row in entries.iterrows():
-            all_trades.append({"ts_utc": row["ts_utc"], "chain_id": cid, "pair_address": addr, "side": "long", "price": row["close"], "position_pct": position_pct})
+            all_trades.append(
+                {
+                    "ts_utc": row["ts_utc"],
+                    "chain_id": cid,
+                    "pair_address": addr,
+                    "side": "long",
+                    "price": row["close"],
+                    "position_pct": position_pct,
+                }
+            )
         for _, row in exits.iterrows():
-            all_trades.append({"ts_utc": row["ts_utc"], "chain_id": cid, "pair_address": addr, "side": "exit", "price": row["close"], "position_pct": 0})
+            all_trades.append(
+                {
+                    "ts_utc": row["ts_utc"],
+                    "chain_id": cid,
+                    "pair_address": addr,
+                    "side": "exit",
+                    "price": row["close"],
+                    "position_pct": 0,
+                }
+            )
 
     if not all_equity:
         return pd.DataFrame(), pd.Series(dtype=float)
@@ -146,7 +169,11 @@ def run_vol_breakout_strategy(
         prev_pos = position.shift(1).fillna(0)
         turnover = (position - prev_pos).abs()
         fee = turnover * (fee_bps / 10_000)
-        liq = g["liquidity_usd"] if "liquidity_usd" in g.columns else pd.Series(index=g.index, data=LIQUIDITY_SLIPPAGE_SCALE)
+        liq = (
+            g["liquidity_usd"]
+            if "liquidity_usd" in g.columns
+            else pd.Series(index=g.index, data=LIQUIDITY_SLIPPAGE_SCALE)
+        )
         slip_bps = slippage_bps_fixed if slippage_bps_fixed is not None else liq.map(lambda x: slippage_bps(x))
         slip = turnover * (slip_bps / 10_000)
         strategy_ret = prev_pos * lr - fee - slip
@@ -155,9 +182,27 @@ def run_vol_breakout_strategy(
         all_equity.append(equity)
         pos_diff = position.diff().fillna(0)
         for i in g.index[pos_diff > 0]:
-            all_trades.append({"ts_utc": g.loc[i, "ts_utc"], "chain_id": cid, "pair_address": addr, "side": "long", "price": g.loc[i, "close"], "position_pct": position_pct})
+            all_trades.append(
+                {
+                    "ts_utc": g.loc[i, "ts_utc"],
+                    "chain_id": cid,
+                    "pair_address": addr,
+                    "side": "long",
+                    "price": g.loc[i, "close"],
+                    "position_pct": position_pct,
+                }
+            )
         for i in g.index[pos_diff < 0]:
-            all_trades.append({"ts_utc": g.loc[i, "ts_utc"], "chain_id": cid, "pair_address": addr, "side": "exit", "price": g.loc[i, "close"], "position_pct": 0})
+            all_trades.append(
+                {
+                    "ts_utc": g.loc[i, "ts_utc"],
+                    "chain_id": cid,
+                    "pair_address": addr,
+                    "side": "exit",
+                    "price": g.loc[i, "close"],
+                    "position_pct": 0,
+                }
+            )
 
     if not all_equity:
         return pd.DataFrame(), pd.Series(dtype=float)
@@ -192,7 +237,11 @@ def metrics(equity: pd.Series, freq: str) -> dict:
     vol = ret.std(ddof=1) * np.sqrt(bars_yr) if ret.std(ddof=1) else np.nan
     sharpe = (ret.mean() / ret.std(ddof=1)) * np.sqrt(bars_yr) if ret.std(ddof=1) and ret.std(ddof=1) != 0 else np.nan
     downside = ret[ret < 0]
-    sortino = (ret.mean() / downside.std(ddof=1)) * np.sqrt(bars_yr) if len(downside) > 1 and downside.std(ddof=1) != 0 else np.nan
+    sortino = (
+        (ret.mean() / downside.std(ddof=1)) * np.sqrt(bars_yr)
+        if len(downside) > 1 and downside.std(ddof=1) != 0
+        else np.nan
+    )
     cum = (1 + ret).cumprod()
     dd = cum.cummax() - cum
     max_dd = float(dd.max()) if len(dd) else np.nan
@@ -222,7 +271,9 @@ def main() -> int:
     ap.add_argument("--db", default=None)
     ap.add_argument("--freq", default=None)
     ap.add_argument("--fee-bps", type=float, default=DEFAULT_FEE_BPS)
-    ap.add_argument("--slippage-bps", type=float, default=None, help="Fixed slippage bps per trade (default: liquidity-based proxy)")
+    ap.add_argument(
+        "--slippage-bps", type=float, default=None, help="Fixed slippage bps per trade (default: liquidity-based proxy)"
+    )
     ap.add_argument("--position-pct", type=float, default=0.25)
     ap.add_argument("--csv", default=None, metavar="FILE", help="Trades CSV path")
     ap.add_argument("--plot", default=None, metavar="DIR", help="Save equity and drawdown plots to DIR")
@@ -289,6 +340,7 @@ def main() -> int:
 
     if args.plot:
         import matplotlib.pyplot as plt
+
         Path(args.plot).mkdir(parents=True, exist_ok=True)
         fig, ax = plt.subplots(1, 1)
         equity.plot(ax=ax)

@@ -3,6 +3,7 @@ Factor and residual returns: BTC_spot + ETH_spot factors, OLS betas, residual re
 Rolling multi-factor OLS regression for systematic factor exposure decomposition.
 Research-only; no execution.
 """
+
 from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
@@ -29,9 +30,7 @@ def build_factor_matrix(
     return X
 
 
-def fit_ols(
-    X: np.ndarray, y: np.ndarray, add_const: bool = True
-) -> Tuple[np.ndarray, float, float]:
+def fit_ols(X: np.ndarray, y: np.ndarray, add_const: bool = True) -> Tuple[np.ndarray, float, float]:
     """
     Fit OLS via numpy.linalg.lstsq. No sklearn dependency.
     Returns (betas, intercept, r_squared).
@@ -209,6 +208,7 @@ def compute_residual_lookback_return(resid_log_ret: pd.Series, lookback_bars: in
 def compute_residual_vol(resid_log_ret: pd.Series, window_bars: int, freq: str) -> float:
     """Annualized volatility of residual log returns (rolling window)."""
     from .features import periods_per_year
+
     r = resid_log_ret.dropna()
     if len(r) < window_bars:
         return np.nan

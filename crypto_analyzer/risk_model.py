@@ -1,15 +1,17 @@
 """
 Covariance estimation and shrinkage for portfolio risk. Research-only.
 """
+
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
 try:
     from sklearn.covariance import LedoitWolf
+
     HAS_SKLEARN_LW = True
 except ImportError:
     HAS_SKLEARN_LW = False

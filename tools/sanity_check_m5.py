@@ -3,6 +3,7 @@
 Milestone 5 sanity check: imports, spec version, mock manifest write/read.
 Run after pulling to verify M5 modules and governance path.
 """
+
 from __future__ import annotations
 
 import os
@@ -18,10 +19,7 @@ def main() -> int:
     # 1) Import all new modules
     try:
         import crypto_analyzer.governance as governance
-        import crypto_analyzer.artifacts as artifacts
         import crypto_analyzer.spec as spec
-        import crypto_analyzer.diagnostics as diagnostics
-        import crypto_analyzer.integrity as integrity
     except Exception as e:
         print(f"FAIL: import M5 modules: {e}")
         return 1
@@ -51,6 +49,7 @@ def main() -> int:
     # 4) Optionally run a small research_report_v2 path (if DB missing, skip or import-only)
     try:
         from crypto_analyzer.research_universe import get_research_assets
+
         db = os.environ.get("CRYPTO_DB_PATH", "dex_data.sqlite")
         if not os.path.isabs(db):
             db = str(REPO_ROOT / db)

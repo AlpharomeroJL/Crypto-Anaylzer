@@ -2,6 +2,7 @@
 Data integrity checks: monotonic time, no zero/negative prices, no forward-looking alignment.
 Research-only. Used before computing forward returns; print warnings, do not crash unless blatant.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -23,9 +24,7 @@ def count_non_positive_prices(
         with sqlite3.connect(db_path) as con:
             for table, column in checks:
                 try:
-                    cur = con.execute(
-                        f"SELECT COUNT(*) FROM [{table}] WHERE [{column}] IS NULL OR [{column}] <= 0"
-                    )
+                    cur = con.execute(f"SELECT COUNT(*) FROM [{table}] WHERE [{column}] IS NULL OR [{column}] <= 0")
                     n = cur.fetchone()[0]
                     if n > 0:
                         result.append((table, column, n))
@@ -49,9 +48,7 @@ def bad_row_rate(
         with sqlite3.connect(db_path) as con:
             for table, column in checks:
                 try:
-                    cur = con.execute(
-                        f"SELECT COUNT(*) FROM [{table}] WHERE [{column}] IS NULL OR [{column}] <= 0"
-                    )
+                    cur = con.execute(f"SELECT COUNT(*) FROM [{table}] WHERE [{column}] IS NULL OR [{column}] <= 0")
                     bad = cur.fetchone()[0]
                     cur = con.execute(f"SELECT COUNT(*) FROM [{table}]")
                     total = cur.fetchone()[0]
@@ -87,7 +84,11 @@ def assert_no_negative_or_zero_prices(prices: Union[pd.Series, pd.DataFrame]) ->
         if "close" in prices.columns:
             p = prices["close"]
         else:
-            p = prices.select_dtypes(include=["number"]).iloc[:, 0] if not prices.select_dtypes(include=["number"]).empty else pd.Series(dtype=float)
+            p = (
+                prices.select_dtypes(include=["number"]).iloc[:, 0]
+                if not prices.select_dtypes(include=["number"]).empty
+                else pd.Series(dtype=float)
+            )
     else:
         p = prices
     if p is None or (hasattr(p, "empty") and p.empty):

@@ -1,7 +1,7 @@
 """Smoke tests for the research API endpoints."""
+
 from __future__ import annotations
 
-import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -22,10 +22,7 @@ from crypto_analyzer.api import app  # noqa: E402
 def _temp_dbs(tmp_path, monkeypatch):
     db_file = tmp_path / "test.sqlite"
     with sqlite3.connect(str(db_file)) as conn:
-        conn.execute(
-            "CREATE TABLE universe_allowlist "
-            "(pair_address TEXT, base_symbol TEXT, quote_symbol TEXT)"
-        )
+        conn.execute("CREATE TABLE universe_allowlist (pair_address TEXT, base_symbol TEXT, quote_symbol TEXT)")
         conn.execute(
             "INSERT INTO universe_allowlist VALUES (?, ?, ?)",
             ("0xabc", "SOL", "USDC"),

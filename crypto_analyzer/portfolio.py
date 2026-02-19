@@ -2,9 +2,8 @@
 Portfolio construction: vol targeting, risk parity, beta neutral, long/short.
 Research-only; no execution or order routing.
 """
-from __future__ import annotations
 
-from typing import Optional, Tuple
+from __future__ import annotations
 
 import numpy as np
 import pandas as pd
@@ -37,7 +36,7 @@ def vol_target_weights(
         return pd.Series(index=returns_window_df.columns, data=0.0)
     w = inv_vol / inv_vol.sum()
     # Scale to target vol: port_vol = sqrt(w' V w) with V diagonal = vol_i^2 -> port_vol = sqrt(sum w_i^2 vol_i^2)
-    port_vol = np.sqrt((w ** 2 * vol ** 2).sum())
+    port_vol = np.sqrt((w**2 * vol**2).sum())
     if port_vol > 0:
         scale = target_annual_vol / (port_vol * np.sqrt(periods_yr)) if periods_yr else 1.0
         w = w * scale
@@ -85,7 +84,7 @@ def beta_neutralize_weights(
     w = weights.reindex(common).fillna(0)
     b = betas.reindex(common).fillna(0)
     port_beta = (w * b).sum()
-    beta_sq_sum = (b ** 2).sum()
+    beta_sq_sum = (b**2).sum()
     if beta_sq_sum == 0:
         return weights
     c = (port_beta - target_beta) / beta_sq_sum

@@ -2,6 +2,7 @@
 Pluggable experiment store: SQLite (default) or Postgres backend.
 Research-only; no execution.
 """
+
 from __future__ import annotations
 
 import abc
@@ -12,7 +13,6 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from crypto_analyzer.experiments import (
-    ensure_experiment_tables,
     load_distinct_metric_names,
     load_experiment_metrics,
     load_experiments_filtered,
@@ -22,9 +22,7 @@ from crypto_analyzer.experiments import (
 
 
 def _default_sqlite_path() -> str:
-    return os.environ.get(
-        "EXPERIMENT_DB_PATH", str(Path("reports") / "experiments.db")
-    )
+    return os.environ.get("EXPERIMENT_DB_PATH", str(Path("reports") / "experiments.db"))
 
 
 class ExperimentStore(abc.ABC):
@@ -68,9 +66,7 @@ class SQLiteExperimentStore(ExperimentStore):
         metrics_dict: Optional[Dict[str, float]] = None,
         artifacts_list: Optional[List[Dict[str, str]]] = None,
     ) -> str:
-        return record_experiment_run(
-            self.db_path, experiment_row, metrics_dict, artifacts_list
-        )
+        return record_experiment_run(self.db_path, experiment_row, metrics_dict, artifacts_list)
 
     def load_runs(
         self,
@@ -78,9 +74,7 @@ class SQLiteExperimentStore(ExperimentStore):
         tag: Optional[str] = None,
         search: Optional[str] = None,
     ) -> pd.DataFrame:
-        return load_experiments_filtered(
-            self.db_path, tag=tag, search=search, limit=limit
-        )
+        return load_experiments_filtered(self.db_path, tag=tag, search=search, limit=limit)
 
     def load_metrics(self, run_id: str) -> pd.DataFrame:
         return load_experiment_metrics(self.db_path, run_id)
@@ -103,6 +97,7 @@ class PostgresExperimentStore(ExperimentStore):
     def _connect(dsn: str):
         try:
             import sqlalchemy
+
             engine = sqlalchemy.create_engine(dsn)
             with engine.connect() as conn:
                 conn.execute(sqlalchemy.text("SELECT 1"))
@@ -112,6 +107,7 @@ class PostgresExperimentStore(ExperimentStore):
 
         try:
             import psycopg2
+
             conn = psycopg2.connect(dsn)
             conn.close()
             return dsn
@@ -125,17 +121,17 @@ class PostgresExperimentStore(ExperimentStore):
 
     def _read_sql(self, query: str, params=None) -> pd.DataFrame:
         import sqlalchemy
+
         if isinstance(self._engine, str):
             import psycopg2
+
             conn = psycopg2.connect(self._engine)
             try:
                 return pd.read_sql_query(query, conn, params=params)
             finally:
                 conn.close()
         with self._engine.connect() as conn:
-            return pd.read_sql_query(
-                sqlalchemy.text(query), conn, params=params or {}
-            )
+            return pd.read_sql_query(sqlalchemy.text(query), conn, params=params or {})
 
     def record_run(
         self,
@@ -170,7 +166,5 @@ def get_experiment_store() -> ExperimentStore:
         try:
             return PostgresExperimentStore(dsn)
         except Exception:
-            print(
-                "[experiment_store] Falling back to SQLite after Postgres failure."
-            )
+            print("[experiment_store] Falling back to SQLite after Postgres failure.")
     return SQLiteExperimentStore()

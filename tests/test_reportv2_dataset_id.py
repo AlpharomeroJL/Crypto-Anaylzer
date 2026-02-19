@@ -1,4 +1,5 @@
 """Tests that reportv2 experiment recording includes dataset_id."""
+
 import sqlite3
 import sys
 from pathlib import Path
@@ -6,8 +7,8 @@ from pathlib import Path
 _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
 
-from crypto_analyzer.experiments import record_experiment_run, load_experiments
 from crypto_analyzer.dataset import get_dataset_id
+from crypto_analyzer.experiments import load_experiments, record_experiment_run
 
 
 def test_experiment_row_includes_dataset_id(tmp_path):

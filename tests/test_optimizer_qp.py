@@ -1,4 +1,5 @@
 """Tests for constrained QP portfolio optimizer."""
+
 from __future__ import annotations
 
 import sys

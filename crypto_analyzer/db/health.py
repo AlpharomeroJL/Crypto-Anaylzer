@@ -4,6 +4,7 @@ Provider health persistence in SQLite.
 Tracks last success time, failure counts, and error messages per provider
 so the dashboard can display real-time provider status.
 """
+
 from __future__ import annotations
 
 import logging
@@ -60,19 +61,20 @@ class ProviderHealthStore:
         """Load all provider health records."""
         try:
             cur = self._conn.execute(
-                "SELECT provider_name, status, last_ok_at, fail_count, "
-                "disabled_until, last_error FROM provider_health"
+                "SELECT provider_name, status, last_ok_at, fail_count, disabled_until, last_error FROM provider_health"
             )
             results = []
             for row in cur.fetchall():
-                results.append(ProviderHealth(
-                    provider_name=row[0],
-                    status=ProviderStatus(row[1]) if row[1] else ProviderStatus.OK,
-                    last_ok_at=row[2],
-                    fail_count=row[3] or 0,
-                    last_error=row[5],
-                    disabled_until=row[4],
-                ))
+                results.append(
+                    ProviderHealth(
+                        provider_name=row[0],
+                        status=ProviderStatus(row[1]) if row[1] else ProviderStatus.OK,
+                        last_ok_at=row[2],
+                        fail_count=row[3] or 0,
+                        last_error=row[5],
+                        disabled_until=row[4],
+                    )
+                )
             return results
         except sqlite3.OperationalError:
             return []

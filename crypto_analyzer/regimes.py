@@ -2,6 +2,7 @@
 Market regime: combine dispersion_z, vol_regime, beta_state into a single label.
 Research-only; no execution.
 """
+
 from __future__ import annotations
 
 from typing import Optional

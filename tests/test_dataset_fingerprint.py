@@ -1,4 +1,5 @@
 """Tests for crypto_analyzer.dataset fingerprinting."""
+
 import sqlite3
 import sys
 from pathlib import Path
@@ -9,8 +10,6 @@ _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
 
 from crypto_analyzer.dataset import (
-    DatasetFingerprint,
-    TableSummary,
     compute_dataset_fingerprint,
     dataset_id_from_fingerprint,
     get_dataset_id,

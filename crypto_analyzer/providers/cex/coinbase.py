@@ -4,6 +4,7 @@ Coinbase spot price provider.
 Uses the public Coinbase API (no authentication required):
   GET https://api.coinbase.com/v2/prices/{symbol}-USD/spot
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

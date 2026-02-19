@@ -1,13 +1,15 @@
 """Statistics: block bootstrap outputs."""
-import numpy as np
-import pandas as pd
+
 import sys
 from pathlib import Path
+
+import numpy as np
+import pandas as pd
 
 _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
 
-from crypto_analyzer.statistics import block_bootstrap_pnl, sharpe_ci, significance_summary, safe_nanmean
+from crypto_analyzer.statistics import block_bootstrap_pnl, safe_nanmean, sharpe_ci, significance_summary
 
 
 def test_block_bootstrap_outputs():
@@ -22,12 +24,15 @@ def test_block_bootstrap_outputs():
     summ = significance_summary(pnl, "1h", block_size=10, n_bootstrap=50)
     assert "sharpe_annual" in summ
     assert "sharpe_ci_95_lo" in summ and "sharpe_ci_95_hi" in summ
-    assert summ["sharpe_ci_95_lo"] <= summ["sharpe_ci_95_hi"] or (np.isnan(summ["sharpe_ci_95_lo"]) and np.isnan(summ["sharpe_ci_95_hi"]))
+    assert summ["sharpe_ci_95_lo"] <= summ["sharpe_ci_95_hi"] or (
+        np.isnan(summ["sharpe_ci_95_lo"]) and np.isnan(summ["sharpe_ci_95_hi"])
+    )
 
 
 def test_safe_nanmean_no_warning():
     """safe_nanmean returns None for empty/all-NaN without RuntimeWarning."""
     import warnings
+
     with warnings.catch_warnings():
         warnings.simplefilter("error", RuntimeWarning)
         assert safe_nanmean([]) is None

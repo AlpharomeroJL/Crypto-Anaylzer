@@ -1,7 +1,7 @@
 """Tests for the pluggable ExperimentStore abstraction (SQLite + factory)."""
+
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -10,7 +10,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from crypto_analyzer.experiment_store import (
-    ExperimentStore,
     PostgresExperimentStore,
     SQLiteExperimentStore,
     get_experiment_store,
@@ -47,7 +46,7 @@ class TestSQLiteStoreBasic:
 
     def test_sqlite_store_metric_history(self, store):
         for i in range(3):
-            row = {"run_id": f"h{i}", "ts_utc": f"2025-09-0{i+1}T00:00:00+00:00"}
+            row = {"run_id": f"h{i}", "ts_utc": f"2025-09-0{i + 1}T00:00:00+00:00"}
             store.record_run(row, metrics_dict={"alpha": float(i)})
 
         hist = store.load_metric_history("alpha", limit=100)

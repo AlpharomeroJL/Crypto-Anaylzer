@@ -2,6 +2,7 @@
 """
 Walk-forward backtest CLI. Converts train_days/test_days/step_days to bars and runs OOS folds.
 """
+
 from __future__ import annotations
 
 import sys
@@ -10,9 +11,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import argparse
-import numpy as np
 
-from crypto_analyzer.config import db_path, default_freq, min_bars as config_min_bars
+from crypto_analyzer.config import db_path, default_freq
+from crypto_analyzer.config import min_bars as config_min_bars
 from crypto_analyzer.data import load_bars
 from crypto_analyzer.walkforward import bars_per_day, run_walkforward_backtest
 
@@ -27,7 +28,9 @@ def main() -> int:
     ap.add_argument("--expanding", action="store_true", help="Expanding train window")
     ap.add_argument("--fee-bps", type=float, default=30)
     ap.add_argument("--slippage-bps", type=float, default=10)
-    ap.add_argument("--max-pos-liq-pct", type=float, default=None, help="Capacity: max position as pct of liquidity (optional)")
+    ap.add_argument(
+        "--max-pos-liq-pct", type=float, default=None, help="Capacity: max position as pct of liquidity (optional)"
+    )
     ap.add_argument("--plot", default=None, metavar="DIR", help="Save equity/drawdown plots to DIR")
     ap.add_argument("--csv", default=None, metavar="FILE", help="Save fold metrics CSV")
     ap.add_argument("--db", default=None)
@@ -57,7 +60,9 @@ def main() -> int:
         params["max_pos_liq_pct"] = args.max_pos_liq_pct
 
     stitched, fold_df, fold_metrics = run_walkforward_backtest(
-        bars, freq, args.strategy,
+        bars,
+        freq,
+        args.strategy,
         train_bars=train_bars,
         test_bars=test_bars,
         step_bars=step_bars,
@@ -86,8 +91,10 @@ def main() -> int:
     if args.plot and stitched is not None and not stitched.empty:
         try:
             import matplotlib
+
             matplotlib.use("Agg")
             import matplotlib.pyplot as plt
+
             args.plot = Path(args.plot)
             args.plot.mkdir(parents=True, exist_ok=True)
             fig, ax = plt.subplots(1, 1)

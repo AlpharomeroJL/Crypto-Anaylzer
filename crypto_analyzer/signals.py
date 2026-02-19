@@ -1,6 +1,7 @@
 """
 Signals journal: log research signals (no trading). SQLite table signals_log.
 """
+
 from __future__ import annotations
 
 import json
@@ -81,45 +82,53 @@ def detect_signals(
 
     if beta_btc_24 is not None and beta_btc_72 is not None and not (np.isnan(beta_btc_24) or np.isnan(beta_btc_72)):
         if beta_btc_24 < beta_btc_72 - beta_compress_threshold:
-            rows.append({
-                "ts_utc": ts,
-                "signal": "beta_compression_trigger",
-                "label": label,
-                "value": float(beta_btc_24),
-                "threshold": float(beta_btc_72 - beta_compress_threshold),
-                "meta_json": {"beta_btc_24": beta_btc_24, "beta_btc_72": beta_btc_72},
-            })
+            rows.append(
+                {
+                    "ts_utc": ts,
+                    "signal": "beta_compression_trigger",
+                    "label": label,
+                    "value": float(beta_btc_24),
+                    "threshold": float(beta_btc_72 - beta_compress_threshold),
+                    "meta_json": {"beta_btc_24": beta_btc_24, "beta_btc_72": beta_btc_72},
+                }
+            )
 
     if dispersion_z is not None and not np.isnan(dispersion_z):
         if dispersion_z > dispersion_z_high:
-            rows.append({
-                "ts_utc": ts,
-                "signal": "dispersion_extreme",
-                "label": label,
-                "value": float(dispersion_z),
-                "threshold": dispersion_z_high,
-                "meta_json": {"side": "high"},
-            })
+            rows.append(
+                {
+                    "ts_utc": ts,
+                    "signal": "dispersion_extreme",
+                    "label": label,
+                    "value": float(dispersion_z),
+                    "threshold": dispersion_z_high,
+                    "meta_json": {"side": "high"},
+                }
+            )
         elif dispersion_z < dispersion_z_low:
-            rows.append({
-                "ts_utc": ts,
-                "signal": "dispersion_extreme",
-                "label": label,
-                "value": float(dispersion_z),
-                "threshold": dispersion_z_low,
-                "meta_json": {"side": "low"},
-            })
+            rows.append(
+                {
+                    "ts_utc": ts,
+                    "signal": "dispersion_extreme",
+                    "label": label,
+                    "value": float(dispersion_z),
+                    "threshold": dispersion_z_low,
+                    "meta_json": {"side": "low"},
+                }
+            )
 
     if residual_return_24h is not None and not np.isnan(residual_return_24h):
         if residual_return_24h > residual_momentum_threshold:
-            rows.append({
-                "ts_utc": ts,
-                "signal": "residual_momentum",
-                "label": label,
-                "value": float(residual_return_24h),
-                "threshold": residual_momentum_threshold,
-                "meta_json": {},
-            })
+            rows.append(
+                {
+                    "ts_utc": ts,
+                    "signal": "residual_momentum",
+                    "label": label,
+                    "value": float(residual_return_24h),
+                    "threshold": residual_momentum_threshold,
+                    "meta_json": {},
+                }
+            )
 
     return rows
 

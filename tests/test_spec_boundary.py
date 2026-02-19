@@ -1,4 +1,5 @@
 """Spec: RESEARCH_SPEC_VERSION, spec_summary, validate_research_only_boundary (no false positive on repo)."""
+
 from __future__ import annotations
 
 import tempfile
