@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sqlite3
 import sys
@@ -20,6 +21,18 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
+
+# Provider architecture imports
+_here = Path(__file__).resolve().parent
+sys.path.insert(0, str(_here.parent))
+
+from crypto_analyzer.providers.defaults import create_spot_chain, create_dex_chain, create_default_registry
+from crypto_analyzer.providers.base import ProviderStatus
+from crypto_analyzer.db.migrations import run_migrations
+from crypto_analyzer.db.writer import DbWriter
+from crypto_analyzer.db.health import ProviderHealthStore
+
+logger = logging.getLogger(__name__)
 
 # When --log-file is set, all output is also appended here (for Windows service).
 _log_file: Optional[Any] = None
@@ -1084,6 +1097,14 @@ def main() -> int:
 
     conn = sqlite3.connect(DB_PATH)
     ensure_db(conn)
+    run_migrations(conn)
+
+    # Initialize provider chains
+    registry = create_default_registry()
+    spot_chain = create_spot_chain(registry)
+    dex_chain = create_dex_chain(registry)
+    db_writer = DbWriter(conn)
+    health_store = ProviderHealthStore(conn)
 
     # Build dex_pairs list (universe mode needs conn for persist + churn)
     dex_pairs: List[Dict[str, Any]] = []
@@ -1109,10 +1130,12 @@ def main() -> int:
 
     # Mutable ref so universe mode can refresh the list each cycle
     current_dex_pairs: List[List[Dict[str, str]]] = [dex_pairs]
+    spot_priority = ", ".join(p.provider_name for p in spot_chain._providers)
     _log(f"Writing to SQLite: {DB_PATH}")
     _log(f"Dex pairs: {len(dex_pairs)}  (universe_mode={universe_enabled})")
     _log(f"Spot assets: {[s[0] for s in SPOT_ASSETS]}")
-    _log(f"Price feed: Coinbase (primary) / Kraken (fallback)")
+    _log(f"Spot provider chain: [{spot_priority}]")
+    _log(f"DEX provider chain: [{', '.join(p.provider_name for p in dex_chain._providers)}]")
     _log(f"Poll every {interval_sec}s. Pair delay {args.pair_delay}s. Stop with Ctrl+C.\n")
 
     _poll_start = time.time()
@@ -1130,34 +1153,80 @@ def main() -> int:
             dex_pairs_this_cycle = current_dex_pairs[0]
             ts = utc_now_iso()
             try:
-                # A) Spot polling (unchanged)
-                spot_prices: List[Tuple[str, float]] = []
-                for symbol, cb_product, kraken_pair in SPOT_ASSETS:
-                    px = fetch_spot_price_asset(cb_product, kraken_pair)
-                    spot_prices.append((symbol, px))
-                sol_price = spot_prices[0][1]
-                insert_spot_prices(conn, ts, spot_prices)
+                # A) Spot polling via provider chain (Coinbase -> Kraken fallback)
+                spot_quotes = []
+                for symbol, _cb_product, _kraken_pair in SPOT_ASSETS:
+                    try:
+                        quote = spot_chain.get_spot(symbol)
+                        spot_quotes.append(quote)
+                    except Exception as e:
+                        _log(f"WARN spot {symbol}: {e}")
+                        # Fall back to legacy method for backward compat
+                        try:
+                            px = fetch_spot_price_asset(_cb_product, _kraken_pair)
+                            from crypto_analyzer.providers.base import SpotQuote
+                            quote = SpotQuote(
+                                symbol=symbol, price_usd=px,
+                                provider_name="coinbase_or_kraken(legacy)",
+                                fetched_at_utc=ts,
+                            )
+                            spot_quotes.append(quote)
+                        except Exception as e2:
+                            _log(f"WARN spot {symbol} legacy fallback: {e2}")
 
-                # B) DEX pairs: one row per pair per cycle
+                # Write spot prices with provenance
+                sol_price = spot_quotes[0].price_usd if spot_quotes else 0.0
+                for quote in spot_quotes:
+                    db_writer.write_spot_price(ts, quote)
+
+                # Log which provider served each quote
+                spot_details = []
+                for q in spot_quotes:
+                    provider_tag = q.provider_name
+                    if q.status != ProviderStatus.OK:
+                        provider_tag += f"({q.status.value})"
+                    spot_details.append(f"{q.symbol}={q.price_usd:.2f}[{provider_tag}]")
+
+                # B) DEX pairs via provider chain
                 dex_summaries: List[str] = []
                 for i, p in enumerate(dex_pairs_this_cycle):
-                    ok, pair = poll_one_dex_pair(
-                        conn, ts,
-                        p["chain_id"], p["pair_address"],
-                        sol_price,
-                        label=p.get("label", ""),
-                    )
-                    if ok and pair is not None:
-                        liq = safe_get(pair, "liquidity.usd")
-                        vol = safe_get(pair, "volume.h24")
-                        lbl = p.get("label", "") or f"{safe_get(pair, 'baseToken.symbol')}/{safe_get(pair, 'quoteToken.symbol')}"
+                    chain_id = p["chain_id"]
+                    pair_addr = p["pair_address"]
+                    label = p.get("label", "")
+                    try:
+                        snapshot = dex_chain.get_snapshot(chain_id, pair_addr)
+                        db_writer.write_dex_snapshot(
+                            ts, snapshot, sol_price,
+                            spot_source=spot_quotes[0].provider_name if spot_quotes else "unknown",
+                        )
+                        liq = snapshot.liquidity_usd
+                        vol = snapshot.vol_h24
+                        lbl = label or f"{snapshot.base_symbol}/{snapshot.quote_symbol}"
                         dex_summaries.append(f"[{lbl} liq={liq} vol24={vol}]")
+                    except Exception as e:
+                        _log(f"WARN dex {chain_id}:{pair_addr} {e}")
+                        # Fall back to legacy fetch for backward compat
+                        ok, pair = poll_one_dex_pair(
+                            conn, ts, chain_id, pair_addr, sol_price, label=label,
+                        )
+                        if ok and pair is not None:
+                            liq = safe_get(pair, "liquidity.usd")
+                            vol = safe_get(pair, "volume.h24")
+                            lbl = label or f"{safe_get(pair, 'baseToken.symbol')}/{safe_get(pair, 'quoteToken.symbol')}"
+                            dex_summaries.append(f"[{lbl} liq={liq} vol24={vol}]")
                     if i < len(dex_pairs_this_cycle) - 1 and args.pair_delay > 0:
                         time.sleep(args.pair_delay)
 
-                conn.commit()
+                db_writer.commit()
 
-                spot_str = "  ".join(f"{s}={p:.2f}" for s, p in spot_prices)
+                # Persist provider health
+                try:
+                    health_store.upsert_all(spot_chain.get_health())
+                    health_store.upsert_all(dex_chain.get_health())
+                except Exception:
+                    pass
+
+                spot_str = "  ".join(spot_details)
                 dex_str = f"  dex_pairs={len(dex_pairs_this_cycle)} " + " ".join(dex_summaries) if dex_summaries else f"  dex_pairs={len(dex_pairs_this_cycle)} (no ok)"
                 _log(f"{ts}  OK  {spot_str}{dex_str}")
             except Exception as e:

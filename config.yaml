@@ -29,6 +29,13 @@ bars_freqs:
 # Market factor for beta/correlation (if no BTC pair in data, load from spot_price_snapshots)
 factor_symbol: "BTC"
 
+# Provider chain configuration (ordered by priority — first healthy provider wins)
+# To add a new provider: implement the SpotPriceProvider or DexSnapshotProvider protocol,
+# register it in crypto_analyzer/providers/defaults.py, and add its name here.
+providers:
+  spot_priority: ["coinbase", "kraken"]
+  dex_priority: ["dexscreener"]
+
 # DEX pairs to poll each cycle (dex_poll_to_sqlite.py). Each: chain_id, pair_address, label (optional).
 # If missing or empty, poller falls back to single hard-coded SOL/USDC pair.
 # pairs:

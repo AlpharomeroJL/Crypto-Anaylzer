@@ -1083,6 +1083,67 @@ def main():
     elif page == "Runtime / Health":
         st.header("Runtime / Health")
         db_path_str_r = db_path_str
+
+        # Provider Health Dashboard
+        st.subheader("Provider Health")
+        try:
+            from crypto_analyzer.db.health import ProviderHealthStore
+            from crypto_analyzer.providers.base import ProviderStatus as PStatus
+            with sqlite3.connect(db_path_str_r) as con_h:
+                health_store = ProviderHealthStore(con_h)
+                provider_healths = health_store.load_all()
+            if provider_healths:
+                health_rows = []
+                for h in provider_healths:
+                    freshness = None
+                    if h.last_ok_at:
+                        try:
+                            from datetime import datetime as dt_cls, timezone as tz_cls
+                            last_ok = dt_cls.fromisoformat(h.last_ok_at)
+                            if last_ok.tzinfo is None:
+                                last_ok = last_ok.replace(tzinfo=tz_cls.utc)
+                            age_s = (dt_cls.now(tz_cls.utc) - last_ok).total_seconds()
+                            if age_s < 120:
+                                freshness = f"{age_s:.0f}s ago"
+                            elif age_s < 7200:
+                                freshness = f"{age_s / 60:.1f}m ago"
+                            else:
+                                freshness = f"{age_s / 3600:.1f}h ago"
+                        except Exception:
+                            freshness = h.last_ok_at
+                    status_icon = {"OK": "\u2705", "DEGRADED": "\u26a0\ufe0f", "DOWN": "\u274c"}.get(h.status.value, "\u2753")
+                    health_rows.append({
+                        "Provider": h.provider_name,
+                        "Status": f"{status_icon} {h.status.value}",
+                        "Last Success": freshness or "Never",
+                        "Fail Count": h.fail_count,
+                        "Last Error": (h.last_error or "")[:100] if h.last_error else "",
+                    })
+                st_df(pd.DataFrame(health_rows), hide_index=True)
+            else:
+                st.caption("No provider health data yet. Run the poller to populate.")
+
+            # Spot price provenance (latest records)
+            st.subheader("Latest Spot Prices (with provenance)")
+            with sqlite3.connect(db_path_str_r) as con_s:
+                try:
+                    spot_recent = pd.read_sql_query(
+                        """SELECT ts_utc, symbol, spot_price_usd, spot_source,
+                                  provider_name, fetch_status
+                           FROM spot_price_snapshots
+                           ORDER BY id DESC LIMIT 15""",
+                        con_s,
+                    )
+                    if not spot_recent.empty:
+                        st_df(spot_recent)
+                    else:
+                        st.caption("No spot data yet.")
+                except Exception:
+                    st.caption("Spot provenance columns not yet populated. Run the updated poller.")
+        except Exception as e:
+            st.caption(f"Provider health not available: {e}")
+
+        st.subheader("Universe allowlist")
         try:
             with sqlite3.connect(db_path_str_r) as con:
                 cur = con.execute("SELECT MAX(ts_utc), COUNT(DISTINCT ts_utc) FROM universe_allowlist")
@@ -1098,7 +1159,6 @@ def main():
             latest_ts = None
             n_refreshes = 0
             universe_size = 0
-        st.subheader("Universe allowlist")
         if latest_ts:
             st.metric("Last refresh (UTC)", str(latest_ts))
             st.metric("Universe size (latest)", universe_size)

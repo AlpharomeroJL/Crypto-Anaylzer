@@ -7,17 +7,20 @@ _HELP = f"""\
 crypto-analyzer {__version__}
 
 Available CLI commands (run from repo root):
-  python cli/app.py              Streamlit dashboard
-  python cli/scan.py             Scanner: top opportunities
-  python cli/poll.py             Poll DEX / spot prices into SQLite
-  python cli/materialize.py      Materialize resampled OHLCV bars
-  python cli/research_report_v2.py  Research report (milestone 4)
-  python cli/api.py              Launch REST research API
-  python cli/backtest.py         Backtest runner
-  python cli/analyze.py          Analyze pair data
+  .\\scripts\\run.ps1 doctor       Preflight system checks
+  .\\scripts\\run.ps1 poll         Poll DEX/spot prices (provider chain)
+  .\\scripts\\run.ps1 universe-poll --universe  Auto-discover DEX pairs
+  .\\scripts\\run.ps1 materialize  Build OHLCV bars from snapshots
+  .\\scripts\\run.ps1 reportv2     Research report with overfitting controls
+  .\\scripts\\run.ps1 streamlit    Interactive dashboard (12 pages)
+  .\\scripts\\run.ps1 api          Local research API (FastAPI)
+  .\\scripts\\run.ps1 demo         One-command demo
 
-Or via PowerShell runner:
-  .\\scripts\\run.ps1 <command>
+Or directly:
+  python cli/poll.py             Data ingestion (Coinbase -> Kraken fallback)
+  python cli/app.py              Streamlit dashboard
+  python cli/scan.py             Opportunity scanner
+  python -m pytest -q            Run test suite (200 tests)
 
 Installed as package:
   crypto-analyzer                This help message

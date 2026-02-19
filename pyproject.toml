@@ -22,7 +22,7 @@ dependencies = [
 [project.optional-dependencies]
 api = ["fastapi>=0.100", "uvicorn[standard]>=0.20"]
 postgres = ["sqlalchemy>=2.0", "psycopg2-binary>=2.9"]
-dev = ["pytest>=7.0"]
+dev = ["pytest>=7.0", "ruff>=0.4"]
 
 [project.scripts]
 crypto-analyzer = "crypto_analyzer.__main__:main"
@@ -32,3 +32,15 @@ version = {attr = "crypto_analyzer.__version__"}
 
 [tool.setuptools.packages.find]
 include = ["crypto_analyzer*"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
