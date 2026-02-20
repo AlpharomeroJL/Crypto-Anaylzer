@@ -1,6 +1,7 @@
 # Doc quality plan
 
 Plan to normalize and improve documentation consistency across `docs/spec` and related audit docs. **DOC-ONLY: no code edits.** Inputs: `architecture_integrity_audit.md`, `drift_register.md`, `docs/spec/master_architecture_spec.md`, `docs/spec/components/*`.
+This plan also standardizes **GitHub rendering** (Mermaid fences + math delimiters).
 
 ---
 
@@ -74,6 +75,33 @@ Use bold for block titles. Use fenced ``` for signatures.
 - Every pipeline stage must have a **Required invariants** subsection.
 - Every interface that has state or ordering guarantees must have **Determinism guarantees** and, if relevant, **Leakage hardening requirement** or **Required invariants**.
 - Wording: “Must …”, “Must not …”, “Always …” for hard requirements; “Should …” only for recommendations (and label as “(recommended)”).
+
+### Math + diagrams (GitHub-safe rendering)
+
+**Goal:** ensure Markdown renders correctly in GitHub *without* relying on nonstandard LaTeX escapes.
+
+**Rules**
+
+1) **Mermaid diagrams must be fenced**:
+
+````
+```mermaid
+graph TD
+  A[Ingestion] --> B[Bars]
+```
+````
+
+2) **Do not escape normal punctuation** in prose:
+   - Use `+`, `=`, `-` as-is (avoid `\+`, `\=`, `\-` in normal text).
+   - Keep escapes only where they are required inside a link label like `[\[1\]](...)`.
+
+3) **Math delimiters (if you include equations)**:
+   - Inline: use `$...$` (not `\(...\)`).
+   - Display: use `$$...$$` (not `\[...\]`).
+   - If you need aligned multi-line, wrap with:
+     `$$\begin{aligned} ... \end{aligned}$$`
+
+4) **Avoid raw `\[` / `\]` in tables and prose** unless you truly mean a literal backslash.
 
 ### Failure modes
 

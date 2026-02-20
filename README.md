@@ -355,6 +355,26 @@ When you run that sequence, paste:
 - **Faster tests:** `python -m pytest -q -m "not slow"` (skips full report-pipeline tests). See `pyproject.toml` for the `slow` marker.
 - **Lint:** `ruff check .` and `ruff format .`. Diagram export: `.\scripts\export_diagrams.ps1` (PlantUML in [docs/diagrams/README.md](docs/diagrams/README.md)).
 
+### Docs formatting
+
+Some docs include Mermaid diagrams and math. GitHub renders these reliably if:
+
+- Mermaid diagrams are fenced with ```mermaid
+- Inline math uses `$...$` and display math uses `$$...$$`
+- Normal prose does **not** escape `+`, `=`, or list bullets as `\+`, `\=`, `\-`
+
+To normalize docs (doc-only formatting):
+
+```bash
+python scripts/normalize_markdown_math.py
+```
+
+To verify whether changes are needed (CI-friendly):
+
+```bash
+python scripts/normalize_markdown_math.py --check
+```
+
 ---
 
 ## Documentation index
