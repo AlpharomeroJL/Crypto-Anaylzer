@@ -14,7 +14,7 @@ This plan also standardizes **GitHub rendering** (Mermaid fences + math delimite
 - **Lists:** Mix of `-` and `\-` (escaped hyphen in master); components use `-`. Master has `\-` in many list items; components use plain `-`.
 - **Line breaks:** Master uses two spaces at end of line in some places; components use consistent single newline. Blank lines between sections vary (e.g. `---` vs double newline).
 - **Code/contract blocks:** interfaces.md uses fenced ``` blocks for pseudocode; pipeline_contracts has no fenced blocks. Master has inline code in narrative (e.g. `ts_utc`, `load_snapshots()`).
-- **Tables:** implementation_ledger uses markdown tables; master has large tables with `\[...\]` link refs. Some tables use `| :---- |` alignment; others don’t.
+- **Tables:** implementation_ledger uses markdown tables; master has large tables with `$$...$$` link refs. Some tables use `| :---- |` alignment; others don’t.
 
 ### Links and references
 
@@ -92,16 +92,16 @@ graph TD
 ````
 
 2) **Do not escape normal punctuation** in prose:
-   - Use `+`, `=`, `-` as-is (avoid `\+`, `\=`, `\-` in normal text).
+   - Use `+`, `=`, `-` as-is (avoid `+`, `=`, `\-` in normal text).
    - Keep escapes only where they are required inside a link label like `[\[1\]](...)`.
 
 3) **Math delimiters (if you include equations)**:
-   - Inline: use `$...$` (not `\(...\)`).
-   - Display: use `$$...$$` (not `\[...\]`).
+   - Inline: use `$...$` (not backslash-paren LaTeX style).
+   - Display: use `$$...$$` (not backslash-bracket LaTeX style).
    - If you need aligned multi-line, wrap with:
      `$$\begin{aligned} ... \end{aligned}$$`
 
-4) **Avoid raw `\[` / `\]` in tables and prose** unless you truly mean a literal backslash.
+4) **Avoid raw backslash-bracket in tables and prose** unless you truly mean a literal backslash.
 
 ### Failure modes
 

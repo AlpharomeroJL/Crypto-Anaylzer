@@ -70,7 +70,7 @@ The statistical controls in this repo are designed to reduce false discoveries a
 
 - **Walk-forward** train/test splits (OOS metrics only).
 - **Bootstrap under dependence** (fixed block + stationary bootstrap; seeded; preserves serial correlation) for uncertainty estimates and null generation.
-- **Deflated Sharpe (repo implementation):** Sharpe deflation using skew/excess-kurtosis-adjusted Sharpe variance and a leading-order extreme-value correction over an estimated trials count \( N \).
+- **Deflated Sharpe (repo implementation):** Sharpe deflation using skew/excess-kurtosis-adjusted Sharpe variance and a leading-order extreme-value correction over an estimated trials count $N$.
 - **PBO proxy (repo implementation):** split-wise median underperformance rate for the "selected" strategy across walk-forward splits (screening heuristic, not full CSCV PBO).
 - **Multiple testing control:** BH/BY adjusted p-values for signal discovery.
 - **Reality Check (optional):** max-statistic bootstrap test for data-snooping control keyed by `family_id`. *(Romano–Wolf is feature-flagged but not implemented.)*
@@ -357,13 +357,13 @@ When you run that sequence, paste:
 
 ### Docs formatting
 
-Some docs include Mermaid diagrams and math. GitHub renders these reliably if:
+Some docs include Mermaid diagrams and math. You can keep all formula docs readable on the web (GitHub) by running the normalizer. GitHub renders these reliably if:
 
 - Mermaid diagrams are fenced with ```mermaid
 - Inline math uses `$...$` and display math uses `$$...$$`
-- Normal prose does **not** escape `+`, `=`, or list bullets as `\+`, `\=`, `\-`
+- Normal prose does **not** escape `+`, `=`, or list bullets as `+`, `=`, `\-`
 
-To normalize docs (doc-only formatting):
+To normalize docs (doc-only; rewrites `docs/**/*.md` and `README.md` by default):
 
 ```bash
 python scripts/normalize_markdown_math.py
