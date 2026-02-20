@@ -1,0 +1,134 @@
+%% Actual pipeline and key modules (from codebase scan). Mermaid.
+%% Render with Mermaid CLI or viewer. No code changed.
+
+flowchart TB
+    subgraph Entry["CLI entry points"]
+        POLL["cli/poll.py"]
+        MAT["cli/materialize.py"]
+        RPT2["cli/research_report_v2.py"]
+        BT["cli/backtest.py"]
+        BTWF["cli/backtest_walkforward.py"]
+    end
+
+    subgraph DB["SQLite"]
+        MIG["db/migrations.py"]
+        MIG2["db/migrations_v2.py"]
+        MIG3["db/migrations_phase3.py"]
+        TBL["tables: snapshots, bars_*, experiments, factor_*, regime_*, promotion_*"]
+    end
+
+    subgraph Data["Data layer"]
+        DATA["crypto_analyzer/data.py\nload_snapshots, load_bars,\nget_factor_returns"]
+        RU["crypto_analyzer/research_universe.py\nget_research_assets"]
+    end
+
+    subgraph Factors["Factors"]
+        FAC["crypto_analyzer/factors.py\nrolling_multifactor_ols,\ncausal_rolling_ols"]
+        FACMAT["crypto_analyzer/factor_materialize.py\nmaterialize_factor_run"]
+        FACDYN["crypto_analyzer/factors_dynamic_beta.py"]
+    end
+
+    subgraph Signals["Signals"]
+        ALPHA["crypto_analyzer/alpha_research.py\nsignal_*, ic_*, compute_forward_returns"]
+        SX["crypto_analyzer/signals_xs.py\nclean_momentum, value_vs_beta,\northogonalize_signals"]
+        CS["crypto_analyzer/cs_factors.py, cs_model.py"]
+    end
+
+    subgraph Validation["Validation"]
+        VB["crypto_analyzer/validation_bundle.py"]
+        VREG["crypto_analyzer/validation/regime_conditioning.py"]
+    end
+
+    subgraph Portfolio["Portfolio & cost"]
+        OPT["crypto_analyzer/optimizer.py"]
+        PFA["crypto_analyzer/portfolio_advanced.py\noptimize_long_short_portfolio"]
+        PORT["crypto_analyzer/portfolio.py\napply_costs_to_portfolio"]
+        EXEC["crypto_analyzer/execution_cost.py\nExecutionCostModel, apply_costs"]
+        RISK["crypto_analyzer/risk_model.py\nestimate_covariance, ensure_psd"]
+    end
+
+    subgraph WalkForward["Backtest / walk-forward"]
+        WF["crypto_analyzer/walkforward.py\nwalk_forward_splits"]
+    end
+
+    subgraph Stats["Stats & correction"]
+        MT["crypto_analyzer/multiple_testing.py\ndeflated_sharpe, pbo_proxy, reality_check_warning"]
+        MTA["crypto_analyzer/multiple_testing_adjuster.py\nadjust BH/BY"]
+        STAT["crypto_analyzer/statistics.py\nblock/stationary bootstrap"]
+        RC["crypto_analyzer/stats/reality_check.py"]
+    end
+
+    subgraph Regimes["Regimes (optional)"]
+        REG["crypto_analyzer/regimes/\nregime_detector, regime_materialize"]
+    end
+
+    subgraph Gov["Governance & reporting"]
+        GOV["crypto_analyzer/governance.py\nrun_id, manifest, git_commit"]
+        DS["crypto_analyzer/dataset.py\ndataset_id, fingerprint"]
+        EXP["crypto_analyzer/experiments.py\nrecord_experiment_run"]
+        ART["crypto_analyzer/artifacts.py\nSHA256, write_json_sorted"]
+        PROM["crypto_analyzer/promotion/\nstore_sqlite, service, gating"]
+    end
+
+    POLL --> MIG
+    POLL --> TBL
+    MIG --> TBL
+    MAT --> DATA
+    DATA --> TBL
+    MAT --> TBL
+
+    RPT2 --> RU
+    RU --> DATA
+    RPT2 --> DATA
+    RPT2 --> FAC
+    RPT2 --> ALPHA
+    RPT2 --> SX
+    RPT2 --> VB
+    RPT2 --> PORT
+    RPT2 --> PFA
+    RPT2 --> RISK
+    RPT2 --> EXEC
+    RPT2 --> MT
+    RPT2 --> MTA
+    RPT2 --> GOV
+    RPT2 --> DS
+    RPT2 --> EXP
+    RPT2 --> ART
+
+    DATA --> FAC
+    FAC --> ALPHA
+    ALPHA --> VB
+    SX --> ALPHA
+    PFA --> OPT
+    PFA --> RISK
+    PORT --> EXEC
+    RPT2 --> WF
+    WF --> BT
+    BT --> DATA
+    BT --> EXEC
+    BTWF --> WF
+    BTWF --> DATA
+
+    FACMAT --> FAC
+    FACMAT --> MIG2
+    FACMAT --> TBL
+    REG --> MIG3
+    REG --> TBL
+    RPT2 --> REG
+    RPT2 --> RC
+    RPT2 --> PROM
+    EXP --> TBL
+    GOV --> ART
+    DS --> TBL
+    VB --> ART
+    VREG --> VB
+    STAT --> MT
+    STAT --> RC
+    FACDYN --> FACMAT
+    MIG2 --> TBL
+    MIG3 --> TBL
+    INT["crypto_analyzer/integrity.py"] -.-> RPT2
+    DIAG["crypto_analyzer/diagnostics.py"] -.-> RPT2
+    SWEEP["crypto_analyzer/sweeps/"] -.-> RPT2
+    SWEEP -.-> EXP
+    SWEEP -.-> PROM
