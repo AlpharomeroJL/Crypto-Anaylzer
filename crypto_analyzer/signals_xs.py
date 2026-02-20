@@ -291,3 +291,74 @@ def clean_momentum(
     if not to_use:
         return mom
     return neutralize_signal_to_exposures(mom, to_use, method="ols")
+
+
+# --- Liquidity shock reversion (case study) ---
+
+LIQSHOCK_LIQUIDITY_FLOOR = 1.0
+LIQSHOCK_ROLL_VOL_EPS = 1e-10
+LIQSHOCK_GRID_N = (6, 12, 24, 48)
+LIQSHOCK_GRID_WINSOR_P = (0.01, 0.05)
+LIQSHOCK_GRID_CLIP = (3, 5)
+
+
+def liquidity_shock_reversion_single(
+    liquidity_panel: pd.DataFrame,
+    target_index: pd.Index,
+    target_columns: pd.Index,
+    N: int,
+    winsor_p: float = 0.01,
+    clip: float = 5.0,
+    roll_vol_panel: Optional[pd.DataFrame] = None,
+) -> pd.DataFrame:
+    """
+    Single variant: dlogL over N bars, cross-sectional winsorize/zscore, negate (mean reversion).
+    No leakage: only t and t-N used. Aligns to target_index and target_columns.
+    """
+    if liquidity_panel is None or liquidity_panel.empty:
+        return pd.DataFrame(index=target_index, columns=target_columns, dtype=float)
+    common_cols = liquidity_panel.columns.intersection(target_columns)
+    if len(common_cols) == 0:
+        return pd.DataFrame(index=target_index, columns=target_columns, dtype=float)
+    liq = liquidity_panel.reindex(index=target_index, columns=common_cols)
+    L = liq.clip(lower=LIQSHOCK_LIQUIDITY_FLOOR)
+    log_L = np.log(L)
+    dlogL = log_L.diff(N)
+    if roll_vol_panel is not None and not roll_vol_panel.empty:
+        roll = roll_vol_panel.reindex(index=target_index, columns=common_cols)
+        roll = roll.replace(0, np.nan).clip(lower=LIQSHOCK_ROLL_VOL_EPS)
+        dlogL = dlogL / roll
+    dlogL = winsorize_cross_section(dlogL, p=winsor_p)
+    zscore_df = zscore_cross_section(dlogL, clip=clip)
+    out = -zscore_df
+    return out.reindex(index=target_index, columns=target_columns)
+
+
+def liquidity_shock_reversion_variants(
+    liquidity_panel: pd.DataFrame,
+    target_index: pd.Index,
+    target_columns: pd.Index,
+    roll_vol_panel: Optional[pd.DataFrame] = None,
+) -> Dict[str, pd.DataFrame]:
+    """
+    Sixteen deterministic variants: N in {6,12,24,48}, winsor_p in {0.01, 0.05}, clip in {3, 5}.
+    Keys e.g. liqshock_N6_w0.01_clip3. Order: N, winsor_p, clip.
+    """
+    if liquidity_panel is None or liquidity_panel.empty:
+        return {}
+    out: Dict[str, pd.DataFrame] = {}
+    for N in LIQSHOCK_GRID_N:
+        for winsor_p in LIQSHOCK_GRID_WINSOR_P:
+            for clip_val in LIQSHOCK_GRID_CLIP:
+                name = f"liqshock_N{N}_w{winsor_p}_clip{int(clip_val)}"
+                df = liquidity_shock_reversion_single(
+                    liquidity_panel=liquidity_panel,
+                    target_index=target_index,
+                    target_columns=target_columns,
+                    N=N,
+                    winsor_p=winsor_p,
+                    clip=clip_val,
+                    roll_vol_panel=roll_vol_panel,
+                )
+                out[name] = df
+    return out

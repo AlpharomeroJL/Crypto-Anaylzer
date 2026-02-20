@@ -7,6 +7,7 @@ Canonical source: [master_architecture_spec.md](master_architecture_spec.md). Do
 - [Master Architecture Spec](master_architecture_spec.md) — full canonical document
 - [System overview](system_overview.md) — pipeline lifecycle, data model, determinism, stats stack, feature flags, promotion
 - [Implementation Ledger](implementation_ledger.md) — requirement → status, PRs, evidence
+- [Operational Runbook: Liqshock Case Study](case_study_liqshock_release.md) — one-command usage, outputs, snapshot semantics
 
 ## Component specs
 

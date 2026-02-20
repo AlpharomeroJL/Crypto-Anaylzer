@@ -141,6 +141,141 @@ All commands: `.\scripts\run.ps1 <command> [args...]`
 | `demo` | One-command demo: doctor → poll → materialize → report |
 | `check-dataset` | Inspect dataset fingerprints and row counts |
 
+### Expanded-Universe Validation Workflow (case-study liqshock)
+
+For **expanded-universe validation** (DEX-only, enough cross-section for finite Sharpes, raw p-values, and BH survivors), follow this runbook. Pipeline is unchanged; you expand **data** (pairs + history) then run exploratory validation runs and, when ready, a full-scale validation run. See [Research validation workflow](docs/research_validation_workflow.md) for concepts (run_id, snapshot vs working packet) and typical workflows.
+
+**Operational checklist (copy-paste)**  
+1. Make sure polling is running in universe mode for Solana with broad queries (USDC/USDT + ecosystem), page_size high enough to discover ≥25 pairs; keep it running continuously.  
+2. Every N hours (e.g. 6–24h), run `.\scripts\run.ps1 materialize --freq 1h --no-snapshot-filters`.  
+3. After materialize, run an **exploratory validation run** (no `--snapshot`; keep RC low). Early in ramp: `--min-bars 25` (or omit); at ~10–20 days per pair use `--min-bars 500`; later `--min-bars 1000`. Confirm diagnostics: returns columns, bars unique pair_ids, date ranges, bars matched.  
+4. When diagnostics meet [validation readiness criteria](docs/research_validation_workflow.md#validation-readiness-criteria) (e.g. ≥25 pairs, ≥180d history), run a **full-scale validation run**: `.\scripts\run.ps1 case_study_liqshock --freq 1h --dex-only --min-bars 1000 --rc-n-sim 1000 --rc-method stationary --rc-avg-block-length 24 --snapshot`.  
+5. The **snapshot folder** `reports\case_study_liqshock_runs\<run_id>\` is an immutable research snapshot (created with `--snapshot`; never overwritten). `reports\case_study_liqshock_latest` is the mutable working packet (overwritten each run).
+
+**Operational next steps (exactly what to do now)**  
+- **Keep universe-poll running** so the new pairs (e.g. 6) accumulate snapshots.  
+- **Run materialize repeatedly** (every few hours):  
+  `.\scripts\run.ps1 materialize --freq 1h --no-snapshot-filters`  
+- **Keep exploratory validation cheap and aligned to warmup:**  
+  - **Early ramp:** `--min-bars 25` (or omit) until you have depth.  
+  - **~10–20 days per pair:** switch to `--min-bars 500`.  
+  - **Later:** `--min-bars 1000`.  
+- **After each materialize**, run:  
+  `.\scripts\run.ps1 case_study_liqshock --freq 1h --dex-only --min-bars 25 --rc-n-sim 50 --rc-method stationary --rc-avg-block-length 24`  
+- **Watch:** bars unique pair_ids, bars date range.
+
+**A) Expand pairs (universe discovery)**  
+Universe mode discovers multi-asset DEX pairs from Dexscreener. Config: [config.yaml](config.yaml) `universe` (queries, page_size, min_liquidity_usd, min_vol_h24). CLI overrides: `--universe-page-size`, `--universe-query`, `--universe-min-liquidity`, `--universe-min-vol-h24`, etc.
+
+- **Baseline** (run continuously on your chain):
+
+```powershell
+.\scripts\run.ps1 universe-poll --universe --universe-chain solana --interval 60
+```
+
+- **First try for ≥25 pairs** (page_size 80 + multi-query: stables + ecosystem + venue):
+
+```powershell
+.\scripts\run.ps1 universe-poll --universe --universe-chain solana --interval 60 --universe-page-size 80 --universe-query USDC --universe-query USDT --universe-query "USDC/USDT" --universe-query SOL --universe-query SOL/USDC --universe-query orca --universe-debug 20
+```
+
+- **Threshold relaxation (expanded-universe breadth mode)**  
+  With default min_liquidity 250k / min_vol 500k, hitting 25 pairs on Solana can be tight. If after ~10–30 minutes you still have &lt;25 pairs, relax **mechanically** (not ad-hoc): `--universe-min-liquidity 100000 --universe-min-vol-h24 250000`. That widens the screen; keep it parameterized so you can document “expanded-universe breadth mode” and preserve reproducibility.
+
+**B) Accumulate history**  
+The pipeline cannot invent history. Run poll/universe-poll so `sol_monitor_snapshots` grows.
+
+- **Near-term:** You can hit ≥25 pairs relatively soon (minutes/hours) if thresholds and page_size allow.  
+- **≥180d history** is only achievable via: (a) existing stored snapshot history, (b) external import/backfill (if you add it later), or (c) months of running the poller. That’s honest expectation-setting and avoids frustration.
+
+**C) Materialize 1h bars regularly**  
+Snapshots → deterministic OHLCV bars. After each chunk of new snapshots:
+
+```powershell
+.\scripts\run.ps1 materialize --freq 1h
+```
+
+**D) Run protocol: exploratory → full-scale**
+
+- **Exploratory validation run** (cheap RC; no `--snapshot`). Use lower `--min-bars` early so diagnostics stay informative:
+  - **Early ramp:** `--min-bars 25` (or omit) until you have depth.
+  - **~10–20 days per pair:** `--min-bars 500`.
+  - **Later:** `--min-bars 1000`.
+
+```powershell
+.\scripts\run.ps1 case_study_liqshock --freq 1h --dex-only --min-bars 25 --rc-n-sim 50 --rc-method stationary --rc-avg-block-length 24
+```
+
+Check diagnostics: returns columns, bars unique pair_ids, date ranges, bars columns matched.
+
+- **Full-scale validation run** (use `--min-bars 1000` and `--snapshot` when diagnostics meet [validation readiness criteria](docs/research_validation_workflow.md#validation-readiness-criteria)):
+
+```powershell
+.\scripts\run.ps1 case_study_liqshock --freq 1h --dex-only --min-bars 1000 --rc-n-sim 1000 --rc-method stationary --rc-avg-block-length 24 --snapshot
+```
+
+**Snapshot semantics:** The folder `reports\case_study_liqshock_runs\<run_id>\` is an **immutable research snapshot** (created with `--snapshot`; never overwritten). `reports\case_study_liqshock_latest` is the **mutable working packet** (overwritten each run). Use `CRYPTO_ANALYZER_DETERMINISTIC_TIME` for reproducible reruns.
+
+**E) Validation readiness criteria**  
+Run a full-scale validation run when diagnostics show:
+
+- `bars unique pair_ids` ≥ 25  
+- `bars date range` ≥ ~180 days  
+- `bars columns matched` ≥ 25 (with `--dex-only`, this is the usable intersection)  
+- Top 10 table has 5–10 eligible pairs  
+
+Then you can expect finite Sharpe, non-NaN raw p-values, and plausible BH outcomes.
+
+**F) Audit progress**  
+- **Doctor:** `.\scripts\run.ps1 doctor` — DB, pipeline, dataset_id; run universe-poll when universe mode is enabled.  
+- **Streamlit:** “Latest universe allowlist (audit)” and universe size; warns if no allowlist (run poller in universe mode).
+
+**Caveats (institutional quality)**  
+- **A) Breadth at materialize, quality at research.** Disabling snapshot filters (`--no-snapshot-filters`) is for **breadth** so you can build returns/bars for many pairs. The memo narrative should still be “mid-cap, tradable, stable liquidity” and “no junk pairs.” Keep **research-time screens tight**: Top 10 p10 floor, missing%, min-bars. Filter at research time even if bars were built broadly.  
+- **B) No forward-looking liquidity.** The filter bypass doesn’t change that. Rely on Top 10 missing% and p10-liquidity floor so forward-fill artifacts or huge missingness don’t dominate; those screens protect the “No forward-looking liquidity” claim.
+
+**15–30 minute execution loop (what to run and what to watch)**  
+Use this to see whether you’re bottlenecked on **thresholds vs polling vs materialize vs min-bars**.
+
+1. **Start universe polling (aggressive baseline)**  
+   Run the aggressive command (page_size 80, multi-query including USDC/USDT, default min liquidity/vol) for ~5–10 minutes.  
+   **Watch:** Is the allowlist growing (new pair_ids over time)? Is the poller logging hits vs “0 results” per query?  
+   If after ~10–30 min you’re still &lt;25 pairs, switch to breadth mode: `--universe-min-liquidity 100000 --universe-min-vol-h24 250000`.
+
+2. **Materialize after new snapshots**  
+   `.\scripts\run.ps1 materialize --freq 1h`  
+   If **pairs aren’t increasing** even though the allowlist is large: run with **`--no-snapshot-filters`** so bars are built from all snapshot rows (not only those passing the default 250k/500k liquidity/vol filter):  
+   `.\scripts\run.ps1 materialize --freq 1h --no-snapshot-filters`  
+   **Watch:** Does `bars_1h` show more than 1 pair_id? Does the bars date range extend forward?  
+   Note: each pair needs **≥25 hours** of 1h bars (for rolling vol). Newly discovered pairs will appear in bars_1h after they accumulate enough snapshots.
+
+3. **Exploratory validation run (early ramp)**  
+   `.\scripts\run.ps1 case_study_liqshock --freq 1h --dex-only --min-bars 25 --top10-p10-liq-floor 250000 --rc-n-sim 50 --rc-method stationary --rc-avg-block-length 24`  
+   Copy the **5 diagnostic lines**: returns columns, returns date range, bars unique pair_ids, bars date range, bars columns matched (%).
+
+**How to interpret outcomes (decision tree)**
+
+| Case | Symptom | Likely cause | What to do |
+|------|--------|--------------|------------|
+| **A** | Allowlist is **not** growing | Thresholds or query coverage (or API returning few pairs) | Breadth mode (100k/250k); add query diversity; raise `--universe-debug` to see exclusions |
+| **B** | Allowlist grows, **bars unique pair_ids** stays ~1 | (1) Materialize filters out snapshots (250k/500k). (2) New pairs don’t have enough history yet. | (1) Run materialize with **`--no-snapshot-filters`**. (2) Each pair needs ≥25 hours of 1h bars for rolling vol; keep polling and materializing. |
+| **C** | **bars unique pair_ids** grows, **bars matched** stays low | Returns vs bars pair_id mismatch (e.g. format) | With `--dex-only`, check that returns and bars use same `chain_id:pair_address` convention |
+| **D** | **bars matched** grows, but `--min-bars 25` still “No assets” | History too short per pair | Expected early: keep polling, materialize periodically, keep min-bars 25 until time depth builds |
+| **E** | ≥25 matched columns, Top 10 still &lt;5 pairs | Top 10 eligibility (p10 floor + missing%) is filtering; liquidity distribution tight | Run with `--top10-p10-liq-floor 100000` (breadth mode for memo); keep memo line that frames it |
+
+**What “success” looks like in the exploratory loop (near-term)**  
+Within the first hour you should see: **bars unique pair_ids** &gt; 1, **bars columns matched** &gt; 1, date ranges moving forward. You will **not** see 180 days quickly unless you have stored history or import/backfill — and that’s documented above.
+
+**Paste back exactly this (after aggressive poll ~5 min + materialize once + exploratory run once)**  
+When you run that sequence, paste:
+
+- The **5 diagnostic lines** (returns columns, returns date range, bars unique pair_ids, bars date range, bars columns matched %)
+- **Allowlist growing? (Y/N)**
+- **Materialize produced bars for &gt;1 pair? (Y/N)**
+- **Approximate count of allowlisted pairs** (if visible)
+
+…and you can immediately see which bucket you’re in (thresholds vs polling wiring vs materialize vs min-bars) and the fastest next move.
+
 ---
 
 ## Determinism & reproducibility
@@ -170,6 +305,7 @@ All commands: `.\scripts\run.ps1 <command> [args...]`
 
 | Document | Contents |
 |----------|----------|
+| [Research validation workflow](docs/research_validation_workflow.md) | Exploratory vs full-scale runs, run_id, snapshot semantics, validation readiness criteria |
 | [Spec index (canonical)](docs/spec/README.md) | Master spec, system overview, implementation ledger, component specs |
 | [System overview](docs/spec/system_overview.md) | Pipeline lifecycle, determinism, statistical stack, feature flags, promotion |
 | [Implementation ledger](docs/spec/implementation_ledger.md) | Requirement → status, PRs, evidence |

@@ -56,18 +56,23 @@ def _resample_pair(
     g: pd.DataFrame,
     freq: str,
     window: int,
-) -> Optional[pd.DataFrame]:
-    """Resample one pair's snapshots to bars. Returns DataFrame or None if too few points."""
+) -> tuple[Optional[pd.DataFrame], str]:
+    """
+    Resample one pair's snapshots to bars.
+    Returns (DataFrame, "ok") or (None, reason) for logging.
+    Reasons: "insufficient_bars", "nan_or_negative", "ok".
+    """
+    min_bars = max(2, window + 1)
     g = g.sort_values("ts_utc").set_index("ts_utc")
     price = g["price_usd"]
     ohlc = price.resample(freq).ohlc()
     ohlc.columns = ["open", "high", "low", "close"]
     ohlc = ohlc.dropna(subset=["close"])
-    if len(ohlc) < max(2, window + 1):
-        return None
+    if len(ohlc) < min_bars:
+        return None, "insufficient_bars"
     # Sanity: non-negative OHLC, no NaNs in close after resample
     if (ohlc <= 0).any().any() or ohlc["close"].isna().any():
-        return None
+        return None, "nan_or_negative"
     ohlc["log_return"] = log_returns(ohlc["close"]).values
     ohlc["cum_return"] = cumulative_returns_log(ohlc["log_return"]).values
     ohlc["roll_vol"] = rolling_volatility(ohlc["log_return"], window).values
@@ -75,12 +80,14 @@ def _resample_pair(
     vol24 = g["vol_h24"].resample(freq).last()
     ohlc["liquidity_usd"] = liq.reindex(ohlc.index).ffill().bfill()
     ohlc["vol_h24"] = vol24.reindex(ohlc.index).ffill().bfill()
+    if ohlc["roll_vol"].isna().all() or (ohlc["liquidity_usd"] <= 0).all():
+        return None, "nan_or_negative"
     ohlc["chain_id"] = g["chain_id"].iloc[0]
     ohlc["pair_address"] = g["pair_address"].iloc[0]
     ohlc["base_symbol"] = g["base_symbol"].iloc[-1]
     ohlc["quote_symbol"] = g["quote_symbol"].iloc[-1]
     ohlc["ts_utc"] = ohlc.index
-    return ohlc.reset_index(drop=True)
+    return ohlc.reset_index(drop=True), "ok"
 
 
 def _default_window_for_freq(freq: str) -> int:
@@ -182,11 +189,14 @@ def materialize_freq(
     path: str,
     freq: str,
     window: Optional[int] = None,
+    apply_snapshot_filters: bool = True,
 ) -> int:
     """
     Build or update bars for one frequency. Idempotent (UPSERT).
     For 1D: load from bars_1h, resample OHLC, then UPSERT into bars_1D.
     For 5min/15min/1h: load from snapshots, resample, UPSERT.
+    When apply_snapshot_filters is True (default), only snapshots passing config min_liquidity_usd/min_vol_h24 are used.
+    Set False (e.g. --no-snapshot-filters) for breadth: bars for every pair with snapshot data.
     """
     freq_norm = freq.replace(" ", "").upper()
     if freq_norm == "1D":
@@ -195,20 +205,39 @@ def materialize_freq(
 
     table = f"bars_{freq.replace(' ', '')}"
     win = window if window is not None else _default_window_for_freq(freq)
-    df = load_snapshots(db_path_override=path, apply_filters=True)
+    min_bars_required = max(2, win + 1)
+    df = load_snapshots(db_path_override=path, apply_filters=apply_snapshot_filters)
     if df.empty:
         print("No snapshot data. Run poller first.")
         return 0
 
+    n_snapshot_rows = len(df)
     df["pair_id"] = df["chain_id"].astype(str) + ":" + df["pair_address"].astype(str)
+    n_pairs_in = df["pair_id"].nunique()
+    print(
+        f"{table}: snapshot rows loaded={n_snapshot_rows}, snapshot_filters={'no' if not apply_snapshot_filters else 'yes'}, pairs_processed={n_pairs_in}"
+    )
+    print(f"  Warmup: {win}-bar rolling vol -> need >={min_bars_required} {freq} bars before a pair is written.")
+
     with sqlite3.connect(path) as conn:
         _ensure_bars_table(conn, table)
 
     rows_to_insert = []
+    skipped_insufficient_bars = 0
+    skipped_nan_or_liq = 0
+    written_pairs = 0
     for pair_id, g in df.groupby("pair_id"):
-        bar_df = _resample_pair(g, freq, win)
-        if bar_df is None:
+        bar_df, reason = _resample_pair(g, freq, win)
+        if reason == "insufficient_bars":
+            skipped_insufficient_bars += 1
             continue
+        if reason == "nan_or_negative":
+            skipped_nan_or_liq += 1
+            continue
+        if bar_df is None:
+            skipped_nan_or_liq += 1
+            continue
+        written_pairs += 1
         for _, row in bar_df.iterrows():
             rows_to_insert.append(
                 (
@@ -228,6 +257,10 @@ def materialize_freq(
                     float(row["vol_h24"]) if pd.notna(row["vol_h24"]) else None,
                 )
             )
+
+    print(
+        f"  skipped (insufficient bars <{min_bars_required}): {skipped_insufficient_bars}, skipped (NaN/neg/liq): {skipped_nan_or_liq}, written: {written_pairs} pairs, {len(rows_to_insert)} rows."
+    )
 
     if not rows_to_insert:
         print(f"{table}: no bars generated (try coarser freq or more data).")
@@ -258,13 +291,21 @@ def main() -> int:
     ap.add_argument("--db", default=None, help="SQLite path (default: config)")
     ap.add_argument("--freq", default=None, help="Single freq to build (e.g. 5min). If omitted, build all from config.")
     ap.add_argument("--window", type=int, default=None, help="Rolling vol window in bars")
+    ap.add_argument(
+        "--no-snapshot-filters",
+        dest="apply_snapshot_filters",
+        action="store_false",
+        help="Use all snapshot rows (no min_liquidity/min_vol filter). Use for breadth so more pairs get bars.",
+    )
     args = ap.parse_args()
 
     path = args.db or (db_path() if callable(db_path) else db_path())
     freqs = [args.freq] if args.freq else (bars_freqs() if callable(bars_freqs) else ["5min", "15min", "1h", "1D"])
     total = 0
     for f in freqs:
-        total += materialize_freq(path, f, window=args.window)
+        total += materialize_freq(
+            path, f, window=args.window, apply_snapshot_filters=getattr(args, "apply_snapshot_filters", True)
+        )
     return 0 if total >= 0 else 1
 
 

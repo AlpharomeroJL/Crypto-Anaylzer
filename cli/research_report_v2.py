@@ -42,7 +42,7 @@ from crypto_analyzer.artifacts import (
     write_json_sorted,
 )
 from crypto_analyzer.config import db_path
-from crypto_analyzer.data import get_factor_returns, load_factor_run
+from crypto_analyzer.data import get_factor_returns, load_bars, load_factor_run
 from crypto_analyzer.dataset import compute_dataset_fingerprint, dataset_id_from_fingerprint, fingerprint_to_json
 from crypto_analyzer.diagnostics import build_health_summary, rolling_ic_stability
 from crypto_analyzer.evaluation import conditional_metrics, lead_lag_analysis
@@ -76,6 +76,7 @@ from crypto_analyzer.risk_model import estimate_covariance
 from crypto_analyzer.signals_xs import (
     build_exposure_panel,
     clean_momentum,
+    liquidity_shock_reversion_variants,
     orthogonalize_signals,
     value_vs_beta,
 )
@@ -185,6 +186,33 @@ def main() -> int:
     )
     ap.add_argument("--rc-method", dest="rc_method", choices=["stationary", "block_fixed"], default="stationary")
     ap.add_argument("--rc-avg-block-length", dest="rc_avg_block_length", type=int, default=12)
+    ap.add_argument(
+        "--case-study",
+        dest="case_study",
+        choices=["liqshock"],
+        default=None,
+        help="Use case-study memo renderer (e.g. liqshock). Default report unchanged when not set.",
+    )
+    ap.add_argument(
+        "--min-bars",
+        dest="min_bars",
+        type=int,
+        default=None,
+        help="Minimum bars per pair (quality gate). Default: use config. Does not create more assets.",
+    )
+    ap.add_argument(
+        "--dex-only",
+        dest="dex_only",
+        action="store_true",
+        help="Exclude spot from research universe so returns columns align with bars (for hiring run).",
+    )
+    ap.add_argument(
+        "--top10-p10-liq-floor",
+        dest="top10_p10_liq_floor",
+        type=int,
+        default=250000,
+        help="Top 10 eligibility: p10(liquidity_usd) >= this (USD). Default 250000.",
+    )
     args = ap.parse_args()
 
     # Fail fast if --regimes set but regimes disabled (no silent ignore)
@@ -250,9 +278,18 @@ def main() -> int:
                 return 4
         print("Integrity: strict check passed (bad row rate within limit)")
 
-    returns_df, meta_df = get_research_assets(db, args.freq, include_spot=True)
+    include_spot = not getattr(args, "dex_only", False)
+    returns_df, meta_df = get_research_assets(
+        db,
+        args.freq,
+        include_spot=include_spot,
+        min_bars_override=getattr(args, "min_bars", None),
+    )
     n_assets = returns_df.shape[1] if not returns_df.empty else 0
     meta_dict = meta_df.set_index("asset_id")["label"].to_dict() if not meta_df.empty else {}
+    bars_match_n_ret: int = 0
+    bars_match_n_match: int = 0
+    bars_match_pct: float = 0.0
     factor_ret = get_factor_returns(returns_df, meta_dict, db_path_override=db, freq=args.freq) if meta_dict else None
 
     lines = [
@@ -294,6 +331,39 @@ def main() -> int:
     lines.append(f"Assets: {n_assets}  Bars: {len(returns_df)}")
     lines.append("")
 
+    signal_names = [s.strip() for s in args.signals.split(",") if s.strip()]
+
+    # Bars + liquidity panel (only when liquidity_shock_reversion requested)
+    liquidity_panel = None
+    roll_vol_panel = None
+    if "liquidity_shock_reversion" in signal_names and not returns_df.empty:
+        bars = load_bars(args.freq, db_path_override=db, min_bars=None)
+        if not bars.empty:
+            bars = bars.copy()
+            bars["pair_id"] = bars["chain_id"].astype(str) + ":" + bars["pair_address"].astype(str)
+            bars_unique_pairs = int(bars["pair_id"].nunique())
+            bars_start = bars["ts_utc"].min()
+            bars_end = bars["ts_utc"].max()
+            bars = bars[bars["pair_id"].isin(returns_df.columns)]
+            if not bars.empty:
+                liquidity_panel = bars.pivot_table(index="ts_utc", columns="pair_id", values="liquidity_usd")
+                roll_vol_panel = bars.pivot_table(index="ts_utc", columns="pair_id", values="roll_vol")
+                liquidity_panel = liquidity_panel.reindex(index=returns_df.index, columns=returns_df.columns)
+                roll_vol_panel = roll_vol_panel.reindex(index=returns_df.index, columns=returns_df.columns)
+                n_ret = len(returns_df.columns)
+                n_match = len(liquidity_panel.columns.intersection(returns_df.columns))
+                pct = 100.0 * n_match / n_ret if n_ret else 0.0
+                bars_match_n_ret, bars_match_n_match, bars_match_pct = n_ret, n_match, pct
+                _diag = "liquidity_shock_reversion" in signal_names or getattr(args, "case_study", None) == "liqshock"
+                if _diag:
+                    ret_start = returns_df.index.min()
+                    ret_end = returns_df.index.max()
+                    print(f"returns columns: {n_ret}")
+                    print(f"returns date range: [{ret_start}, {ret_end}]")
+                    print(f"bars unique pair_ids: {bars_unique_pairs}")
+                    print(f"bars date range: [{bars_start}, {bars_end}]")
+                    print(f"bars columns matched: {n_match} ({pct:.1f}%)")
+
     # Build signals (including institutional composites)
     sig_mom = signal_momentum_24h(returns_df, args.freq) if n_assets >= 1 else pd.DataFrame()
     sig_clean = clean_momentum(returns_df, args.freq, factor_ret) if not returns_df.empty else pd.DataFrame()
@@ -301,7 +371,6 @@ def main() -> int:
     if sig_value is not None and sig_value.empty:
         sig_value = None
 
-    signal_names = [s.strip() for s in args.signals.split(",") if s.strip()]
     signals_dict = {}
     if "clean_momentum" in signal_names and not sig_clean.empty:
         signals_dict["clean_momentum"] = sig_clean
@@ -309,10 +378,21 @@ def main() -> int:
         signals_dict["value_vs_beta"] = sig_value
     if "momentum_24h" in signal_names and not sig_mom.empty:
         signals_dict["momentum_24h"] = sig_mom
+    if "liquidity_shock_reversion" in signal_names and liquidity_panel is not None:
+        liqshock_variants = liquidity_shock_reversion_variants(
+            liquidity_panel=liquidity_panel,
+            target_index=returns_df.index,
+            target_columns=returns_df.columns,
+            roll_vol_panel=roll_vol_panel,
+        )
+        signals_dict.update(liqshock_variants)
 
     # ---- Orthogonalized signals section ----
     lines.append("## 2) Orthogonalized signals")
-    if len(signals_dict) >= 2:
+    if signal_names == ["liquidity_shock_reversion"]:
+        orth_dict = dict(signals_dict)
+        lines.append("*Liqshock-only run: orthogonalization skipped (16 variants).*")
+    elif len(signals_dict) >= 2:
         orth_dict, report = orthogonalize_signals(signals_dict)
         if report:
             lines.append("Cross-correlation report (avg abs corr before/after):")
@@ -736,9 +816,141 @@ def main() -> int:
         )
         lines.append("")
 
+    # ---- Multi-factor OLS (before report so case-study renderer can use canonical_metrics) ----
+    mf_metrics: dict = {}
+    try:
+        if factor_run_loaded is not None:
+            betas_dict, r2_mf, _resid_mf = factor_run_loaded
+            if "BTC_spot" in betas_dict and not betas_dict["BTC_spot"].empty:
+                mf_metrics["beta_btc_mean"] = float(betas_dict["BTC_spot"].mean(skipna=True).mean())
+            if "ETH_spot" in betas_dict and not betas_dict["ETH_spot"].empty:
+                mf_metrics["beta_eth_mean"] = float(betas_dict["ETH_spot"].mean(skipna=True).mean())
+            if not r2_mf.empty:
+                mf_metrics["r2_mean"] = float(r2_mf.mean(skipna=True).mean())
+        else:
+            factor_matrix = build_factor_matrix(returns_df)
+            if not factor_matrix.empty:
+                betas_dict, r2_mf, resid_mf = rolling_multifactor_ols(returns_df, factor_matrix, window=72, min_obs=24)
+                if "BTC_spot" in betas_dict and not betas_dict["BTC_spot"].empty:
+                    mf_metrics["beta_btc_mean"] = float(betas_dict["BTC_spot"].mean(skipna=True).mean())
+                if "ETH_spot" in betas_dict and not betas_dict["ETH_spot"].empty:
+                    mf_metrics["beta_eth_mean"] = float(betas_dict["ETH_spot"].mean(skipna=True).mean())
+                if not r2_mf.empty:
+                    mf_metrics["r2_mean"] = float(r2_mf.mean(skipna=True).mean())
+    except Exception as e:
+        print("Multi-factor OLS skip:", e)
+
+    # ---- Canonical metrics (before report write for case-study renderer) ----
+    pnl_sharpes = {
+        k: float(v.mean() / v.std()) if v.std() and v.std() > 0 else float("nan") for k, v in portfolio_pnls.items()
+    }
+    canonical_metrics: dict = {
+        "universe_size": float(n_assets),
+    }
+    if pnl_sharpes:
+        _sharpe_agg = safe_nanmean(list(pnl_sharpes.values()))
+        if _sharpe_agg is not None:
+            canonical_metrics["sharpe"] = _sharpe_agg
+    for k, v in pnl_sharpes.items():
+        canonical_metrics[f"sharpe_{k}"] = v
+
+    if portfolio_pnls:
+        for k, pnl in portfolio_pnls.items():
+            eq = (1 + pnl).cumprod()
+            dd = (eq.cummax() - eq) / eq.cummax()
+            canonical_metrics[f"max_drawdown_{k}"] = float(dd.max()) if not dd.empty else float("nan")
+        canonical_metrics["max_drawdown"] = float(
+            np.nanmax([canonical_metrics.get(f"max_drawdown_{k}", float("nan")) for k in portfolio_pnls])
+        )
+
+    if signals_dict:
+        fwd1 = compute_forward_returns(returns_df, 1)
+        p_values_series = pd.Series(dtype=float)
+        for sname, sig in signals_dict.items():
+            ic_ts = information_coefficient(sig, fwd1, method="spearman")
+            if not ic_ts.empty and ic_ts.notna().any():
+                canonical_metrics[f"mean_ic_{sname}"] = float(ic_ts.mean())
+                s = ic_summary(ic_ts)
+                t_stat = s.get("t_stat")
+                if t_stat is not None and np.isfinite(t_stat):
+                    z = abs(float(t_stat))
+                    p_val = 2.0 * (1.0 - 0.5 * (1.0 + math.erf(z / math.sqrt(2.0))))
+                    p_val = min(1.0, max(1e-16, p_val))
+                    p_values_series[sname] = p_val
+                    canonical_metrics[f"p_value_raw_{sname}"] = p_val
+        if len(p_values_series) >= 2:
+            adj, discoveries = adjust_pvalues(p_values_series, method="bh", q=0.05)
+            for sname in p_values_series.index:
+                if sname in adj.index and np.isfinite(adj[sname]):
+                    canonical_metrics[f"p_value_adj_bh_{sname}"] = float(adj[sname])
+            canonical_metrics["p_value_family_adjusted"] = 1.0
+        elif len(p_values_series) == 1:
+            canonical_metrics["p_value_family_adjusted"] = 0.0
+        ic_vals = [canonical_metrics[k] for k in canonical_metrics if k.startswith("mean_ic_")]
+        if ic_vals:
+            canonical_metrics["mean_ic"] = float(np.nanmean(ic_vals))
+
+    if portfolio_pnls:
+        turnover_vals = []
+        for k in portfolio_pnls:
+            sig = signals_dict.get(k)
+            if sig is None and orth_dict:
+                sig = orth_dict.get(k)
+            if sig is not None and not sig.empty:
+                r = rank_signal_df(sig)
+                w = long_short_from_ranks(r, args.top_k, args.bottom_k, gross_leverage=1.0)
+                t = turnover_from_weights(w)
+                turnover_vals.append(float(t.mean()))
+        if turnover_vals:
+            canonical_metrics["turnover"] = float(np.nanmean(turnover_vals))
+
+    canonical_metrics.update(mf_metrics)
+    if _rc_result is not None and _rc_family_id is not None:
+        canonical_metrics["family_id"] = _rc_family_id
+        canonical_metrics["rc_p_value"] = _rc_result["rc_p_value"]
+        canonical_metrics["rc_observed_max"] = _rc_result["observed_max"]
+        canonical_metrics["rc_metric"] = _rc_result.get("rc_metric", "mean_ic")
+        canonical_metrics["rc_horizon"] = (
+            float(_rc_result["rc_horizon"]) if _rc_result.get("rc_horizon") is not None else None
+        )
+        canonical_metrics["rc_n_sim"] = _rc_result.get("n_sim", 0)
+        canonical_metrics["rc_seed"] = _rc_result.get("rc_seed")
+        canonical_metrics["rc_method"] = _rc_result.get("rc_method", "stationary")
+        canonical_metrics["rc_avg_block_length"] = _rc_result.get("rc_avg_block_length")
+
+    # ---- Write report (standard or case-study) ----
     report_path = out_dir / timestamped_filename("research_v2", "md", sep="_")
-    with open(report_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
+    if getattr(args, "case_study", None) == "liqshock":
+        import importlib.util
+
+        _renderer_path = Path(__file__).resolve().parent / "case_study_liqshock_renderer.py"
+        _spec = importlib.util.spec_from_file_location("case_study_liqshock_renderer", _renderer_path)
+        _mod = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        report_md = _mod.render_case_study_liqshock(
+            args=args,
+            returns_df=returns_df,
+            signals_dict=signals_dict,
+            orth_dict=orth_dict,
+            portfolio_pnls=portfolio_pnls,
+            canonical_metrics=canonical_metrics,
+            liquidity_panel=liquidity_panel,
+            roll_vol_panel=roll_vol_panel,
+            bars_match_n_ret=bars_match_n_ret,
+            bars_match_n_match=bars_match_n_match,
+            bars_match_pct=bars_match_pct,
+            run_id=run_id_early,
+            out_dir=out_dir,
+            rc_result=_rc_result,
+            regime_run_id=regime_run_id_early,
+            regime_coverage_rel_path=_regime_coverage_rel_path,
+            top10_p10_liq_floor=getattr(args, "top10_p10_liq_floor", 250000),
+        )
+        with open(report_path, "w", encoding="utf-8") as f:
+            f.write(report_md)
+    else:
+        with open(report_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
     print(f"Report: {report_path}")
 
     output_paths = [str(report_path)] + bundle_output_paths
@@ -769,30 +981,6 @@ def main() -> int:
         output_paths.append(str(health_path))
     except Exception as e:
         print("Health summary skip:", e)
-
-    # ---- Multi-factor OLS summary metrics (in-memory or from --factor-run-id) ----
-    mf_metrics: dict = {}
-    try:
-        if factor_run_loaded is not None:
-            betas_dict, r2_mf, _resid_mf = factor_run_loaded
-            if "BTC_spot" in betas_dict and not betas_dict["BTC_spot"].empty:
-                mf_metrics["beta_btc_mean"] = float(betas_dict["BTC_spot"].mean(skipna=True).mean())
-            if "ETH_spot" in betas_dict and not betas_dict["ETH_spot"].empty:
-                mf_metrics["beta_eth_mean"] = float(betas_dict["ETH_spot"].mean(skipna=True).mean())
-            if not r2_mf.empty:
-                mf_metrics["r2_mean"] = float(r2_mf.mean(skipna=True).mean())
-        else:
-            factor_matrix = build_factor_matrix(returns_df)
-            if not factor_matrix.empty:
-                betas_dict, r2_mf, resid_mf = rolling_multifactor_ols(returns_df, factor_matrix, window=72, min_obs=24)
-                if "BTC_spot" in betas_dict and not betas_dict["BTC_spot"].empty:
-                    mf_metrics["beta_btc_mean"] = float(betas_dict["BTC_spot"].mean(skipna=True).mean())
-                if "ETH_spot" in betas_dict and not betas_dict["ETH_spot"].empty:
-                    mf_metrics["beta_eth_mean"] = float(betas_dict["ETH_spot"].mean(skipna=True).mean())
-                if not r2_mf.empty:
-                    mf_metrics["r2_mean"] = float(r2_mf.mean(skipna=True).mean())
-    except Exception as e:
-        print("Multi-factor OLS skip:", e)
 
     # Experiment log (legacy JSON/CSV)
     try:
@@ -852,87 +1040,9 @@ def main() -> int:
         except Exception as e:
             print("Manifest skip:", e)
 
-    # ---- SQLite experiment registry ----
+    # ---- SQLite experiment registry (canonical_metrics built before report write) ----
     try:
         from crypto_analyzer.spec import RESEARCH_SPEC_VERSION
-
-        pnl_sharpes = {
-            k: float(v.mean() / v.std()) if v.std() and v.std() > 0 else float("nan") for k, v in portfolio_pnls.items()
-        }
-        canonical_metrics: dict = {
-            "universe_size": float(n_assets),
-        }
-        if pnl_sharpes:
-            _sharpe_agg = safe_nanmean(list(pnl_sharpes.values()))
-            if _sharpe_agg is not None:
-                canonical_metrics["sharpe"] = _sharpe_agg
-        for k, v in pnl_sharpes.items():
-            canonical_metrics[f"sharpe_{k}"] = v
-
-        if portfolio_pnls:
-            for k, pnl in portfolio_pnls.items():
-                eq = (1 + pnl).cumprod()
-                dd = (eq.cummax() - eq) / eq.cummax()
-                canonical_metrics[f"max_drawdown_{k}"] = float(dd.max()) if not dd.empty else float("nan")
-            canonical_metrics["max_drawdown"] = float(
-                np.nanmax([canonical_metrics.get(f"max_drawdown_{k}", float("nan")) for k in portfolio_pnls])
-            )
-
-        if signals_dict:
-            fwd1 = compute_forward_returns(returns_df, 1)
-            p_values_series = pd.Series(dtype=float)
-            for sname, sig in signals_dict.items():
-                ic_ts = information_coefficient(sig, fwd1, method="spearman")
-                if not ic_ts.empty and ic_ts.notna().any():
-                    canonical_metrics[f"mean_ic_{sname}"] = float(ic_ts.mean())
-                    s = ic_summary(ic_ts)
-                    t_stat = s.get("t_stat")
-                    if t_stat is not None and np.isfinite(t_stat):
-                        # Two-tailed p from t (normal approximation)
-                        z = abs(float(t_stat))
-                        p_val = 2.0 * (1.0 - 0.5 * (1.0 + math.erf(z / math.sqrt(2.0))))
-                        p_val = min(1.0, max(1e-16, p_val))
-                        p_values_series[sname] = p_val
-                        canonical_metrics[f"p_value_raw_{sname}"] = p_val
-            if len(p_values_series) >= 2:
-                adj, discoveries = adjust_pvalues(p_values_series, method="bh", q=0.05)
-                for sname in p_values_series.index:
-                    if sname in adj.index and np.isfinite(adj[sname]):
-                        canonical_metrics[f"p_value_adj_bh_{sname}"] = float(adj[sname])
-                canonical_metrics["p_value_family_adjusted"] = 1.0
-            elif len(p_values_series) == 1:
-                canonical_metrics["p_value_family_adjusted"] = 0.0
-            ic_vals = [canonical_metrics[k] for k in canonical_metrics if k.startswith("mean_ic_")]
-            if ic_vals:
-                canonical_metrics["mean_ic"] = float(np.nanmean(ic_vals))
-
-        if portfolio_pnls:
-            turnover_vals = []
-            for k in portfolio_pnls:
-                sig = signals_dict.get(k)
-                if sig is None and orth_dict:
-                    sig = orth_dict.get(k)
-                if sig is not None and not sig.empty:
-                    r = rank_signal_df(sig)
-                    w = long_short_from_ranks(r, args.top_k, args.bottom_k, gross_leverage=1.0)
-                    t = turnover_from_weights(w)
-                    turnover_vals.append(float(t.mean()))
-            if turnover_vals:
-                canonical_metrics["turnover"] = float(np.nanmean(turnover_vals))
-
-        canonical_metrics.update(mf_metrics)
-        if _rc_result is not None and _rc_family_id is not None:
-            canonical_metrics["family_id"] = _rc_family_id
-            canonical_metrics["rc_p_value"] = _rc_result["rc_p_value"]
-            canonical_metrics["rc_observed_max"] = _rc_result["observed_max"]
-            canonical_metrics["rc_metric"] = _rc_result.get("rc_metric", "mean_ic")
-            canonical_metrics["rc_horizon"] = (
-                float(_rc_result["rc_horizon"]) if _rc_result.get("rc_horizon") is not None else None
-            )
-            canonical_metrics["rc_n_sim"] = _rc_result.get("n_sim", 0)
-            canonical_metrics["rc_seed"] = _rc_result.get("rc_seed")
-            canonical_metrics["rc_method"] = _rc_result.get("rc_method", "stationary")
-            canonical_metrics["rc_avg_block_length"] = _rc_result.get("rc_avg_block_length")
 
         env_fp = str(get_env_fingerprint())
         experiment_db_path = os.environ.get("EXPERIMENT_DB_PATH", str(out_dir / "experiments.db"))
