@@ -37,12 +37,12 @@ This repo computes:
 2. **A variance estimate for \( \widehat{SR} \)** under i.i.d.-style approximations including skewness and excess kurtosis: sample skewness \( \hat{\gamma} \) and excess kurtosis \( \hat{\kappa} \) are taken from the series (pandas `skew()` and `kurtosis()`; the latter is excess kurtosis). The code uses:
 
 $$
-\widehat{\operatorname{Var}}(\widehat{SR}) = \frac{ 1 + \frac{1}{2} \widehat{SR}^2 - \hat{\gamma} \, \widehat{SR} + \frac{1}{4} \hat{\kappa} \, \widehat{SR}^2 }{ n }
+\widehat{\text{Var}}(\widehat{SR}) = \frac{ 1 + \frac{1}{2} \widehat{SR}^2 - \hat{\gamma} \, \widehat{SR} + \frac{1}{4} \hat{\kappa} \, \widehat{SR}^2 }{ n }
 $$
 
 (then floored at \( 10^{-12} \)). This is exactly what's implemented in `multiple_testing`.
 
-Define \( \hat{\sigma}_{SR} = \sqrt{ \widehat{\operatorname{Var}}(\widehat{SR}) } \).
+Define \( \hat{\sigma}_{SR} = \sqrt{ \widehat{\text{Var}}(\widehat{SR}) } \).
 
 3. **A multiple-testing "winner's curse" correction** via an approximation to the expected maximum Sharpe under the null across \( N \) trials (where \( N = \max(\texttt{n\_trials\_estimate}, 1) \)):
 
@@ -88,7 +88,7 @@ $$
 
 **(i) Asymptotic size of the "penalty."** The null expected maximum scales as \( \widehat{E}[\max SR_{\mathrm{null}}] = \Theta(\hat{\sigma}_{SR} \sqrt{\ln N}) \). Since (under i.i.d. with finite moments) \( \hat{\sigma}_{SR} = \Theta(n^{-1/2}) \), the penalty is \( \Theta(\sqrt{\ln N / n}) \). So increasing \( N \) at fixed \( n \) raises the bar slowly (logarithmically), while increasing \( n \) shrinks the bar at \( n^{-1/2} \).
 
-**(ii) Dependence / non-i.i.d. returns.** The variance formula and the normal-max approximation assume rough i.i.d.-style behavior (see `multiple_testing`). Autocorrelation, volatility clustering, regime shifts, and heavy tails can make \( \widehat{\operatorname{Var}}(\widehat{SR}) \) materially wrong, miscalibrating \( DSR_{\mathrm{repo}} \).
+**(ii) Dependence / non-i.i.d. returns.** The variance formula and the normal-max approximation assume rough i.i.d.-style behavior (see `multiple_testing`). Autocorrelation, volatility clustering, regime shifts, and heavy tails can make \( \widehat{\text{Var}}(\widehat{SR}) \) materially wrong, miscalibrating \( DSR_{\mathrm{repo}} \).
 
 **(iii) "Trials" \( N \) is user-provided.** The code treats `n_trials_estimate` as a stand-in for the effective number of tested variants (see `multiple_testing`). If the true search space is larger, DSR is optimistic; if smaller, overly conservative.
 

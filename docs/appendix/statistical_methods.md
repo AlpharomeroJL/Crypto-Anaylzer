@@ -72,7 +72,7 @@ $$
 However, under non-normality, variance of the Sharpe estimator becomes:
 
 $$
-\operatorname{Var}(SR) \approx \frac{1}{T} \left( 1 + \frac{1}{2} SR^2 - \gamma_3 SR + \frac{\gamma_4 - 3}{4} SR^2 \right)
+\text{Var}(SR) \approx \frac{1}{T} \left( 1 + \frac{1}{2} SR^2 - \gamma_3 SR + \frac{\gamma_4 - 3}{4} SR^2 \right)
 $$
 
 ### A.3.3 Expected Maximum Sharpe Under Multiple Trials
@@ -90,7 +90,7 @@ where \( z_{1 - 1/N} \) is the standard normal quantile, and \( \mu_{SR} \), \( 
 The Deflated Sharpe Ratio is:
 
 $$
-DSR = \frac{SR - E[SR_{\max}]}{\sqrt{\operatorname{Var}(SR)}}
+DSR = \frac{SR - E[SR_{\max}]}{\sqrt{\text{Var}(SR)}}
 $$
 
 The associated p-value is:
@@ -141,7 +141,7 @@ $$
 Compute its percentile rank in test performance:
 
 $$
-\lambda = \frac{\operatorname{rank}(SR_{j^*}^{\mathrm{test}})}{m}
+\lambda = \frac{\text{rank}(SR_{j^*}^{\mathrm{test}})}{m}
 $$
 
 Define:
@@ -317,7 +317,7 @@ This appendix expands key derivations and asymptotic arguments underpinning the 
 
 ## B.1 Asymptotics for Sample Mean and Variance (Weak Dependence)
 
-Let \( \{r_t\}_{t \in \mathbb{Z}} \) be strictly stationary with \( E[r_t] = \mu \), \( \operatorname{Var}(r_t) = \sigma^2 \), and satisfying a mixing condition (e.g., strong mixing with summable mixing coefficients) plus \( E|r_t|^{2+\delta} < \infty \) for some \( \delta > 0 \).
+Let \( \{r_t\}_{t \in \mathbb{Z}} \) be strictly stationary with \( E[r_t] = \mu \), \( \text{Var}(r_t) = \sigma^2 \), and satisfying a mixing condition (e.g., strong mixing with summable mixing coefficients) plus \( E|r_t|^{2+\delta} < \infty \) for some \( \delta > 0 \).
 
 Define:
 
@@ -334,7 +334,7 @@ $$
 where the long-run variance is
 
 $$
-\Omega = \gamma(0) + 2 \sum_{k=1}^{\infty} \gamma(k), \qquad \gamma(k) = \operatorname{Cov}(r_t, r_{t-k}).
+\Omega = \gamma(0) + 2 \sum_{k=1}^{\infty} \gamma(k), \qquad \gamma(k) = \text{Cov}(r_t, r_{t-k}).
 $$
 
 *Proof sketch.* Apply a central limit theorem for stationary mixing sequences (e.g., Ibragimov–Linnik type results). The variance of the partial sums includes all autocovariances; scaling by \( T^{-1} \) yields \( \Omega \). □
@@ -363,9 +363,9 @@ A convenient route is to use \( (\hat{\mu}, \widehat{m_2}) \) where \( \widehat{
 
 For IID:
 
-- \( \operatorname{Var}(\hat{\mu}) = \sigma^2 / T \)
-- \( \operatorname{Var}(\widehat{m_2}) = (\mu_4 - \sigma^4) / T \), where \( \mu_4 = E[(r - \mu)^4] \)
-- \( \operatorname{Cov}(\hat{\mu}, \widehat{m_2}) = \mu_3 / T \), where \( \mu_3 = E[(r - \mu)^3] \)
+- \( \text{Var}(\hat{\mu}) = \sigma^2 / T \)
+- \( \text{Var}(\widehat{m_2}) = (\mu_4 - \sigma^4) / T \), where \( \mu_4 = E[(r - \mu)^4] \)
+- \( \text{Cov}(\hat{\mu}, \widehat{m_2}) = \mu_3 / T \), where \( \mu_3 = E[(r - \mu)^3] \)
 
 ### B.2.2 Apply the Delta Method
 
@@ -386,7 +386,7 @@ Carrying out the multiplication (and expressing moments via standardized skewnes
 Let \( \gamma_3 = \mu_3 / \sigma^3 \), \( \gamma_4 = \mu_4 / \sigma^4 \). Then an approximate large-\( T \) variance for the sample Sharpe is:
 
 $$
-\operatorname{Var}(SR) \approx \frac{1}{T} \left( 1 - \gamma_3 SR + \frac{\gamma_4 - 1}{4} SR^2 \right).
+\text{Var}(SR) \approx \frac{1}{T} \left( 1 - \gamma_3 SR + \frac{\gamma_4 - 1}{4} SR^2 \right).
 $$
 
 Many texts present close variants depending on (i) population vs sample variance, (ii) whether you keep \( O(T^{-1}) \) terms from \( (\hat{\mu} - \mu)^2 \), and (iii) whether kurtosis is excess kurtosis \( \kappa = \gamma_4 - 3 \). The key point: nonzero skewness and excess kurtosis increase Sharpe estimator variance, which feeds DSR-style corrections. □
@@ -421,7 +421,7 @@ This is the “expected best luck” term subtracted inside DSR-style deflation 
 
 ## B.4 DSR: Expanded Construction and Asymptotic Interpretation
 
-Define: observed out-of-sample Sharpe \( SR_{\mathrm{obs}} \); null Sharpe mean \( \mu_{SR} \) (often 0); null Sharpe sd \( \sigma_{SR} \approx \sqrt{\operatorname{Var}(SR)} \); trial count \( N \) (or \( N_{\mathrm{eff}} \)).
+Define: observed out-of-sample Sharpe \( SR_{\mathrm{obs}} \); null Sharpe mean \( \mu_{SR} \) (often 0); null Sharpe sd \( \sigma_{SR} \approx \sqrt{\text{Var}(SR)} \); trial count \( N \) (or \( N_{\mathrm{eff}} \)).
 
 Then:
 
