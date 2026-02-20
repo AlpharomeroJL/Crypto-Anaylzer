@@ -44,7 +44,7 @@ $$
 
 Define $\hat{\sigma}_{SR} = \sqrt{ \widehat{\text{Var}}(\widehat{SR}) }$.
 
-3. **A multiple-testing "winner's curse" correction** via an approximation to the expected maximum Sharpe under the null across $N$ trials (where $N = \max(\texttt{n\_trials\_estimate}, 1)$):
+3. **A multiple-testing "winner's curse" correction** via an approximation to the expected maximum Sharpe under the null across $N$ trials (where $N = \max(\mathrm{n\_trials\_estimate}, 1)$):
 
 $$
 \widehat{E}[\max SR_{\mathrm{null}}] \approx \hat{\sigma}_{SR} \sqrt{2 \ln N}
@@ -105,7 +105,7 @@ Given $m$ p-values $p_1, \ldots, p_m$, this repo:
    - **BH:** $\tilde{p}_{(i)} = \min\!\left( 1, \; p_{(i)} \frac{m}{i} \right)$ (see `multiple_testing_adjuster`).
    - **BY:** $c_m = \sum_{j=1}^{m} \frac{1}{j}$, $\tilde{p}_{(i)} = \min\!\left( 1, \; p_{(i)} \frac{m \, c_m}{i} \right)$ (see `multiple_testing_adjuster`).
 3. Enforces monotonicity in the sorted order (non-decreasing adjusted p-values): $\tilde{p}_{(i)} \leftarrow \max(\tilde{p}_{(i)}, \tilde{p}_{(i-1)})$ (see `multiple_testing_adjuster`).
-4. Maps back to original indices and declares discoveries where $\texttt{adj} \leq q$ (see `multiple_testing_adjuster`).
+4. Maps back to original indices and declares discoveries where $\mathrm{adj} \leq q$ (see `multiple_testing_adjuster`).
 
 ### B.2 Derivation: BY's harmonic factor and asymptotics
 
@@ -133,7 +133,7 @@ $$
 \text{underperform} = \sum_{k=1}^{K} \mathbf{1}\{ T_k < m \},
 $$
 
-where $T_k$ is the test metric in row $k$, and $K = \texttt{len(results\_df)}$; see `multiple_testing`.
+where $T_k$ is the test metric in row $k$, and $K = \mathrm{len}(\mathrm{results\_df})$; see `multiple_testing`.
 
 - It returns:
 
@@ -169,7 +169,7 @@ The stationary bootstrap draws blocks of random (geometric) length with mean $\e
 
 ### D.2 Fixed block bootstrap indices (exact implementation for RC)
 
-For fixed block bootstrap in the RC module, indices are built by repeatedly sampling a start $\in \{0, \ldots, n - b\}$ and appending the block $[\texttt{start}, \texttt{start} + b)$ until length $n$; see `reality_check`.
+For fixed block bootstrap in the RC module, indices are built by repeatedly sampling a start $\in \{0, \ldots, n - b\}$ and appending the block $[\mathrm{start}, \mathrm{start} + b)$ until length $n$; see `reality_check`.
 
 ### D.3 Asymptotic notes (consistency conditions)
 
@@ -209,7 +209,7 @@ $$
 
 ### E.2 Implementation details (null generator)
 
-The null generator builder intersects indices so every hypothesis series is aligned on a common index set (see `reality_check`). For bootstrap draw $b$, it uses a per-draw seed $\texttt{seed\_b} = \texttt{seed} + b$ (see `reality_check`) and computes (for mean-IC metric) the resampled statistic as a simple mean:
+The null generator builder intersects indices so every hypothesis series is aligned on a common index set (see `reality_check`). For bootstrap draw $b$, it uses a per-draw seed $\mathrm{seed\_b} = \mathrm{seed} + b$ (see `reality_check`) and computes (for mean-IC metric) the resampled statistic as a simple mean:
 
 $$
 \hat{\theta}_h^{*(b)} = \mathrm{nanmean}(\{ x_{h, t_j} \}_{j=1}^{n}).
