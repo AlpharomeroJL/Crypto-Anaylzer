@@ -23,6 +23,9 @@
   - git commit  
 - This guarantees you can regenerate or detect drift.
 
-**Repro metadata stored in DB (minimum)**  
-- Already present: git_commit, spec_version, config_hash, env_fingerprint, dataset_id, params_json.  
+**Repro metadata stored in DB (minimum)**
+- Already present: git_commit, spec_version, config_hash, env_fingerprint, dataset_id, params_json.
 - Add: engine_version, config_version, and (optionally) factor_run_id / regime_run_id foreign keys when those become first-class.
+
+**Reproducibility**
+- CRYPTO_ANALYZER_DETERMINISTIC_TIME (timeutils) for deterministic timestamps in materialize and reportv2; document in README or run.ps1 help.

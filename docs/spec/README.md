@@ -5,6 +5,7 @@ Canonical source: [master_architecture_spec.md](master_architecture_spec.md). Do
 ## Contents
 
 - [Master Architecture Spec](master_architecture_spec.md) — full canonical document
+- [System overview](system_overview.md) — pipeline lifecycle, data model, determinism, stats stack, feature flags, promotion
 - [Implementation Ledger](implementation_ledger.md) — requirement → status, PRs, evidence
 
 ## Component specs

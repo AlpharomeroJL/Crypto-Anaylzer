@@ -41,8 +41,11 @@ interface Residualizer:
 - Sort index ascending; sort columns lexicographically.  
 - No global RNG use; if Kalman uses randomness (it shouldn't), require an explicit seed and log it.
 
-**Leakage hardening requirement**  
+**Leakage hardening requirement**
 - Must enforce as_of_lag_bars: residual at time *t* used for signal at *t* must be computed using returns ≤ *t−as_of_lag_bars*. (This fixes the current "full sample OLS" leakage risk in signal_residual_momentum_24h.)
+
+**Example**
+- compute(returns_df, ["BTC_spot","ETH_spot"], config, as_of_lag_bars=1) → FactorOutputs with residual_df aligned to returns index.
 
 ---
 
@@ -67,8 +70,14 @@ interface RegimeDetector:
 **Error handling**  
 - Raise if asked to run mode="smooth" in test or if train/test windows overlap.
 
-**Determinism guarantees**  
+**Determinism guarantees**
 - Fixed optimizer seeds (if any), stable ordering, and strict separation of fit() and predict().
+
+**Required invariants**
+- fit() uses only train_data; predict(mode="filter") uses no future data in test. mode="smooth" in test must raise.
+
+**Example**
+- fit(train_df, config) → model; predict(test_df, mode="filter") → RegimeStateSeries with ts_utc, label, prob.
 
 ---
 
@@ -101,8 +110,14 @@ interface ExecutionCostModel:
 **Error handling**  
 - If required meta missing: either raise (strict mode) or fall back to conservative defaults (explicitly logged).
 
-**Determinism guarantees**  
+**Determinism guarantees**
 - No randomness; if scheduling simulation uses pseudo-random fills, require a seed and persist it.
+
+**Required invariants**
+- Same (gross_returns, turnover, config) → same net_returns and cost_breakdown. Missing liquidity → conservative default (e.g. 50 bps) when configured.
+
+**Example**
+- apply_costs(gross_returns, turnover_series, fee_bps=30, slippage_bps=10) → (net_returns, cost_breakdown).
 
 ---
 
@@ -121,6 +136,15 @@ interface ExecutionCostModel:
 interface MultipleTestingAdjuster:
   adjust(p_values: Series, method: str, q: float) -> AdjustedPValues
 ```
+
+**Determinism guarantees**
+- Same p_values and (method, q) → same adjusted p-values and discovery set. No RNG.
+
+**Note**
+- Romano–Wolf: stub behind CRYPTO_ANALYZER_ENABLE_ROMANOWOLF=1 (NotImplementedError). See implementation_ledger.
+
+**Example**
+- adjust(p_values, method="bh", q=0.05) → adjusted p-values and discoveries boolean flags.
 
 ---
 
@@ -142,3 +166,12 @@ interface Bootstrapper:
   sample(series: Series, config: BootstrapConfig) -> ndarray
   ci(samples: ndarray, ci_pct: float) -> tuple[float, float]
 ```
+
+**Error handling**
+- Invalid config (e.g. block_length &lt; 1) → raise or return empty; small series → informative message.
+
+**Determinism guarantees**
+- Fixed seed in config → identical sample indices and CI for same series and config. Seed must be stored in artifacts.
+
+**Example**
+- sample(returns_series, BootstrapConfig(method="stationary", seed=42)) → ndarray of resampled statistic; ci(samples, 0.95) → (lo, hi).

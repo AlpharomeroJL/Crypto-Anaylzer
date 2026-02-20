@@ -9,6 +9,8 @@
 
 Current DB schema is created idempotently (core ingestion tables + provenance + universe + provider health). Bars tables are created on materialization with a fixed schema and primary key. Experiment registry already exists as SQLite tables (experiments, experiment_metrics, experiment_artifacts).
 
+Phase 3 tables (regime_runs, regime_states, promotion_candidates, promotion_events, sweep_families, sweep_hypotheses) are created only by run_migrations_phase3; opt-in (e.g. CRYPTO_ANALYZER_ENABLE_REGIMES and explicit phase3 migration call). Core run_migrations does not apply phase3.
+
 Below is a schema evolution plan that adds **(a)** versioned migrations, and **(b)** optional materialized research outputs needed for causal regime/cost/factor extensions.
 
 ---

@@ -18,14 +18,20 @@ Assume: freq=1h, T=4,000 bars (~166 days), A=200 assets, factors K=2.
 - Validation (IC): O(T·A) correlations with per-time slicing; moderate.  
 - Optimization: per rebalance solve; manageable (n=assets at rebalance).
 
-**Caching plan**  
-- Cache keys: sha256(dataset_id + freq + model_config_json)  
-- Cache targets:  
-  - factor model outputs (betas/residuals) in SQLite (tables above) keyed by factor_run_id  
-  - regime states in SQLite keyed by regime_run_id  
-  - validation bundles and sweep results as artifacts with SHA recorded in experiment registry  
-- Invalidation:  
+**Caching plan**
+- Cache keys: sha256(dataset_id + freq + model_config_json)
+- Cache targets:
+  - factor model outputs (betas/residuals) in SQLite (tables above) keyed by factor_run_id
+  - regime states in SQLite keyed by regime_run_id
+  - validation bundles and sweep results as artifacts with SHA recorded in experiment registry
+- Invalidation:
   - dataset_id change invalidates all derived caches by construction.
+
+**Concrete cache modules**
+- factor_cache (`crypto_analyzer/stats/factor_cache.py`), regime_cache (`crypto_analyzer/stats/regime_cache.py`), rc_cache (`crypto_analyzer/stats/rc_cache.py`); keys include dataset_id, config_hash, family_id; --no-cache and CRYPTO_ANALYZER_NO_CACHE disable.
+
+**Determinism**
+- CRYPTO_ANALYZER_DETERMINISTIC_TIME (timeutils) for reproducible materialize and reportv2 rerun.
 
 **When SQLite breaks (and migration plan)**  
 SQLite remains excellent for single-process research pipelines, but it becomes limiting when:  

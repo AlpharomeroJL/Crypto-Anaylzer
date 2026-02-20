@@ -1,7 +1,9 @@
 # Phased execution checklist
 
-**Purpose:** Phase 1/2/3 checkbox execution checklist for implementing the research upgrades.  
+**Purpose:** Phase 1/2/3 checkbox execution checklist for implementing the research upgrades.
 **Canonical spec:** [../master_architecture_spec.md](../master_architecture_spec.md)
+
+Canonical status: implementation_ledger and drift_register (S1–S15) record completed items.
 
 ---
 

@@ -42,3 +42,5 @@ graph TD
   H --> I[Reporting/UI/API]
   I --> J[Experiment Registry & Manifests]
 ```
+
+Promotion (candidate → accepted) and Experiment Registry & Manifests are part of Reporting. See [pipeline_contracts.md](pipeline_contracts.md) and [phased_execution.md](phased_execution.md).

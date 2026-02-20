@@ -39,13 +39,17 @@
   - report and manifest written  
   - experiment registry contains run row + metrics + artifacts
 
-**Deterministic re-run test**  
-- Same DB snapshot + same config + same git commit must produce identical:  
-  - dataset_id (already deterministic)  
-  - report artifact SHA256 (already supported)  
+**Deterministic re-run test (mandatory gate)**
+- Same DB snapshot + same config + same git commit must produce identical:
+  - dataset_id (already deterministic)
+  - report artifact SHA256 (already supported)
   - run_id if you choose stable hashing for run identity
+- Deterministic rerun: `test_reportv2_deterministic_rerun` with CRYPTO_ANALYZER_DETERMINISTIC_TIME; byte-identical bundle and manifest.
 
-**Walk-forward leakage test**  
+**Null suite**
+- `crypto_analyzer/null_suite.py`, CLI `scripts/run.ps1 null_suite`; artifacts: null_ic_dist.csv, null_sharpe_dist.csv, null_pvalues.json. (mandatory gate for null baselines.)
+
+**Walk-forward leakage test**
 - For each fold, enforce:  
   - factor/regime models fitted only on train timestamps  
   - signals for test timestamps computed without accessing future within test beyond allowed lags  
@@ -56,6 +60,7 @@
 ## Statistical tests
 
 **Null model baseline (mandatory gate)**  
+- Required for acceptance: run null suite and compare real signals to null distribution.  
 - Null 1: "rank noise" signal (random cross-sectional ranks each timestamp).  
 - Null 2: "permuted signal" (cross-sectional permutation each timestamp).  
 - Null 3: "block-shuffled time" (block permutation of time buckets) for time-dependent strategies.
