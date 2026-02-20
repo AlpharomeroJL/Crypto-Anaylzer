@@ -28,7 +28,7 @@ A local-first research platform for crypto markets: **ingest** from public CEX/D
 | **Quickstart (5 minutes)** | [Quickstart](#quickstart) → run a few commands and generate a report. |
 | **For researchers** | [Why it’s trustworthy](#why-its-trustworthy), [Core workflows](#core-workflows), [Determinism & reproducibility](#determinism--reproducibility). |
 | **For engineers** | [Architecture at a glance](#architecture-at-a-glance), [CLI cheatsheet](#cli-cheatsheet), [Development / Verification](#development--verification). |
-| **For reviewers** | [Why it’s trustworthy](#why-its-trustworthy), [Statistical defenses](#why-its-trustworthy) and [Determinism](#determinism--reproducibility); then [docs/spec/system_overview.md](docs/spec/system_overview.md). |
+| **For reviewers** | [Why it’s trustworthy](#why-its-trustworthy), [Statistical defenses](#why-its-trustworthy), [Methods & limits](docs/methods_and_limits.md), and [Determinism](#determinism--reproducibility); then [docs/spec/system_overview.md](docs/spec/system_overview.md). |
 
 ---
 
@@ -61,6 +61,32 @@ One-command demo (preflight + poll + materialize + report): `.\scripts\run.ps1 d
 - **Leakage controls** — Causal factor residuals (no future data); strict train/test separation in walk-forward; research-only boundary check in CI (no order/submit/broker or API keys in code).
 - **Reproducibility** — Stable IDs for dataset, factor run, regime run, and Reality Check family; fixed seeds for bootstrap and Reality Check; optional `CRYPTO_ANALYZER_DETERMINISTIC_TIME` so materialize and reportv2 produce identical outputs on rerun.
 - **Statistical defenses** — Walk-forward splits; block bootstrap (seeded, preserves serial correlation); deflated Sharpe; PBO proxy; multiple-testing correction (BH/BY); optional Reality Check (bootstrap-based null for data snooping, keyed by `family_id`). Romano–Wolf is a feature-flagged stub (NotImplementedError).
+
+### Methods & limits (formal)
+
+The statistical controls in this repo are designed to reduce false discoveries and make overfitting visible—*not* to guarantee profitability.
+
+**Implemented controls (what we actually compute):**
+
+- **Walk-forward** train/test splits (OOS metrics only).
+- **Bootstrap under dependence** (fixed block + stationary bootstrap; seeded; preserves serial correlation) for uncertainty estimates and null generation.
+- **Deflated Sharpe (repo implementation):** Sharpe deflation using skew/excess-kurtosis-adjusted Sharpe variance and a leading-order extreme-value correction over an estimated trials count \( N \).
+- **PBO proxy (repo implementation):** split-wise median underperformance rate for the "selected" strategy across walk-forward splits (screening heuristic, not full CSCV PBO).
+- **Multiple testing control:** BH/BY adjusted p-values for signal discovery.
+- **Reality Check (optional):** max-statistic bootstrap test for data-snooping control keyed by `family_id`. *(Romano–Wolf is feature-flagged but not implemented.)*
+
+**Assumptions & known limits (read before citing results):**
+
+- Deflated Sharpe and the PBO proxy rely on simplifying assumptions and are best treated as *screening statistics*.
+- BH assumes independence/positive dependence; BY is dependence-robust but more conservative.
+- Bootstrap methods assume weak stationarity within the sampled windows; regime breaks can invalidate calibration.
+
+**Formal definitions + derivations:**
+
+- [Methods & Limits](docs/methods_and_limits.md) — philosophy, assumptions, implementation boundaries.
+- [Statistical Methods Appendix](docs/appendix/statistical_methods.md) — formal definitions and proof sketches (Appendices A & B).
+- [Methods & Limits — implementation-aligned](docs/appendix/methods_limits_implementation.md) — exact repo formulae for DSR, BH/BY, PBO proxy, bootstrap, Reality Check.
+
 - **Single source of truth** — One SQLite DB; versioned, idempotent migrations (`run_migrations` for core + v2; `run_migrations_phase3` opt-in only). Ingestion uses the ingest API (writes, migrations, provider chains); dashboard uses read-only `read_api`. No test performs live HTTP; all research tests use mocked HTTP and are deterministic where applicable.
 
 ---
@@ -68,6 +94,23 @@ One-command demo (preflight + poll + materialize + report): `.\scripts\run.ps1 d
 ### Design rationale
 
 **Why deterministic IDs?** So every run is traceable and repeatable: same inputs and config produce the same `dataset_id`, `factor_run_id`, and artifact hashes. That lets you compare runs, invalidate caches when data changes, and prove reproducibility in audits or reviews. **Why opt-in migrations?** Phase 3 (regimes, promotion, sweep tables) adds schema and behavior that not every user needs. Keeping it opt-in preserves a minimal default: one DB, core + factor tables, no extra complexity until you enable it. **Why governance modeling?** Research that moves toward production needs a path from “exploratory” to “accepted” with clear gates (IC, Reality Check, execution evidence) and an audit log. The promotion workflow and ValidationBundle give you that without forcing it on single-run or ad-hoc use.
+
+---
+
+## Research rigor & overfitting defenses
+
+This repo treats signal discovery as a **multiple-testing problem under dependence**. Key controls:
+
+- Walk-forward evaluation
+- Deflated Sharpe Ratio (DSR-style)
+- Probability of Backtest Overfitting (PBO-style)
+- False Discovery Rate control (BH/BY)
+- Stationary bootstrap confidence intervals
+
+**Details:**
+
+- [Statistical Methods Appendix](docs/appendix/statistical_methods.md) — formal definitions and assumptions (Appendix A)
+- [Derivations & proof sketches](docs/appendix/statistical_methods.md#appendix-b--derivations-and-asymptotic-results-proof-sketches) — asymptotics, delta method, DSR construction, BH/BY and bootstrap (Appendix B)
 
 ---
 
@@ -140,6 +183,8 @@ All commands: `.\scripts\run.ps1 <command> [args...]`
 | `poll` | Single-pair data poll (provider fallback) |
 | `universe-poll --universe ...` | Multi-asset universe discovery (e.g. `--universe-chain solana`) |
 | `materialize` | Build OHLCV bars (e.g. `--freq 1h`) |
+| `import_birdeye_history` | Import Birdeye historical pool data into a temp DB copy (see [Birdeye import](docs/birdeye_import.md)) |
+| `import_geckoterminal_history` | Import GeckoTerminal historical pool data (free, no API key; see [GeckoTerminal import](docs/geckoterminal_import.md)) |
 | `reportv2` | Research report: IC, orthogonalization, PBO, QP; optional `--regimes`, `--reality-check`, `--execution-evidence` when Phase 3 enabled |
 | `walkforward` | Walk-forward backtest, out-of-sample fold stitching |
 | `null_suite` | Null/placebo runner (random ranks, permuted signal, block shuffle) |
@@ -149,6 +194,8 @@ All commands: `.\scripts\run.ps1 <command> [args...]`
 | `streamlit` | Interactive dashboard (12 pages) |
 | `demo` | One-command demo: doctor → poll → materialize → report |
 | `check-dataset` | Inspect dataset fingerprints and row counts |
+
+**Historical import:** [Birdeye](docs/birdeye_import.md) (API key) or [GeckoTerminal](docs/geckoterminal_import.md) (free, no key) can backfill Solana pool history into a temp DB; then materialize and run case_study_liqshock against it. Multichain (discover → probe → select → import): [Gecko multichain workflow](docs/gecko_multichain_workflow.md).
 
 ### Expanded-Universe Validation Workflow (case-study liqshock)
 
@@ -314,6 +361,9 @@ When you run that sequence, paste:
 
 | Document | Contents |
 |----------|----------|
+| [Methods & limits](docs/methods_and_limits.md) | Statistical methods, assumptions, implementation boundaries, and limitations (DSR, PBO, BH/BY, bootstrap, null suite). See: [Statistical Methods Appendix](docs/appendix/statistical_methods.md). |
+| [Statistical Methods Appendix](docs/appendix/statistical_methods.md) | Formal definitions, assumptions, derivations/proof sketches for DSR, PBO, BH/BY, bootstrap, Reality Check (Appendices A & B) |
+| [Methods & Limits — implementation-aligned](docs/appendix/methods_limits_implementation.md) | Exact repo formulae: DSR (repo), PBO proxy, BH/BY, stationary/fixed block bootstrap, Reality Check |
 | [Research validation workflow](docs/research_validation_workflow.md) | Exploratory vs full-scale runs, run_id, snapshot semantics, validation readiness criteria |
 | [Spec index (canonical)](docs/spec/README.md) | Master spec, system overview, implementation ledger, component specs |
 | [System overview](docs/spec/system_overview.md) | Pipeline lifecycle, determinism, statistical stack, feature flags, promotion |
@@ -341,7 +391,7 @@ When you run that sequence, paste:
 ## Limitations / future work
 
 - **Data scope:** Ingestion is public CEX/DEX only; no authenticated feeds or private data. Universe discovery is config- and provider-dependent (e.g. Solana DEX). No real-time execution or order routing.
-- **Statistical:** Romano–Wolf is a stub (feature-flagged); deflated Sharpe and PBO rely on simplifying assumptions. Reality Check and block bootstrap are implemented and used; full multiple-comparison and regime-robust inference remain areas for extension.
+- **Statistical:** Romano–Wolf is a stub (feature-flagged). Deflated Sharpe and PBO are repo-specific approximations; Reality Check and dependence-respecting bootstrap are implemented and used. Full CSCV PBO and stepdown multiple-comparison procedures remain extension targets.
 - **Scale:** SQLite is the single store; suitable for research and moderate history. Large-scale or multi-process write workloads would need a documented migration path (e.g. Postgres for experiment registry already optional).
 - **Governance:** Promotion workflow and sweep registry are opt-in and evolving; thresholds and gating policy may be refined with use. Execution-evidence and capacity gates are in place; further realism checks are possible.
 
