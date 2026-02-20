@@ -42,7 +42,7 @@ from crypto_analyzer.artifacts import (
     write_json_sorted,
 )
 from crypto_analyzer.config import db_path
-from crypto_analyzer.data import get_factor_returns
+from crypto_analyzer.data import get_factor_returns, load_factor_run
 from crypto_analyzer.dataset import compute_dataset_fingerprint, dataset_id_from_fingerprint, fingerprint_to_json
 from crypto_analyzer.diagnostics import build_health_summary, rolling_ic_stability
 from crypto_analyzer.evaluation import conditional_metrics, lead_lag_analysis
@@ -143,6 +143,13 @@ def main() -> int:
     ap.add_argument("--tags", default=None, help="Comma-separated tags for experiment registry")
     ap.add_argument("--dataset-id", default=None, help="Explicit dataset ID (overrides computed)")
     ap.add_argument(
+        "--factor-run-id",
+        dest="factor_run_id",
+        default=None,
+        metavar="FACTOR_RUN_ID",
+        help="Use materialized factor run from DB (factor_betas, residual_returns); default: compute in-memory",
+    )
+    ap.add_argument(
         "--regimes",
         default=None,
         metavar="REGIME_RUN_ID",
@@ -199,6 +206,19 @@ def main() -> int:
             return 1
 
     db = args.db or (db_path() if callable(db_path) else db_path())
+    # Optional: load materialized factor run when --factor-run-id set
+    factor_run_loaded = None
+    if getattr(args, "factor_run_id", None):
+        fid = (args.factor_run_id or "").strip()
+        if fid:
+            factor_run_loaded = load_factor_run(db, fid)
+            if factor_run_loaded is None:
+                print(
+                    f"Error: --factor-run-id '{fid}' not found or empty in DB. "
+                    "Run factor materialize first or omit --factor-run-id for in-memory factors.",
+                    file=sys.stderr,
+                )
+                return 1
     out_dir = Path(args.out_dir)
     ensure_dir(out_dir)
     for sub in ("csv", "charts", "manifests", "health"):
@@ -750,18 +770,29 @@ def main() -> int:
     except Exception as e:
         print("Health summary skip:", e)
 
-    # ---- Multi-factor OLS summary metrics ----
+    # ---- Multi-factor OLS summary metrics (in-memory or from --factor-run-id) ----
     mf_metrics: dict = {}
     try:
-        factor_matrix = build_factor_matrix(returns_df)
-        if not factor_matrix.empty:
-            betas_dict, r2_mf, resid_mf = rolling_multifactor_ols(returns_df, factor_matrix, window=72, min_obs=24)
+        if factor_run_loaded is not None:
+            betas_dict, r2_mf, _resid_mf = factor_run_loaded
             if "BTC_spot" in betas_dict and not betas_dict["BTC_spot"].empty:
                 mf_metrics["beta_btc_mean"] = float(betas_dict["BTC_spot"].mean(skipna=True).mean())
             if "ETH_spot" in betas_dict and not betas_dict["ETH_spot"].empty:
                 mf_metrics["beta_eth_mean"] = float(betas_dict["ETH_spot"].mean(skipna=True).mean())
             if not r2_mf.empty:
                 mf_metrics["r2_mean"] = float(r2_mf.mean(skipna=True).mean())
+        else:
+            factor_matrix = build_factor_matrix(returns_df)
+            if not factor_matrix.empty:
+                betas_dict, r2_mf, resid_mf = rolling_multifactor_ols(
+                    returns_df, factor_matrix, window=72, min_obs=24
+                )
+                if "BTC_spot" in betas_dict and not betas_dict["BTC_spot"].empty:
+                    mf_metrics["beta_btc_mean"] = float(betas_dict["BTC_spot"].mean(skipna=True).mean())
+                if "ETH_spot" in betas_dict and not betas_dict["ETH_spot"].empty:
+                    mf_metrics["beta_eth_mean"] = float(betas_dict["ETH_spot"].mean(skipna=True).mean())
+                if not r2_mf.empty:
+                    mf_metrics["r2_mean"] = float(r2_mf.mean(skipna=True).mean())
     except Exception as e:
         print("Multi-factor OLS skip:", e)
 

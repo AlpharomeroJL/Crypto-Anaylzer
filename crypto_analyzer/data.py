@@ -5,7 +5,7 @@ Normalized data layer: load from SQLite and return clean pandas DataFrames.
 from __future__ import annotations
 
 import sqlite3
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -319,3 +319,60 @@ def get_factor_returns(
     price = spot.resample(freq).last().dropna()
     log_ret = np.log(price).diff()
     return log_ret.reindex(returns_df.index).dropna(how="all")
+
+
+def load_factor_run(
+    db_path_override: str,
+    factor_run_id: str,
+) -> Optional[Tuple[Dict[str, pd.DataFrame], pd.DataFrame, pd.DataFrame]]:
+    """
+    Load a materialized factor run from factor_betas and residual_returns.
+    Returns (betas_dict, r2_df, residual_df) in same shape as rolling_multifactor_ols:
+    - betas_dict: {factor_name: DataFrame(index=ts_utc, columns=asset_id)}
+    - r2_df: DataFrame(index=ts_utc, columns=asset_id), mean r2 across factors per (ts, asset)
+    - residual_df: DataFrame(index=ts_utc, columns=asset_id)
+    Returns None if factor_run_id has no rows (run missing or empty).
+    """
+    try:
+        conn = sqlite3.connect(db_path_override)
+        try:
+            cur = conn.execute(
+                "SELECT ts_utc, asset_id, factor_name, beta, alpha, r2 FROM factor_betas WHERE factor_run_id = ?",
+                (factor_run_id,),
+            )
+            beta_rows = cur.fetchall()
+            if not beta_rows:
+                return None
+            cur = conn.execute(
+                "SELECT ts_utc, asset_id, resid_log_return FROM residual_returns WHERE factor_run_id = ?",
+                (factor_run_id,),
+            )
+            resid_rows = cur.fetchall()
+            if not resid_rows:
+                return None
+        finally:
+            conn.close()
+    except sqlite3.OperationalError:
+        return None
+
+    # factor_betas: (ts_utc, asset_id, factor_name, beta, alpha, r2)
+    betas_df = pd.DataFrame(
+        beta_rows,
+        columns=["ts_utc", "asset_id", "factor_name", "beta", "alpha", "r2"],
+    )
+    betas_df["ts_utc"] = pd.to_datetime(betas_df["ts_utc"])
+    # Pivot per factor: index=ts_utc, columns=asset_id, values=beta
+    betas_dict: Dict[str, pd.DataFrame] = {}
+    for fname, grp in betas_df.groupby("factor_name"):
+        pivot = grp.pivot(index="ts_utc", columns="asset_id", values="beta")
+        betas_dict[fname] = pivot
+    # r2: one per (ts, asset, factor); take mean across factors per (ts, asset)
+    r2_pivot = betas_df.groupby(["ts_utc", "asset_id"])["r2"].mean().reset_index()
+    r2_df = r2_pivot.pivot(index="ts_utc", columns="asset_id", values="r2")
+
+    # residual_returns: (ts_utc, asset_id, resid_log_return)
+    resid_df = pd.DataFrame(resid_rows, columns=["ts_utc", "asset_id", "resid_log_return"])
+    resid_df["ts_utc"] = pd.to_datetime(resid_df["ts_utc"])
+    residual_df = resid_df.pivot(index="ts_utc", columns="asset_id", values="resid_log_return")
+
+    return betas_dict, r2_df, residual_df
