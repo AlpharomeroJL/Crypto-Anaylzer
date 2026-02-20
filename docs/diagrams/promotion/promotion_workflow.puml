@@ -1,0 +1,49 @@
+@startuml promotion_workflow
+title Promotion Workflow — Exploratory to Candidate to Accepted (Phase 3)
+
+package "Store (SQLite)" {
+  database "promotion_candidates\n(candidate_id, status,\ndataset_id, run_id, family_id,\nevidence_json, ...)" as PC
+  database "promotion_events\n(event_id, candidate_id,\nevent_type, payload_json)" as PE
+}
+
+package "Service" {
+  component "create_candidate\nlist / get / update_status" as Store
+  component "evaluate_and_record\n(ThresholdConfig, bundle)" as Eval
+  component "gating.evaluate_candidate\n(RC, regime, execution evidence)" as Gate
+}
+
+package "Caching" {
+  component "RC null cache\n(family_id + config + dataset + git)" as RCCache
+  component "factor_cache / regime_cache\n(metadata + rowcount match)" as FCache
+}
+
+Store --> PC : CRUD
+Store --> PE : append event
+Eval --> Store : update_status, record_event
+Eval --> Gate : evaluate_candidate(bundle,\nregime_summary, rc_summary,\nexecution_evidence)
+Gate --> RCCache : RC null lookup (or compute)
+Eval --> FCache : optional skip factor/regime compute
+
+package "CLI / Streamlit" {
+  component "promotion list\ncreate\nevaluate" as CLI
+  component "Promotion page\n(list, view, evaluate, status)" as UI
+}
+CLI --> Store
+CLI --> Eval
+UI --> Store
+UI --> Eval
+
+note right of Gate
+  Gates: require_reality_check,
+  require_regime_robustness,
+  require_execution_evidence
+  (allow_missing_* overrides)
+end note
+
+note bottom of PC
+  Status flow: exploratory -> candidate
+  -> accepted | rejected
+  (evaluate_and_record or manual)
+end note
+
+@enduml

@@ -1,0 +1,56 @@
+@startuml reportv2_pipeline
+title Report v2 Pipeline — Deterministic Run, ValidationBundle, Phase 3 Options
+
+actor "CLI" as CLI
+participant "research_report_v2" as R2
+participant "data" as Data
+participant "factor_materialize\n(load_factor_run)" as FM
+participant "regimes\n(optional)" as Reg
+participant "validation_bundle" as VB
+participant "sweeps\n(optional)" as Sweep
+participant "promotion\n(optional)" as Prom
+database "SQLite" as DB
+
+CLI -> R2 : run (--factor-run-id, --regimes,\n--reality-check, --execution-evidence)
+R2 -> DB : run_migrations (core + v2; phase3 if enabled)
+
+alt --factor-run-id set
+  R2 -> FM : load_factor_run(run_id)
+  FM -> DB : factor_betas, residual_returns
+  FM --> R2 : betas, residuals
+else no factor-run-id
+  R2 -> R2 : in-memory factor (default)
+end
+
+R2 -> Data : load_bars, get factor returns
+Data -> DB : bars_*, spot
+
+alt --regimes REGIME_RUN_ID (Phase 3)
+  R2 -> Reg : regime-conditioned IC / decay
+  Reg -> DB : regime_runs, regime_states
+  R2 -> VB : bundle + ic_summary_by_regime,\nic_decay_by_regime, regime_coverage
+end
+
+R2 -> R2 : per-signal ValidationBundle\n(IC series, t-stat, decay, turnover)
+R2 -> VB : emit bundle JSON + CSVs\n(relative paths)
+
+alt --reality-check (Phase 3)
+  R2 -> R2 : RC null simulations\n(family_id, rc_p_value)
+  R2 -> Sweep : persist sweep_families,\nsweep_hypotheses (if Phase 3 DB)
+  R2 -> VB : rc_summary in evidence
+end
+
+alt --execution-evidence (Phase 3)
+  R2 -> R2 : capacity_curve,\nexecution_evidence.json
+  R2 -> VB : execution_evidence_path in evidence
+end
+
+R2 -> R2 : governance manifest\n(git, env, hashes)
+R2 --> CLI : artifacts + manifest
+
+opt Promotion evaluate
+  CLI -> Prom : evaluate_and_record(bundle, thresholds)
+  Prom -> DB : promotion_candidates,\npromotion_events
+end
+
+@enduml

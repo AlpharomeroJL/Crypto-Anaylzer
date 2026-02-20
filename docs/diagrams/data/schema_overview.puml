@@ -1,0 +1,35 @@
+@startuml schema_overview
+title Schema Overview — Core, V2, Phase 3 (Opt-in)
+
+package "Core (run_migrations)" {
+  database "spot_price_snapshots\nsol_monitor_snapshots\nuniverse_allowlist\nuniverse_churn_log\nprovider_health" as Core
+}
+
+package "V2 (run_migrations_v2)" {
+  database "schema_migrations" as SM
+  database "factor_model_runs\n(deterministic run_id)" as FMR
+  database "factor_betas" as FB
+  database "residual_returns" as RR
+  database "bars_* (5min, 15min, 1h, 1D)" as Bars
+}
+Core --> Bars : bar builder reads snapshots
+FMR --> FB : run_id
+FMR --> RR : run_id
+
+package "Phase3 (run_migrations_phase3, opt-in)" as Phase3 {
+  database "schema_migrations_phase3" as SM3
+  database "regime_runs\nregime_states" as Regime
+  database "promotion_candidates\npromotion_events" as Prom
+  database "sweep_families\nsweep_hypotheses" as Sweep
+}
+SM3 --> Regime
+SM3 --> Prom
+SM3 --> Sweep
+
+note bottom of Phase3
+  Not applied by default.
+  ENABLE_REGIMES=1 or explicit
+  promotion/sweep usage.
+end note
+
+@enduml

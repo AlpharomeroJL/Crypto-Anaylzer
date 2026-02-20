@@ -43,7 +43,8 @@ Get-ChildItem $diagramPath -Filter *.puml -Recurse | ForEach-Object {
   & $javaExe -jar $plantumlJar -tsvg $_.FullName
   & $javaExe -jar $plantumlJar -tpng $_.FullName
   $baseName = [System.IO.Path]::GetFileNameWithoutExtension($_.Name)
-  $svgPath = Join-Path $diagramPath "$baseName.svg"
+  $outDir = $_.DirectoryName
+  $svgPath = Join-Path $outDir "$baseName.svg"
   if (Test-Path $svgPath) {
     $content = Get-Content -Path $svgPath -Raw -Encoding UTF8
     # Append git hash to existing <title> for traceability to code revision

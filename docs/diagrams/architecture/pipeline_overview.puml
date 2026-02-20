@@ -1,0 +1,38 @@
+@startuml pipeline_overview
+title Pipeline Overview — Four Stages + Phase 3 Opt-in
+
+partition "Ingestion" {
+  :cli/poll (ingest API only);
+  :get_poll_context → run_migrations (core + v2);
+  :SpotPriceChain / DexSnapshotChain;
+  :DbWriter → snapshots, provider_health;
+  :universe_allowlist (universe mode);
+}
+
+partition "Materialization" {
+  :Bar builder → bars_{freq};
+  :factor_materialize (factor_model_runs,\nfactor_betas, residual_returns);
+  if (Phase 3 enabled?) then (yes)
+    :regime_materialize → regime_runs,\nregime_states;
+  endif
+}
+
+partition "Modeling" {
+  :data / features / factors / regimes;
+  :signals, cs_factors, cs_model;
+  :optimizer, walk_forward, execution_cost;
+  :experiments registry;
+}
+
+partition "Presentation" {
+  :Reports (report_*, research_report_v2);
+  :Streamlit (read_api, ingest.get_provider_health);
+  :FastAPI (read-only);
+  if (Phase 3 enabled?) then (yes)
+    :reportv2 --regimes, --reality-check,\n--execution-evidence;
+    :Promotion workflow (candidate → evaluate);
+    :Sweep registry (sweep_families,\nsweep_hypotheses);
+  endif
+}
+
+@enduml

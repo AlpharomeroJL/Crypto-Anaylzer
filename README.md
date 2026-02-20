@@ -7,6 +7,11 @@
 
 A local-first research platform for crypto markets: **ingest** from public CEX/DEX APIs into one SQLite database, **materialize** bars and factors, then **validate** signals and run walk-forward backtests with overfitting controls. No API keys, no trading — analysis and reports only.
 
+<p align="center">
+  <img src="docs/diagrams/architecture_context.svg" alt="System context: Researcher, Crypto-Analyzer, CEX/DEX APIs, SQLite" width="520"/>
+</p>
+<p align="center"><sup><a href="docs/diagrams/README.md">All diagrams</a></sup></p>
+
 **What this is (in four bullets):**
 
 - **Single SQLite source of truth** — All data, bars, factor runs, and (when opted in) regime and promotion state live in one database. No cloud, no vendor lock-in.
@@ -68,6 +73,10 @@ One-command demo (preflight + poll + materialize + report): `.\scripts\run.ps1 d
 
 ## Architecture at a glance
 
+<p align="center">
+  <img src="docs/diagrams/architecture_internal.svg" alt="Internal architecture: four stages, one SQLite database" width="640"/>
+</p>
+
 ```mermaid
 flowchart LR
   subgraph In["Ingestion"]
@@ -99,7 +108,7 @@ flowchart LR
 - **Ingest vs read_api:** Poll and migrations use `crypto_analyzer.ingest`; dashboard and health use `read_api` only.
 - **Phase 3 (opt-in):** Set `CRYPTO_ANALYZER_ENABLE_REGIMES=1` and run `run_migrations_phase3` for regime_runs, regime_states, promotion_candidates, promotion_events, sweep tables. Default `run_migrations()` does not apply Phase 3.
 
-Full pipeline and contracts: [docs/spec/system_overview.md](docs/spec/system_overview.md).
+Full pipeline and contracts: [docs/spec/system_overview.md](docs/spec/system_overview.md). More architecture diagrams: [docs/diagrams](docs/diagrams/README.md).
 
 ---
 
