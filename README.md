@@ -4,7 +4,7 @@ A local-first quantitative research engine for cryptocurrency markets. It ingest
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-200%20passed-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-pytest-brightgreen.svg)](#testing)
 
 > **Research-only.** This tool analyzes data and produces reports. It does not execute trades, hold API keys, or connect to any broker.
 
@@ -48,62 +48,49 @@ Everything lives in a single SQLite file. No infrastructure to manage, no cloud 
 
 ## Architecture Overview
 
+Ingestion uses the **ingest** API (poll context, provider chains, migrations). The dashboard and health views use the **read_api** for read-only DB access. The database has **versioned migrations**: core tables (from `run_migrations`), v2 factor tables (factor_model_runs, factor_betas, residual_returns), and optional Phase 3 regime tables (regime_runs, regime_states) when `CRYPTO_ANALYZER_ENABLE_REGIMES=1`.
+
 ```
 ┌────────────────────────────────────────────────────────────────────────────────┐
-│                           PROVIDER LAYER (pluggable)                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌───────────────────┐                   │
-│  │   Coinbase    │  │    Kraken    │  │   Dexscreener     │   + your own...   │
-│  │  SpotProvider │  │ SpotProvider │  │  DexProvider      │                   │
-│  └──────┬───────┘  └──────┬───────┘  └────────┬──────────┘                   │
-│         │                 │                    │                              │
+│                     PROVIDER LAYER (pluggable)                                 │
+│  ┌──────────────┐  ┌──────────────┐  ┌───────────────────┐                    │
+│  │   Coinbase   │  │    Kraken     │  │   Dexscreener      │   + your own...    │
+│  │ SpotProvider │  │ SpotProvider  │  │  DexProvider      │                    │
+│  └──────┬───────┘  └──────┬───────┘  └────────┬───────────┘                    │
+│         │                 │                    │                                │
 │  ┌──────▼─────────────────▼────────────────────▼──────────┐                  │
-│  │              Provider Chain (ordered fallback)          │                  │
-│  │   Circuit Breaker → Retry/Backoff → Quality Gate       │                  │
-│  │              → Last-Known-Good Cache                    │                  │
+│  │         Provider Chain (retry, circuit breaker, LKG)     │                  │
 │  └──────────────────────┬─────────────────────────────────┘                  │
 └─────────────────────────┼──────────────────────────────────────────────────────┘
                           │
+                          ▼  ingest.get_poll_context() → run_migrations → chains
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                         DATABASE LAYER (SQLite)                                 │
+│  spot_price_snapshots │ sol_monitor_snapshots │ provider_health │ universe_*     │
+│  bars_5min .. bars_1D (OHLCV, idempotent)                                       │
+│  factor_model_runs, factor_betas, residual_returns (v2 migrations)             │
+│  regime_runs, regime_states (Phase 3, optional when ENABLE_REGIMES=1)           │
+└─────────────────────────────────────────────────────────────────────────────────┘
+                          │
+                          ▼  materialize bars │ factor_materialize │ regime_materialize (opt)
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                       RESEARCH PIPELINE                                         │
+│  Factor model (OLS) → Signal validation (IC, orth) → Portfolio (QP) → Walk-fwd   │
+│  Regime (legacy classify + optional RegimeDetector) │ Overfitting │ Experiments │
+│  Governance (manifests, dataset_id, integrity)                                 │
+└─────────────────────────────────────────────────────────────────────────────────┘
+                          │
                           ▼
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│                         DATABASE LAYER (SQLite)                                │
-│  ┌──────────────────┐  ┌────────────────────┐  ┌────────────────┐             │
-│  │ spot_price_      │  │ sol_monitor_       │  │ provider_      │             │
-│  │ snapshots        │  │ snapshots          │  │ health         │             │
-│  │ + provider_name  │  │ + provider_name    │  │                │             │
-│  │ + fetch_status   │  │ + fetch_status     │  │                │             │
-│  └────────┬─────────┘  └─────────┬──────────┘  └────────────────┘             │
-│           └──────────┬───────────┘                                            │
-│                      ▼                                                        │
-│           ┌──────────────────┐                                                │
-│           │  bars_1h / _1D   │  (materialized OHLCV, idempotent)              │
-│           └────────┬─────────┘                                                │
-└────────────────────┼────────────────────────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                       RESEARCH PIPELINE                                        │
-│  ┌────────────┐  ┌────────────┐  ┌───────────┐  ┌────────────┐               │
-│  │  Factor    │  │  Signal    │  │ Portfolio  │  │ Walk-Fwd   │               │
-│  │  Model     │→ │ Validation │→ │ Optimizer  │→ │ Backtest   │               │
-│  │ (OLS beta) │  │ (IC, orth) │  │  (QP/L-S)  │  │ (no leak)  │               │
-│  └────────────┘  └────────────┘  └───────────┘  └────────────┘               │
-│                                                                               │
-│  ┌────────────┐  ┌────────────┐  ┌───────────┐  ┌────────────┐               │
-│  │  Regime    │  │ Overfitting│  │ Experiment │  │ Governance  │               │
-│  │ Detection  │  │  Controls  │  │  Registry  │  │ (manifests) │               │
-│  └────────────┘  └────────────┘  └───────────┘  └────────────┘               │
-└─────────────────────────────────────────────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│  PRESENTATION: Streamlit Dashboard (12 pages) │ FastAPI (read-only) │ CLI      │
+│  Streamlit (12 pages) │ FastAPI (read-only) │ CLI (poll, reportv2, null_suite…)  │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 **Design principles:**
-- **Single source of truth:** All analytics consume the same SQLite database. Bar construction is deterministic and idempotent.
+- **Single source of truth:** All analytics consume the same SQLite database. Bar and factor materialization are deterministic and idempotent.
+- **Ingest / read_api boundary:** Poll uses `crypto_analyzer.ingest` (DB writes, migrations, provider chains). Dashboard uses `read_api` for health and allowlist; no direct db imports in CLI/UI.
 - **Provider-agnostic ingestion:** Data sources are pluggable. Swap Coinbase for Binance by implementing one class.
-- **Separation of concerns:** Ingestion, materialization, modeling, and visualization are independent stages.
+- **Versioned migrations:** Core + v2 (factor tables) applied by `run_migrations`; Phase 3 (regime tables) only when regimes are enabled.
 - **Reproducibility:** Every run records a manifest with git commit, environment, data window, and output hashes.
 
 ---
@@ -163,61 +150,44 @@ One command runs the full pipeline: preflight checks, data collection, bar mater
 
 ### Data Ingestion
 
-The poller runs every 60 seconds and collects two types of data through the **provider chain**:
-
-1. **DEX pair snapshots** — Price, liquidity, volume, and transaction counts from Dexscreener for the configured universe of trading pairs.
-2. **Spot reference prices** — BTC, ETH, and SOL USD prices from Coinbase (primary) with automatic Kraken fallback.
-
-Each provider call is wrapped in a resilience layer:
-- **Retry with exponential backoff** for transient failures (429, timeouts)
-- **Circuit breakers** that skip providers known to be failing (auto-recovery after cooldown)
-- **Last-known-good cache** that prevents data gaps during brief outages
-- **Data quality gates** that reject invalid or stale quotes before they reach the database
-
-Every record includes **provenance metadata**: which provider served it, when it was fetched, and whether it was a primary or fallback response.
+The poller uses **`crypto_analyzer.ingest`**: `get_poll_context(db_path)` opens the DB, runs **run_migrations** (core + v2 factor tables), and builds the spot and DEX provider chains. Each cycle writes to `spot_price_snapshots`, `sol_monitor_snapshots`, and (in universe mode) `universe_allowlist` / `universe_churn_log`. Provider health is stored in `provider_health`. Resilience: retry/backoff, circuit breakers, last-known-good cache, data quality gates.
 
 ### Materialization
 
-Raw snapshots are aggregated into deterministic OHLCV bars at four frequencies (5min, 15min, 1h, 1D). The process is idempotent — rerunning on the same data always produces identical bars with computed log returns, cumulative returns, and rolling volatility.
+- **Bars:** Raw snapshots → deterministic OHLCV bars (5min, 15min, 1h, 1D). Idempotent; log returns, cumulative returns, rolling volatility.
+- **Factors (v2):** `factor_materialize` writes `factor_model_runs`, `factor_betas`, `residual_returns` (causal rolling OLS, dataset_id, run_id). Used by reportv2 and research pipeline.
+- **Regimes (Phase 3, optional):** When `CRYPTO_ANALYZER_ENABLE_REGIMES=1`, run **run_migrations_phase3** then `regime_materialize` to fill `regime_runs` / `regime_states`. reportv2 supports `--regimes REGIME_RUN_ID` for regime-conditioned summaries.
 
 ### Research Pipeline
 
-1. **Factor decomposition** — Rolling OLS regression decomposes each asset's returns into BTC/ETH factor exposure and an idiosyncratic residual. Falls back gracefully to BTC-only when ETH data is unavailable.
-2. **Cross-sectional factors** — Size (log liquidity), volume, and momentum factors are computed per timestamp with winsorized z-scores.
-3. **Signal validation** — Information Coefficient (Spearman rank correlation vs. future returns), IC decay analysis, and signal orthogonalization via sequential OLS residualization.
-4. **Portfolio construction** — Constrained QP optimizer (scipy SLSQP) with dollar-neutral, beta-neutral, and max-weight constraints. Rank-based fallback on optimizer failure.
-5. **Walk-forward backtesting** — Strict rolling train/test splits with no lookahead. Out-of-sample folds are stitched for aggregate performance.
-6. **Overfitting controls** — Deflated Sharpe ratio, PBO proxy, block bootstrap confidence intervals, and multiple testing warnings.
-7. **Regime detection** — Market conditions (risk-off, high dispersion, beta compression, chop) are classified and performance is broken down by regime.
+1. **Factor decomposition** — Rolling OLS (BTC/ETH) → idiosyncratic residuals; BTC-only fallback when ETH missing.
+2. **Cross-sectional factors** — Size, volume, momentum per timestamp; winsorized z-scores.
+3. **Signal validation** — IC, IC decay, orthogonalization.
+4. **Portfolio construction** — Constrained QP (scipy SLSQP), rank-based fallback.
+5. **Walk-forward backtesting** — Strict train/test split, no lookahead.
+6. **Overfitting controls** — Deflated Sharpe, PBO proxy, block bootstrap, multiple-testing adjustment (e.g. BH).
+7. **Regime detection** — Legacy: classify regime (risk-off, dispersion, beta compression, chop). Optional Phase 3: RegimeDetector (fit/predict), regime-conditioned IC in reportv2.
 
 ### Dashboard
 
-The Streamlit dashboard provides 12 interactive pages: overview leaderboard, pair detail charts, multi-mode scanner, single-asset backtester, walk-forward analysis, market structure (correlation, beta, dispersion), signal journal, cross-sectional research (IC, decay, portfolio), institutional research (orthogonalization, advanced portfolio, overfitting defenses), experiment registry with comparison, runtime health with provider status, and governance (manifests, data integrity).
+Streamlit (12 pages): Overview, Pair detail, Scanner, Backtest, Walk-Forward, Market Structure, Signals, Research, Institutional Research, Experiments, Runtime/Health, Governance. Uses **read_api** for allowlist and health; **ingest.get_provider_health** for provider status.
 
 ---
 
 ## Data Flow
 
 ```
-  Public APIs                SQLite (single file)              Analytics
-  ──────────                 ────────────────────              ─────────
-
-  Coinbase ──┐
-  Kraken  ───┤ SpotPriceChain ──► spot_price_snapshots ──┐
-             │  (fallback)        (+ provider_name,       │
-             │                     fetched_at, status)     │
-             │                                             ├──► bars_{freq}
-  Dexscreener─┤ DexSnapshotChain ► sol_monitor_snapshots──┘    (OHLCV, idempotent)
-              │  (circuit breaker)  (+ provider_name,               │
-              │                      fetched_at, status)            │
-              │                                                     ▼
-              │                                              Research pipeline
-              │                                              (factors, signals,
-              │                                               portfolio, backtest)
-              │                                                     │
-              │                    provider_health ◄─────────────────┤ (health tracking)
-              │                    experiments.db  ◄─────────────────┤ (experiment registry)
-              │                    reports/*.json  ◄─────────────────┘ (governance manifests)
+  Public APIs (Coinbase, Kraken, Dexscreener)
+           │
+           ▼  ingest.get_poll_context() → SpotPriceChain, DexSnapshotChain
+  spot_price_snapshots, sol_monitor_snapshots, universe_allowlist, provider_health
+           │
+           ▼  materialize (cli/materialize.py)   factor_materialize (optional)
+  bars_{freq}   │   factor_model_runs, factor_betas, residual_returns
+           │    │   regime_runs, regime_states (Phase 3, optional)
+           └────┴──► Research pipeline (data.py, factors, alpha_research, reportv2)
+                          │
+                          ▼  experiments.db, reports/*.json, manifests
 ```
 
 ---
@@ -234,7 +204,7 @@ The provider architecture is designed for extensibility. To add a new exchange:
 from __future__ import annotations
 from datetime import datetime, timezone
 import requests
-from ..base import ProviderStatus, SpotQuote
+from ..base import SpotQuote
 
 class BinanceSpotProvider:
     """Fetch spot prices from the Binance public API."""
@@ -257,30 +227,7 @@ class BinanceSpotProvider:
         )
 ```
 
-Then register it:
-
-```python
-# In crypto_analyzer/providers/defaults.py
-from .cex.binance import BinanceSpotProvider
-
-def create_default_registry() -> ProviderRegistry:
-    registry = ProviderRegistry()
-    registry.register_spot("coinbase", CoinbaseSpotProvider)
-    registry.register_spot("kraken", KrakenSpotProvider)
-    registry.register_spot("binance", BinanceSpotProvider)  # new
-    ...
-```
-
-And add it to `config.yaml`:
-
-```yaml
-providers:
-  spot_priority: ["coinbase", "binance", "kraken"]
-```
-
-The provider chain handles all resilience (retry, circuit breaker, fallback) automatically. No changes needed in the polling loop, dashboard, or models.
-
-For DEX providers, implement the `DexSnapshotProvider` protocol with `get_snapshot()` and `search_pairs()` methods. See `crypto_analyzer/providers/dex/dexscreener.py` for the reference implementation.
+Then register it in `crypto_analyzer/providers/defaults.py` and add to `config.yaml` under `providers.spot_priority`. The provider chain handles resilience. For DEX providers, implement `DexSnapshotProvider` (`get_snapshot()`, `search_pairs()`); see `crypto_analyzer/providers/dex/dexscreener.py`.
 
 ---
 
@@ -291,69 +238,76 @@ For DEX providers, implement the `DexSnapshotProvider` protocol with `get_snapsh
 ├── pyproject.toml                   # Package metadata and dependencies
 ├── requirements.txt                 # Pinned dependencies for reproducibility
 │
-├── crypto_analyzer/                 # Core library
-│   ├── providers/                   # Extensible provider architecture
-│   │   ├── base.py                  #   Protocol interfaces (SpotPriceProvider, DexSnapshotProvider)
-│   │   ├── registry.py              #   Provider registry and factory
-│   │   ├── chain.py                 #   Ordered fallback chains with resilience
-│   │   ├── resilience.py            #   Circuit breaker, retry/backoff, LKG cache
-│   │   ├── defaults.py              #   Default registry and config loader
-│   │   ├── cex/                     #   CEX spot providers
-│   │   │   ├── coinbase.py          #     Coinbase public API
-│   │   │   └── kraken.py            #     Kraken public API
-│   │   └── dex/                     #   DEX snapshot providers
-│   │       └── dexscreener.py       #     Dexscreener public API
+├── crypto_analyzer/                  # Core library
+│   ├── ingest/                       # Poll context, run_migrations, provider chains (CLI uses this)
+│   │   └── __init__.py               #   get_poll_context, run_one_cycle
+│   ├── read_api.py                   # Read-only API: health, allowlist (dashboard uses this)
+│   ├── providers/                    # Extensible provider architecture
+│   │   ├── base.py                   #   SpotPriceProvider, DexSnapshotProvider, SpotQuote
+│   │   ├── registry.py, chain.py     #   Registry and ordered fallback chains
+│   │   ├── resilience.py             #   Circuit breaker, retry/backoff, LKG cache
+│   │   ├── defaults.py               #   Default registry and config loader
+│   │   ├── cex/                       #   Coinbase, Kraken
+│   │   └── dex/                       #   Dexscreener
 │   │
-│   ├── db/                          # Database layer
-│   │   ├── migrations.py            #   Idempotent schema migrations
-│   │   ├── writer.py                #   Shared write layer with provenance
-│   │   └── health.py                #   Provider health persistence
+│   ├── db/                           # Database layer
+│   │   ├── migrations.py             #   Core migrations; calls run_migrations_v2
+│   │   ├── migrations_v2.py          #   factor_model_runs, factor_betas, residual_returns
+│   │   ├── migrations_phase3.py      #   regime_runs, regime_states (opt-in only)
+│   │   ├── writer.py                 #   Shared write layer with provenance
+│   │   └── health.py                 #   Provider health persistence
 │   │
-│   ├── config.py                    # Configuration loader (YAML + env overrides)
-│   ├── data.py                      # Data loading (snapshots, bars, spot prices)
-│   ├── features.py                  # Returns, volatility, drawdown, momentum, beta
-│   ├── factors.py                   # Multi-factor OLS (BTC/ETH), rolling regression
-│   ├── cs_factors.py                # Cross-sectional factor construction
-│   ├── cs_model.py                  # Cross-sectional signal combiner
-│   ├── optimizer.py                 # Constrained QP optimizer (scipy SLSQP)
-│   ├── signals.py                   # Signal detection and journal
-│   ├── signals_xs.py                # Cross-sectional z-score, orthogonalization
-│   ├── portfolio.py                 # Vol targeting, risk parity, beta neutralization
-│   ├── portfolio_advanced.py        # Constrained optimization with capacity filters
-│   ├── risk_model.py                # Covariance estimation (EWMA, Ledoit-Wolf)
-│   ├── regimes.py                   # Market regime classification
-│   ├── walkforward.py               # Walk-forward train/test split engine
-│   ├── alpha_research.py            # IC, signal builders, decay analysis
-│   ├── statistics.py                # Block bootstrap and confidence intervals
-│   ├── multiple_testing.py          # Deflated Sharpe, PBO proxy
-│   ├── evaluation.py                # Regime-conditioned performance
-│   ├── research_universe.py         # Universe builder with quality filters
-│   ├── experiments.py               # SQLite experiment registry
-│   ├── experiment_store.py          # Pluggable store (SQLite/Postgres)
-│   ├── governance.py                # Run manifests, git tracking
-│   ├── integrity.py                 # Data quality checks
-│   ├── artifacts.py                 # Artifact I/O and SHA256 hashing
-│   ├── diagnostics.py               # Stability, fragility, health scoring
-│   ├── dataset.py                   # Dataset fingerprinting (dataset_id)
-│   ├── doctor.py                    # Preflight system checks
-│   └── spec.py                      # Research spec versioning
+│   ├── config.py, data.py            # Configuration and data loading
+│   ├── features.py                   # Returns, vol, drawdown, momentum, beta, dispersion
+│   ├── factors.py                    # Multi-factor OLS, rolling regression, causal residuals
+│   ├── factor_materialize.py         # Materialize factor runs/betas/residuals to DB
+│   ├── cs_factors.py, cs_model.py    # Cross-sectional factors and signal combiner
+│   ├── optimizer.py                  # Constrained QP (scipy SLSQP)
+│   ├── signals.py, signals_xs.py     # Signal detection, journal, orthogonalization
+│   ├── portfolio.py, portfolio_advanced.py  # Vol targeting, beta neutral, capacity filters
+│   ├── execution_cost.py             # Fees, slippage, capacity curve (unified cost model)
+│   ├── risk_model.py                 # Covariance (EWMA, Ledoit-Wolf)
+│   ├── regimes/                      # Regime classification and Phase 3 detector/materialize
+│   │   ├── __init__.py               #   Legacy classify + optional RegimeDetector API
+│   │   ├── legacy.py                 #   classify_market_regime, explain_regime
+│   │   ├── regime_detector.py        #   RegimeDetector (fit/predict), filter-only in test
+│   │   ├── regime_features.py        #   Causal regime features
+│   │   ├── regime_materialize.py     #   regime_runs, regime_states
+│   │   └── _flags.py                 #   is_regimes_enabled (ENABLE_REGIMES)
+│   ├── walkforward.py                # Walk-forward train/test split engine
+│   ├── alpha_research.py             # IC, decay, signal builders
+│   ├── statistics.py                 # Block bootstrap, confidence intervals
+│   ├── multiple_testing.py           # Deflated Sharpe, PBO proxy
+│   ├── multiple_testing_adjuster.py  # BH/BY family adjustment
+│   ├── evaluation.py                 # Regime-conditioned performance
+│   ├── research_universe.py          # Universe builder with quality filters
+│   ├── experiments.py, experiment_store.py  # SQLite/Postgres experiment registry
+│   ├── governance.py, artifacts.py    # Run manifests, SHA256, dataset fingerprinting
+│   ├── integrity.py, diagnostics.py  # Data quality, health scoring
+│   ├── dataset.py, timeutils.py      # Dataset fingerprinting, time helpers
+│   ├── validation_bundle.py          # Per-signal validation bundle (reportv2)
+│   ├── order_intent.py               # Execution boundary (no live orders)
+│   ├── doctor.py                     # Preflight system checks
+│   ├── null_suite.py                 # Null/placebo runner (random ranks, permute, block shuffle)
+│   └── spec.py                       # Research spec, research-only boundary validation
 │
-├── cli/                             # Command-line entry points
-│   ├── poll.py                      #   Data ingestion (provider-based)
-│   ├── app.py                       #   Streamlit dashboard (12 pages)
-│   ├── materialize.py               #   OHLCV bar builder
-│   ├── scan.py                      #   Opportunity scanner
-│   ├── research_report_v2.py        #   Advanced research report
-│   ├── backtest.py                  #   Single-asset backtester
-│   ├── backtest_walkforward.py      #   Walk-forward backtester
-│   ├── report_daily.py              #   Daily market structure report
-│   ├── api.py                       #   FastAPI research API
-│   └── demo.py                      #   One-command demo
+├── cli/                              # Command-line entry points
+│   ├── poll.py                       # Data ingestion (uses ingest API)
+│   ├── materialize.py                # OHLCV bar builder
+│   ├── app.py                        # Streamlit dashboard (12 pages)
+│   ├── scan.py                       # Opportunity scanner
+│   ├── research_report.py            # Research report (v1)
+│   ├── research_report_v2.py          # Advanced report (IC, PBO, QP, regimes optional)
+│   ├── report_daily.py               # Daily market structure report
+│   ├── backtest.py, backtest_walkforward.py
+│   ├── api.py                        # FastAPI read-only research API
+│   ├── null_suite.py                 # Null suite CLI
+│   └── demo.py                       # One-command demo
 │
-├── tests/                           # 200 tests (pytest)
-├── docs/                            # Design docs and guides
-├── tools/                           # Utility scripts
-└── scripts/                         # PowerShell runners
+├── tests/                            # Pytest suite (mocked HTTP, no live network)
+├── docs/                             # Design, architecture, spec, diagrams
+├── tools/                            # e.g. check_dataset
+└── scripts/                          # run.ps1 (doctor, poll, materialize, reportv2, verify, …)
 ```
 
 ---
@@ -361,26 +315,15 @@ For DEX providers, implement the `DexSnapshotProvider` protocol with `get_snapsh
 ## Testing
 
 ```bash
-# Run all tests
+# Run full test suite
 .\scripts\run.ps1 test
+# Or: python -m pytest -q
 
-# Or directly
-python -m pytest -q
+# Full verification (doctor → pytest → ruff → research-only → diagrams)
+.\scripts\run.ps1 verify
 ```
 
-**200 tests** across 33 suites covering:
-
-- **Provider chain:** Fallback logic, circuit breaker trip/recovery, retry/backoff, last-known-good caching
-- **Data quality gates:** Invalid price rejection, degraded state handling
-- **Database provenance:** Provider name, fetch status, and error tracking per record
-- **Migrations:** Idempotent schema creation, column additions
-- **Integration:** Full poll cycle with mocked HTTP to a temp SQLite DB
-- **Core analytics:** Return computation, multi-factor OLS, cross-sectional factors, QP optimizer, walk-forward splits, bootstrap statistics, regime classification
-- **Experiment registry:** SQLite metadata, tagging, hypothesis filtering
-- **API:** REST endpoint smoke tests
-- **Governance:** Manifest generation, dataset fingerprinting, integrity checks
-
-No tests make live network calls. All HTTP interactions are mocked.
+The test suite covers: provider chain (fallback, circuit breaker, retry, LKG), data quality gates, DB provenance, migrations (core, v2, phase3), factor and regime materialization, reportv2 (including optional regimes), null suite, experiment registry, API smoke tests, governance and integrity. No tests make live network calls; all HTTP is mocked.
 
 ---
 
@@ -388,21 +331,23 @@ No tests make live network calls. All HTTP interactions are mocked.
 
 | Command | Description |
 |---------|-------------|
-| `doctor` | Preflight checks: environment, dependencies, DB schema, pipeline smoke test |
-| `poll` | Single-pair data poller (provider-based with fallback) |
+| `doctor` | Preflight: environment, dependencies, DB schema, pipeline smoke test |
+| `poll` | Single-pair data poll (provider-based with fallback) |
 | `universe-poll --universe ...` | Multi-asset universe discovery with churn controls |
 | `materialize` | Build deterministic OHLCV bars (5min, 15min, 1h, 1D) |
 | `analyze` | Legacy single-pair analysis (momentum, vol) |
 | `scan` | Multi-mode scanner (momentum, residual, vol breakout, mean reversion) |
 | `report` | Research report (v1, single-factor) |
-| `reportv2` | Research report with IC, orthogonalization, PBO, QP, experiment logging |
+| `reportv2` | Research report with IC, orthogonalization, PBO, QP, experiment logging; optional `--regimes` when ENABLE_REGIMES=1 |
 | `daily` | Daily market structure report |
 | `backtest` | Single-asset backtest (trend following, volatility breakout) |
 | `walkforward` | Walk-forward backtest with out-of-sample fold stitching |
 | `streamlit` | Interactive dashboard (12 pages including provider health) |
 | `api` | Local read-only research API (FastAPI) |
 | `demo` | One-command demo: doctor → poll → materialize → report |
-| `test` | Run the full pytest suite |
+| `null_suite` | Null/placebo artifact runner (random ranks, permuted signal, block shuffle) |
+| `verify` | Full check: doctor → pytest → ruff → research-only boundary → diagrams |
+| `test` | Run pytest |
 | `check-dataset` | Inspect dataset fingerprints and row counts |
 
 All commands: `.\scripts\run.ps1 <command> [args...]`
@@ -414,13 +359,13 @@ All commands: `.\scripts\run.ps1 <command> [args...]`
 | Layer | Technology |
 |-------|------------|
 | **Core** | Python 3.10+, pandas, NumPy, SciPy |
-| **Storage** | SQLite (single file), optional Postgres for experiment backend |
-| **Ingestion** | Provider/plugin architecture with circuit breakers and retry/backoff |
-| **Data Sources** | Coinbase, Kraken, Dexscreener (all public, no API keys) |
+| **Storage** | SQLite (single file); optional Postgres for experiment backend |
+| **Ingestion** | ingest API + provider chains (circuit breakers, retry/backoff) |
+| **Data sources** | Coinbase, Kraken, Dexscreener (public, no API keys) |
 | **Visualization** | Streamlit (12-page dashboard), Plotly, Matplotlib |
 | **API** | FastAPI + Uvicorn (optional `[api]` extra) |
-| **Statistics** | SciPy (QP optimizer), scikit-learn (Ledoit-Wolf, optional) |
-| **Testing** | pytest (200 tests, mocked HTTP, no live network) |
+| **Statistics** | SciPy (QP), scikit-learn (Ledoit-Wolf, optional) |
+| **Testing** | pytest (mocked HTTP, no live network); `verify` for full gate |
 
 ---
 
@@ -428,13 +373,14 @@ All commands: `.\scripts\run.ps1 <command> [args...]`
 
 | Problem | Solution |
 |---------|----------|
-| `No data` in dashboard | Run `.\scripts\run.ps1 poll` for a few minutes first, then `.\scripts\run.ps1 materialize` |
-| `Bars table not found` | Run `.\scripts\run.ps1 materialize --freq 1h` to build bars from snapshots |
-| `PyYAML not installed` | `pip install PyYAML` — config.py falls back to defaults without it |
-| Provider shows `DOWN` | Circuit breaker opened after repeated failures; it auto-recovers after 60s cooldown |
-| `Need >= 3 assets` in Research | Universe mode needs a few poll cycles to discover enough pairs; wait or add pairs to config.yaml |
-| Test failures | Run `.\scripts\run.ps1 doctor` for diagnostics; ensure you're in the venv |
-| Dashboard won't start | `pip install streamlit` and run from the repo root directory |
+| No data in dashboard | Run `.\scripts\run.ps1 poll` (or universe-poll) then `.\scripts\run.ps1 materialize` |
+| Bars table not found | Run `.\scripts\run.ps1 materialize --freq 1h` |
+| PyYAML not installed | `pip install PyYAML` (config falls back to defaults without it) |
+| Provider shows DOWN | Circuit breaker; auto-recovers after cooldown |
+| Need >= 3 assets in Research | Universe mode needs several poll cycles; wait or add pairs in config.yaml |
+| reportv2 --regimes fails | Set `CRYPTO_ANALYZER_ENABLE_REGIMES=1` and run Phase 3 migrations before regime materialize |
+| Test failures | Run `.\scripts\run.ps1 doctor`; ensure venv is active |
+| Dashboard won't start | `pip install streamlit`, run from repo root |
 
 ---
 
@@ -442,24 +388,21 @@ All commands: `.\scripts\run.ps1 <command> [args...]`
 
 | Document | Contents |
 |----------|----------|
-| [Design & Architecture](docs/design.md) | Data flow, provider contracts, failure modes, design decisions |
-| [Contributing](CONTRIBUTING.md) | Dev setup, testing, style guide, adding providers |
+| [Design & Architecture](docs/design.md) | Data flow, provider contracts, failure modes |
+| [Contributing](CONTRIBUTING.md) | Dev setup, testing, style, adding providers, verify |
 | [Architecture](docs/architecture.md) | Module responsibility matrix |
 | [Deployment](docs/deployment.md) | Windows service setup for 24/7 operation |
 | [Institutional Principles](docs/institutional.md) | Research standards and validation methodology |
 | [Private Conversion Plan](docs/private_conversion.md) | Using OSS as dependency for a private execution layer |
+| [Spec / Implementation Ledger](docs/spec/implementation_ledger.md) | Spec requirements and phase status |
 
 ### Architecture Diagrams
 
-All diagrams are maintained in `docs/diagrams/` as PlantUML. See the [diagram index](docs/diagrams/README.md) for a curated list.
-
-To regenerate SVG and PNG outputs:
+Diagrams live in `docs/diagrams/` (PlantUML). See [diagram index](docs/diagrams/README.md). Regenerate SVG/PNG:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\export_diagrams.ps1
 ```
-
-SVG and PNG outputs are committed for portability.
 
 ---
 
@@ -468,15 +411,16 @@ SVG and PNG outputs are committed for portability.
 
 | Decision | Rationale |
 |----------|-----------|
-| **SQLite over Postgres** | Zero-config, single-file portability. Research-scale data (millions of rows) doesn't need a server. |
-| **Provider chain pattern** | Config-driven fallback order, circuit breakers, and resilience wrappers keep ingestion robust without coupling to specific exchanges. |
-| **Log returns throughout** | Additive across time, symmetric, mathematically correct for multi-period aggregation. |
-| **OLS for factor decomposition** | Produces residuals with exactly zero factor exposure by construction. |
-| **Walk-forward over k-fold** | Time series autocorrelation requires temporal separation; walk-forward prevents lookahead bias. |
-| **Spearman rank IC** | Robust to fat-tailed distributions ubiquitous in crypto. |
-| **Block bootstrap** | Preserves serial correlation in financial returns. i.i.d. bootstrap gives overconfident intervals. |
-| **Frozen dataclasses for provider contracts** | Immutability prevents accidental mutation, type safety at boundaries. |
-| **Circuit breaker per provider** | Prevents thundering herd on a failing endpoint; auto-recovers after cooldown. |
+| **SQLite over Postgres** | Zero-config, single-file portability for research-scale data. |
+| **Ingest + read_api** | Clear boundary: poll owns writes and migrations; dashboard reads via read_api only. |
+| **Versioned migrations** | Core + v2 applied together; Phase 3 (regimes) opt-in so default DB stays minimal. |
+| **Provider chain pattern** | Config-driven fallback, circuit breakers, resilience without coupling to exchanges. |
+| **Log returns throughout** | Additive, symmetric, correct for multi-period aggregation. |
+| **OLS for factor decomposition** | Residuals with zero factor exposure by construction. |
+| **Walk-forward over k-fold** | Time series requires temporal separation; no lookahead. |
+| **Spearman rank IC** | Robust to fat-tailed crypto returns. |
+| **Block bootstrap** | Preserves serial correlation; i.i.d. bootstrap overstates confidence. |
+| **Circuit breaker per provider** | Avoids thundering herd on failing endpoints; auto-recovery. |
 
 </details>
 
