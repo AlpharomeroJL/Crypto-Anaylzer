@@ -95,6 +95,20 @@ def neutralize_signal_to_exposures(
     return out
 
 
+def _flatten_pair(
+    df1: pd.DataFrame, df2: pd.DataFrame, idx: pd.Index
+) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+    """Flatten two dataframes to 1d over common index and columns; same shape or None."""
+    cols = df1.columns.intersection(df2.columns)
+    if len(cols) == 0:
+        return None
+    x = df1.reindex(index=idx, columns=cols).to_numpy().ravel()
+    y = df2.reindex(index=idx, columns=cols).to_numpy().ravel()
+    if x.shape != y.shape:
+        return None
+    return x, y
+
+
 def orthogonalize_signals(
     signals_dict: Dict[str, pd.DataFrame],
     order: Optional[List[str]] = None,
@@ -160,22 +174,22 @@ def orthogonalize_signals(
             common = orig.index.intersection(ob.index).intersection(o.index).intersection(oa.index)
             if len(common) < 2:
                 continue
-            a = orig.loc[common].values.ravel()
-            b = ob.loc[common].values.ravel()
-            mask = np.isfinite(a) & np.isfinite(b)
-            if mask.sum() < 2:
-                continue
-            c = np.corrcoef(a[mask], b[mask])
-            if c.size >= 4 and np.isfinite(c[0, 1]):
-                corrs_before.append(float(np.abs(c[0, 1])))
-            aa = o.loc[common].values.ravel()
-            bb = oa.loc[common].values.ravel()
-            mask2 = np.isfinite(aa) & np.isfinite(bb)
-            if mask2.sum() < 2:
-                continue
-            c2 = np.corrcoef(aa[mask2], bb[mask2])
-            if c2.size >= 4 and np.isfinite(c2[0, 1]):
-                corrs_after.append(float(np.abs(c2[0, 1])))
+            pair = _flatten_pair(orig, ob, common)
+            if pair is not None:
+                a, b = pair
+                mask = np.isfinite(a) & np.isfinite(b)
+                if mask.sum() >= 2:
+                    c = np.corrcoef(a[mask], b[mask])
+                    if c.size >= 4 and np.isfinite(c[0, 1]):
+                        corrs_before.append(float(np.abs(c[0, 1])))
+            pair2 = _flatten_pair(o, oa, common)
+            if pair2 is not None:
+                aa, bb = pair2
+                mask2 = np.isfinite(aa) & np.isfinite(bb)
+                if mask2.sum() >= 2:
+                    c2 = np.corrcoef(aa[mask2], bb[mask2])
+                    if c2.size >= 4 and np.isfinite(c2[0, 1]):
+                        corrs_after.append(float(np.abs(c2[0, 1])))
         if corrs_before:
             report[f"{k}_avg_corr_before"] = float(np.mean(corrs_before))
         if corrs_after:

@@ -14,6 +14,9 @@ plots/
 logs/
 archive/
 reports/
+# research artifacts / local outputs
+out_*/
+out_exec_evidence/
 __pycache__/
 *.pyc
 
