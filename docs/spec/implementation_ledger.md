@@ -72,7 +72,9 @@ Update rows as work completes. Keep the master spec unchanged; extend component 
 | **Scope** | PR1 (sweep registry hardening), PR2 (execution realism gates), PR3 (measured performance optimization). All Phase 3 boxes in [phased_execution.md](components/phased_execution.md) checked. |
 | **Verify** | Run `.\scripts\run.ps1 verify`; expect **VERIFY PASS** (doctor → pytest → ruff → research-only → diagrams). |
 | **Evidence** | PR2: test_execution_evidence.py, test_promotion_service.py, test_promotion_e2e.py. PR3: test_factor_cache_hit_skips_compute.py, test_regime_cache_hit_skips_compute.py, test_profile_timings_optional.py. |
-| **Commit** | `9809821ed33312fab11fd04d60277fa2ef842403` (stamped after final Phase 3 closeout) |
+| **Commit** | `9809821ed33312fab11fd04d60277fa2ef842403` (stamped after final Phase 3 closeout). Post-closeout smoke fix: `00526c3b5ecb306675c969e384d4101aaef6961f` (align signal shapes in orth corr report). |
+
+**Follow-up (done):** reportv2 smoke `--execution-evidence` was failing when orthogonalization had ≥2 signals with different column counts; correlation-report block in `signals_xs.orthogonalize_signals` now uses `_flatten_pair` (intersection of columns + same shape) so only comparable cells are correlated. Fixed in 00526c3.
 
 ---
 
