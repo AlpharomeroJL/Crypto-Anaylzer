@@ -103,6 +103,8 @@ graph TD
 
 4) **Avoid raw backslash-bracket in tables and prose** unless you truly mean a literal backslash.
 
+5) **Display math on one line:** Put the whole formula on the same line as the closing `$$` (e.g. `$$c_m = \sum_{j=1}^{m} \frac{1}{j}$$`). Do not put a newline between `$$` and the formula, or GitHub may render each token on a separate line.
+
 ### Failure modes
 
 - Where useful, add a **Failure modes** subsection: “When it breaks” and “How to detect.”

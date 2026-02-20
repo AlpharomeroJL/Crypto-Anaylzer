@@ -21,9 +21,7 @@ Unless otherwise stated, all performance statistics are computed strictly out-of
 
 Let the full sample be partitioned into $K$ sequential folds:
 
-$$
-\{1, \ldots, T\} = \bigcup_{k=1}^{K} F_k
-$$
+$$\{1, \ldots, T\} = \bigcup_{k=1}^{K} F_k$$
 
 For each fold $k$:
 
@@ -33,9 +31,7 @@ For each fold $k$:
 
 Model parameters $\theta_k$ are estimated only on $\mathcal{T}_k$:
 
-$$
-\theta_k = \arg\max_{\theta} \, L(\theta; r_t, \, t \in \mathcal{T}_k)
-$$
+$$\theta_k = \arg\max_{\theta} \, L(\theta; r_t, \, t \in \mathcal{T}_k)$$
 
 Performance is evaluated exclusively on $\mathcal{V}_k$. Final out-of-sample performance is aggregated across all $\mathcal{V}_k$.
 
@@ -65,23 +61,17 @@ When selecting the best strategy among many candidates, the observed Sharpe rati
 
 Under IID assumptions:
 
-$$
-\sqrt{T} \cdot SR \sim N\left(\frac{\mu}{\sigma}, 1\right)
-$$
+$$\sqrt{T} \cdot SR \sim N\left(\frac{\mu}{\sigma}, 1\right)$$
 
 However, under non-normality, variance of the Sharpe estimator becomes:
 
-$$
-\text{Var}(SR) \approx \frac{1}{T} \left( 1 + \frac{1}{2} SR^2 - \gamma_3 SR + \frac{\gamma_4 - 3}{4} SR^2 \right)
-$$
+$$\text{Var}(SR) \approx \frac{1}{T} \left( 1 + \frac{1}{2} SR^2 - \gamma_3 SR + \frac{\gamma_4 - 3}{4} SR^2 \right)$$
 
 ### A.3.3 Expected Maximum Sharpe Under Multiple Trials
 
 Let $N$ denote the number of independent trials. The expected maximum Sharpe under noise is approximated as:
 
-$$
-E[SR_{\max}] \approx \mu_{SR} + \sigma_{SR} \cdot z_{1 - 1/N}
-$$
+$$E[SR_{\max}] \approx \mu_{SR} + \sigma_{SR} \cdot z_{1 - 1/N}$$
 
 where $z_{1 - 1/N}$ is the standard normal quantile, and $\mu_{SR}$, $\sigma_{SR}$ are the Sharpe estimator mean and variance under the null.
 
@@ -89,15 +79,11 @@ where $z_{1 - 1/N}$ is the standard normal quantile, and $\mu_{SR}$, $\sigma_{SR
 
 The Deflated Sharpe Ratio is:
 
-$$
-DSR = \frac{SR - E[SR_{\max}]}{\sqrt{\text{Var}(SR)}}
-$$
+$$DSR = \frac{SR - E[SR_{\max}]}{\sqrt{\text{Var}(SR)}}$$
 
 The associated p-value is:
 
-$$
-p = 1 - \Phi(DSR)
-$$
+$$p = 1 - \Phi(DSR)$$
 
 where $\Phi$ is the standard normal CDF.
 
@@ -119,9 +105,7 @@ where $\Phi$ is the standard normal CDF.
 
 Divide sample into $S$ equal blocks:
 
-$$
-\{1, \ldots, T\} = \bigcup_{s=1}^{S} B_s
-$$
+$$\{1, \ldots, T\} = \bigcup_{s=1}^{S} B_s$$
 
 For each combination of $S/2$ blocks:
 
@@ -134,27 +118,19 @@ For each candidate strategy $j$: $SR_j^{\mathrm{train}}$, $SR_j^{\mathrm{test}}$
 
 Let:
 
-$$
-j^* = \arg\max_{j} \, SR_j^{\mathrm{train}}
-$$
+$$j^* = \arg\max_{j} \, SR_j^{\mathrm{train}}$$
 
 Compute its percentile rank in test performance:
 
-$$
-\lambda = \frac{\text{rank}(SR_{j^*}^{\mathrm{test}})}{m}
-$$
+$$\lambda = \frac{\text{rank}(SR_{j^*}^{\mathrm{test}})}{m}$$
 
 Define:
 
-$$
-\omega = \log\left( \frac{\lambda}{1 - \lambda} \right)
-$$
+$$\omega = \log\left( \frac{\lambda}{1 - \lambda} \right)$$
 
 ### A.4.3 PBO Definition
 
-$$
-PBO = P(\omega < 0)
-$$
+$$PBO = P(\omega < 0)$$
 
 i.e., probability that the selected strategy performs below the median out-of-sample.
 
@@ -176,21 +152,15 @@ i.e., probability that the selected strategy performs below the median out-of-sa
 
 Given ordered p-values:
 
-$$
-p_{(1)} \leq p_{(2)} \leq \cdots \leq p_{(m)}
-$$
+$$p_{(1)} \leq p_{(2)} \leq \cdots \leq p_{(m)}$$
 
 Define:
 
-$$
-k = \max\left\{ i : p_{(i)} \leq \frac{i}{m} \alpha \right\}
-$$
+$$k = \max\left\{ i : p_{(i)} \leq \frac{i}{m} \alpha \right\}$$
 
 Reject all $p_{(i)} \leq p_{(k)}$. Controls:
 
-$$
-FDR = E\left[ \frac{V}{R} \right] \leq \alpha
-$$
+$$FDR = E\left[ \frac{V}{R} \right] \leq \alpha$$
 
 where $V$ = false positives, $R$ = total rejections.
 
@@ -198,15 +168,11 @@ where $V$ = false positives, $R$ = total rejections.
 
 Under arbitrary dependence:
 
-$$
-p_{(i)} \leq \frac{i}{m} \cdot \frac{\alpha}{c(m)}
-$$
+$$p_{(i)} \leq \frac{i}{m} \cdot \frac{\alpha}{c(m)}$$
 
 where:
 
-$$
-c(m) = \sum_{j=1}^{m} \frac{1}{j}
-$$
+$$c(m) = \sum_{j=1}^{m} \frac{1}{j}$$
 
 BY is strictly more conservative.
 
@@ -230,15 +196,11 @@ Returns exhibit serial dependence and volatility clustering. IID bootstrap is in
 
 Let block length $L$ follow a geometric distribution:
 
-$$
-P(L = k) = p(1 - p)^{k - 1}
-$$
+$$P(L = k) = p(1 - p)^{k - 1}$$
 
 Expected block length:
 
-$$
-E[L] = \frac{1}{p}
-$$
+$$E[L] = \frac{1}{p}$$
 
 Resample blocks with replacement to generate bootstrap series.
 
@@ -246,9 +208,7 @@ Resample blocks with replacement to generate bootstrap series.
 
 For statistic $\theta$: $\{\theta^{*(b)}\}_{b=1}^{B}$. CI at level $1 - \alpha$:
 
-$$
-\left[ \theta^{*(\alpha/2)}, \, \theta^{*(1 - \alpha/2)} \right]
-$$
+$$\left[ \theta^{*(\alpha/2)}, \, \theta^{*(1 - \alpha/2)} \right]$$
 
 ### A.6.4 Assumptions
 
@@ -266,9 +226,7 @@ $$
 
 Given correlation matrix $\Sigma$ of signal returns with eigenvalues $\lambda_1, \ldots, \lambda_m$, effective number of trials is approximated via:
 
-$$
-N_{\mathrm{eff}} = \frac{\left( \sum_{i=1}^{m} \lambda_i \right)^2}{\sum_{i=1}^{m} \lambda_i^2}
-$$
+$$N_{\mathrm{eff}} = \frac{\left( \sum_{i=1}^{m} \lambda_i \right)^2}{\sum_{i=1}^{m} \lambda_i^2}$$
 
 This reduces inflation when signals are correlated.
 
@@ -321,21 +279,15 @@ Let $\{r_t\}_{t \in \mathbb{Z}}$ be strictly stationary with $E[r_t] = \mu$, $\t
 
 Define:
 
-$$
-\hat{\mu} = \frac{1}{T} \sum_{t=1}^{T} r_t, \qquad \hat{\sigma}^2 = \frac{1}{T} \sum_{t=1}^{T} (r_t - \hat{\mu})^2 \quad \text{(population-style; } T^{-1} \text{ differences are } o(1)\text{)}.
-$$
+$$\hat{\mu} = \frac{1}{T} \sum_{t=1}^{T} r_t, \qquad \hat{\sigma}^2 = \frac{1}{T} \sum_{t=1}^{T} (r_t - \hat{\mu})^2 \quad \text{(population-style; } T^{-1} \text{ differences are } o(1)\text{)}.$$
 
 **Proposition B.1 (CLT for $\hat{\mu}$).** Under the conditions above:
 
-$$
-\sqrt{T} \, (\hat{\mu} - \mu) \xrightarrow{d} N(0, \Omega),
-$$
+$$\sqrt{T} \, (\hat{\mu} - \mu) \xrightarrow{d} N(0, \Omega),$$
 
 where the long-run variance is
 
-$$
-\Omega = \gamma(0) + 2 \sum_{k=1}^{\infty} \gamma(k), \qquad \gamma(k) = \text{Cov}(r_t, r_{t-k}).
-$$
+$$\Omega = \gamma(0) + 2 \sum_{k=1}^{\infty} \gamma(k), \qquad \gamma(k) = \text{Cov}(r_t, r_{t-k}).$$
 
 *Proof sketch.* Apply a central limit theorem for stationary mixing sequences (e.g., Ibragimov–Linnik type results). The variance of the partial sums includes all autocovariances; scaling by $T^{-1}$ yields $\Omega$. □
 
@@ -345,9 +297,7 @@ $$
 
 Define the (zero risk-free) Sharpe statistic:
 
-$$
-SR = \frac{\hat{\mu}}{\hat{\sigma}}.
-$$
+$$SR = \frac{\hat{\mu}}{\hat{\sigma}}.$$
 
 Let $\theta = (\mu, \sigma)$ and $\hat{\theta} = (\hat{\mu}, \hat{\sigma})$. Define $g(\mu, \sigma) = \mu/\sigma$. Then $SR = g(\hat{\theta})$. Assume IID for the cleanest derivation; weak dependence extensions replace the covariance matrix with its long-run analogue.
 
@@ -355,9 +305,7 @@ Let $\theta = (\mu, \sigma)$ and $\hat{\theta} = (\hat{\mu}, \hat{\sigma})$. Def
 
 Under IID with finite fourth moment:
 
-$$
-\sqrt{T} \begin{pmatrix} \hat{\mu} - \mu \\ \hat{\sigma} - \sigma \end{pmatrix} \xrightarrow{d} N\left( \begin{pmatrix} 0 \\ 0 \end{pmatrix}, \Sigma_{\mu,\sigma} \right).
-$$
+$$\sqrt{T} \begin{pmatrix} \hat{\mu} - \mu \\ \hat{\sigma} - \sigma \end{pmatrix} \xrightarrow{d} N\left( \begin{pmatrix} 0 \\ 0 \end{pmatrix}, \Sigma_{\mu,\sigma} \right).$$
 
 A convenient route is to use $(\hat{\mu}, \widehat{m_2})$ where $\widehat{m_2} = \frac{1}{T} \sum (r_t - \mu)^2$, then map to $\hat{\sigma} = \sqrt{ \widehat{m_2} - (\hat{\mu} - \mu)^2 }$. To first order, $\hat{\sigma} \approx \sqrt{\widehat{m_2}}$.
 
@@ -371,23 +319,17 @@ For IID:
 
 Gradient:
 
-$$
-\nabla g(\mu, \sigma) = \left( \frac{\partial}{\partial\mu} \frac{\mu}{\sigma}, \; \frac{\partial}{\partial\sigma} \frac{\mu}{\sigma} \right) = \left( \frac{1}{\sigma}, \; -\frac{\mu}{\sigma^2} \right).
-$$
+$$\nabla g(\mu, \sigma) = \left( \frac{\partial}{\partial\mu} \frac{\mu}{\sigma}, \; \frac{\partial}{\partial\sigma} \frac{\mu}{\sigma} \right) = \left( \frac{1}{\sigma}, \; -\frac{\mu}{\sigma^2} \right).$$
 
 Thus:
 
-$$
-\sqrt{T} \, (SR - \mu/\sigma) \xrightarrow{d} N\left( 0, \; \nabla g^\top \Sigma_{\mu,\sigma} \nabla g \right).
-$$
+$$\sqrt{T} \, (SR - \mu/\sigma) \xrightarrow{d} N\left( 0, \; \nabla g^\top \Sigma_{\mu,\sigma} \nabla g \right).$$
 
 Carrying out the multiplication (and expressing moments via standardized skewness and kurtosis) yields the widely used approximation (as in Bailey & López de Prado's development of Sharpe uncertainty corrections; see Deep Research Review of Alpharo…):
 
 Let $\gamma_3 = \mu_3 / \sigma^3$, $\gamma_4 = \mu_4 / \sigma^4$. Then an approximate large-$T$ variance for the sample Sharpe is:
 
-$$
-\text{Var}(SR) \approx \frac{1}{T} \left( 1 - \gamma_3 SR + \frac{\gamma_4 - 1}{4} SR^2 \right).
-$$
+$$\text{Var}(SR) \approx \frac{1}{T} \left( 1 - \gamma_3 SR + \frac{\gamma_4 - 1}{4} SR^2 \right).$$
 
 Many texts present close variants depending on (i) population vs sample variance, (ii) whether you keep $O(T^{-1})$ terms from $(\hat{\mu} - \mu)^2$, and (iii) whether kurtosis is excess kurtosis $\kappa = \gamma_4 - 3$. The key point: nonzero skewness and excess kurtosis increase Sharpe estimator variance, which feeds DSR-style corrections. □
 
@@ -399,23 +341,17 @@ DSR uses an estimate of the expected maximum performance among $N$ trials under 
 
 Let $Z_1, \ldots, Z_N$ be IID standard normal and $M_N = \max_i Z_i$. Then:
 
-$$
-E[M_N] \approx b_N + \gamma \, a_N,
-$$
+$$E[M_N] \approx b_N + \gamma \, a_N,$$
 
 where $\gamma \approx 0.57721$ is the Euler–Mascheroni constant and
 
-$$
-b_N = \sqrt{2 \ln N} - \frac{\ln\ln N + \ln(4\pi)}{2\sqrt{2\ln N}}, \qquad a_N = \frac{1}{\sqrt{2\ln N}}.
-$$
+$$b_N = \sqrt{2 \ln N} - \frac{\ln\ln N + \ln(4\pi)}{2\sqrt{2\ln N}}, \qquad a_N = \frac{1}{\sqrt{2\ln N}}.$$
 
 *Derivation sketch.* Use the normal tail approximation $1 - \Phi(x) \sim \phi(x)/x$. Solve $P(M_N \leq x) = \Phi(x)^N \approx \exp(-N(1 - \Phi(x)))$. Choose $x = b_N + y/a_N$ to normalize $M_N$ so that $P((M_N - b_N) a_N \leq y) \to \exp(-e^{-y})$ (Gumbel). Take expectations of the limiting Gumbel distribution: $E[Y] = \gamma$. □
 
 *Mapping to Sharpe.* If under the null the Sharpe estimator is approximately normal, $SR \approx N(\mu_{SR}, \sigma_{SR}^2)$, then:
 
-$$
-E[\max SR] \approx \mu_{SR} + \sigma_{SR} \, E[M_N].
-$$
+$$E[\max SR] \approx \mu_{SR} + \sigma_{SR} \, E[M_N].$$
 
 This is the “expected best luck” term subtracted inside DSR-style deflation (see the DSR reference context in Deep Research Review of Alpharo…).
 
@@ -425,15 +361,11 @@ Define: observed out-of-sample Sharpe $SR_{\mathrm{obs}}$; null Sharpe mean $\mu
 
 Then:
 
-$$
-SR^* = E[\max SR_{\mathrm{null}}] \approx \mu_{SR} + \sigma_{SR} \, E[M_N]
-$$
+$$SR^* = E[\max SR_{\mathrm{null}}] \approx \mu_{SR} + \sigma_{SR} \, E[M_N]$$
 
 and the deflated z-score:
 
-$$
-DSR = \frac{SR_{\mathrm{obs}} - SR^*}{\sigma_{SR}}.
-$$
+$$DSR = \frac{SR_{\mathrm{obs}} - SR^*}{\sigma_{SR}}.$$
 
 **Proposition B.2 (Asymptotic meaning).** Under the null and the approximations above, $DSR$ is asymptotically standard normal, so $p \approx 1 - \Phi(DSR)$.
 
@@ -449,15 +381,11 @@ Define: $V$ = number of false rejections; $R$ = total rejections; $FDR = E[V / \
 
 **Theorem B.3 (BH under independence).** If null p-values are IID $\mathrm{Uniform}(0,1)$ and independent of non-null p-values, then:
 
-$$
-FDR \leq \frac{m_0}{m} \alpha \leq \alpha.
-$$
+$$FDR \leq \frac{m_0}{m} \alpha \leq \alpha.$$
 
 *Proof outline (standard).* Condition on the non-null p-values and on the set of null indices. Use the self-consistency property of BH: if a null p-value is rejected, it must be $\leq \alpha R/m$. Show:
 
-$$
-E\left[ \frac{V}{\max(R,1)} \right] = \sum_{i \in H_0} E\left[ \frac{\mathbf{1}\{p_i \leq \alpha R/m\}}{\max(R,1)} \right].
-$$
+$$E\left[ \frac{V}{\max(R,1)} \right] = \sum_{i \in H_0} E\left[ \frac{\mathbf{1}\{p_i \leq \alpha R/m\}}{\max(R,1)} \right].$$
 
 Under independence and uniformity, for each null $i$: $E\bigl[ \mathbf{1}\{p_i \leq \alpha R/m\} / \max(R,1) \bigr] \leq \alpha/m$. Summing over $m_0$ nulls yields $(m_0/m)\alpha$. □
 
@@ -487,15 +415,11 @@ The stationary bootstrap (Politis & Romano) samples blocks of random length $L \
 
 In CSCV, for each split $s$, compute the OOS percentile rank $\lambda_s \in (0,1)$ of the strategy selected by IS optimization. Define:
 
-$$
-\omega_s = \log\left( \frac{\lambda_s}{1 - \lambda_s} \right).
-$$
+$$\omega_s = \log\left( \frac{\lambda_s}{1 - \lambda_s} \right).$$
 
 **Proposition B.6 (Median criterion equivalence).** $\omega_s < 0 \;\Longleftrightarrow\; \lambda_s < 1/2$. Thus:
 
-$$
-PBO = P(\omega < 0) = P(\lambda < 1/2).
-$$
+$$PBO = P(\omega < 0) = P(\lambda < 1/2).$$
 
 *Reason for logit.* $\lambda$ is bounded on $(0,1)$; the logit maps it to $\mathbb{R}$, improving symmetry and enabling diagnostic plots and averaging on an unbounded scale.
 
@@ -505,9 +429,7 @@ $$
 
 Given a correlation (or covariance) matrix $\Sigma$ for signal returns with eigenvalues $\lambda_1, \ldots, \lambda_m$:
 
-$$
-N_{\mathrm{eff}} = \frac{\left( \sum_{i=1}^{m} \lambda_i \right)^2}{\sum_{i=1}^{m} \lambda_i^2}.
-$$
+$$N_{\mathrm{eff}} = \frac{\left( \sum_{i=1}^{m} \lambda_i \right)^2}{\sum_{i=1}^{m} \lambda_i^2}.$$
 
 *Derivation intuition.* If signals are independent with equal variance, $\Sigma$ is identity, $\lambda_i = 1$, so $N_{\mathrm{eff}} = m^2/m = m$. If signals are perfectly collinear, one eigenvalue $\lambda_1 = m$, rest 0, so $N_{\mathrm{eff}} = m^2/m^2 = 1$. Thus $N_{\mathrm{eff}}$ interpolates between 1 and $m$, acting as a trial-count shrinkage under correlation.
 

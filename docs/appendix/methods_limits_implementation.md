@@ -6,21 +6,15 @@ This document matches the **exact implementations** in this repo for DSR, BH/BY,
 
 Let returns (or PnL increments) be a time series $\{r_t\}_{t=1}^{n}$, with sample mean
 
-$$
-\bar{r} = \frac{1}{n} \sum_{t=1}^{n} r_t
-$$
+$$\bar{r} = \frac{1}{n} \sum_{t=1}^{n} r_t$$
 
 and sample standard deviation (ddof $= 1$)
 
-$$
-s = \sqrt{ \frac{1}{n-1} \sum_{t=1}^{n} (r_t - \bar{r})^2 }.
-$$
+$$s = \sqrt{ \frac{1}{n-1} \sum_{t=1}^{n} (r_t - \bar{r})^2 }.$$
 
 The repo's raw Sharpe is computed as
 
-$$
-\widehat{SR} = \frac{\bar{r}}{s},
-$$
+$$\widehat{SR} = \frac{\bar{r}}{s},$$
 
 using ddof $= 1$ for $s$ (see `multiple_testing`).
 
@@ -36,9 +30,7 @@ This repo computes:
 
 2. **A variance estimate for $\widehat{SR}$** under i.i.d.-style approximations including skewness and excess kurtosis: sample skewness $\hat{\gamma}$ and excess kurtosis $\hat{\kappa}$ are taken from the series (pandas `skew()` and `kurtosis()`; the latter is excess kurtosis). The code uses:
 
-$$
-\widehat{\text{Var}}(\widehat{SR}) = \frac{ 1 + \frac{1}{2} \widehat{SR}^2 - \hat{\gamma} \, \widehat{SR} + \frac{1}{4} \hat{\kappa} \, \widehat{SR}^2 }{ n }
-$$
+$$\widehat{\text{Var}}(\widehat{SR}) = \frac{ 1 + \frac{1}{2} \widehat{SR}^2 - \hat{\gamma} \, \widehat{SR} + \frac{1}{4} \hat{\kappa} \, \widehat{SR}^2 }{ n }$$
 
 (then floored at $10^{-12}$). This is exactly what's implemented in `multiple_testing`.
 
@@ -46,17 +38,13 @@ Define $\hat{\sigma}_{SR} = \sqrt{ \widehat{\text{Var}}(\widehat{SR}) }$.
 
 3. **A multiple-testing "winner's curse" correction** via an approximation to the expected maximum Sharpe under the null across $N$ trials (where $N = \max(\mathrm{n\_trials\_estimate}, 1)$):
 
-$$
-\widehat{E}[\max SR_{\mathrm{null}}] \approx \hat{\sigma}_{SR} \sqrt{2 \ln N}
-$$
+$$\widehat{E}[\max SR_{\mathrm{null}}] \approx \hat{\sigma}_{SR} \sqrt{2 \ln N}$$
 
 (see `multiple_testing`).
 
 4. **The repo's returned deflated score:**
 
-$$
-DSR_{\mathrm{repo}} = \frac{ \widehat{SR} - \widehat{E}[\max SR_{\mathrm{null}}] }{ \hat{\sigma}_{SR} } = \frac{ \widehat{SR} }{ \hat{\sigma}_{SR} } - \sqrt{2 \ln N},
-$$
+$$DSR_{\mathrm{repo}} = \frac{ \widehat{SR} - \widehat{E}[\max SR_{\mathrm{null}}] }{ \hat{\sigma}_{SR} } = \frac{ \widehat{SR} }{ \hat{\sigma}_{SR} } - \sqrt{2 \ln N},$$
 
 matching `deflated_sr = (raw_sr - e_max_sr) / std_sr` in `multiple_testing`.
 
@@ -72,17 +60,13 @@ For large $x$, $1 - \Phi(x) \approx \frac{1}{x} \phi(x)$, so setting $P(\max Z_i
 
 More formally, extreme-value theory gives:
 
-$$
-\max_i Z_i = \sqrt{2 \ln N} - \frac{ \ln\ln N + \ln(4\pi) }{ 2\sqrt{2\ln N} } + o_p\!\left( \frac{1}{\sqrt{\ln N}} \right),
-$$
+$$\max_i Z_i = \sqrt{2 \ln N} - \frac{ \ln\ln N + \ln(4\pi) }{ 2\sqrt{2\ln N} } + o_p\!\left( \frac{1}{\sqrt{\ln N}} \right),$$
 
 so $E[\max_i Z_i] = \sqrt{2 \ln N} + o(\sqrt{\ln N})$. The repo uses the leading term only (no $\ln\ln N$ refinement); see `multiple_testing`.
 
 If under the null each trial's Sharpe estimator is approximately normal, $\widehat{SR}_j \approx N(0, \sigma_{SR}^2)$, then $\max_j \widehat{SR}_j \approx \sigma_{SR} \max_j Z_j$, hence:
 
-$$
-E[\max_j \widehat{SR}_j] \approx \sigma_{SR} \sqrt{2 \ln N}.
-$$
+$$E[\max_j \widehat{SR}_j] \approx \sigma_{SR} \sqrt{2 \ln N}.$$
 
 ### A.3 Asymptotics and limits
 
@@ -102,8 +86,8 @@ Given $m$ p-values $p_1, \ldots, p_m$, this repo:
 
 1. Drops NaNs, sorts ascending to $p_{(1)} \leq \cdots \leq p_{(m)}$ (see `multiple_testing_adjuster`).
 2. Computes adjusted values:
-   - **BH:** $\tilde{p}_{(i)} = \min\!\left( 1, \; p_{(i)} \frac{m}{i} \right)$ (see `multiple_testing_adjuster`).
-   - **BY:** $c_m = \sum_{j=1}^{m} \frac{1}{j}$, $\tilde{p}_{(i)} = \min\!\left( 1, \; p_{(i)} \frac{m \, c_m}{i} \right)$ (see `multiple_testing_adjuster`).
+   - **BH:** $\tilde{p}_{(i)} = \min\!\left(1,\; p_{(i)} \frac{m}{i}\right)$ (see `multiple_testing_adjuster`).
+   - **BY:** Harmonic sum $c_m = \sum_{j=1}^{m} \frac{1}{j}$; then $\tilde{p}_{(i)} = \min\!\left(1,\; p_{(i)} \frac{m\,c_m}{i}\right)$ (see `multiple_testing_adjuster`).
 3. Enforces monotonicity in the sorted order (non-decreasing adjusted p-values): $\tilde{p}_{(i)} \leftarrow \max(\tilde{p}_{(i)}, \tilde{p}_{(i-1)})$ (see `multiple_testing_adjuster`).
 4. Maps back to original indices and declares discoveries where $\mathrm{adj} \leq q$ (see `multiple_testing_adjuster`).
 
@@ -111,9 +95,7 @@ Given $m$ p-values $p_1, \ldots, p_m$, this repo:
 
 BY modifies BH to remain valid under arbitrary dependence by inflating the threshold by $c_m$. The harmonic number satisfies:
 
-$$
-c_m = H_m = \sum_{j=1}^{m} \frac{1}{j} = \ln m + \gamma + \frac{1}{2m} + o\!\left( \frac{1}{m} \right),
-$$
+$$c_m = H_m = \sum_{j=1}^{m} \frac{1}{j} = \ln m + \gamma + \frac{1}{2m} + o\!\left( \frac{1}{m} \right),$$
 
 so BY is more conservative by a factor asymptotically $\ln m$. This is why the repo's BY adjusted p-values are guaranteed $\geq$ BH adjusted p-values (also asserted in tests; see `test_multiple_testing_adjuster`).
 
@@ -129,17 +111,13 @@ The repo implements a **walk-forward PBO proxy**:
 - It defines: $n_{\mathrm{splits}}$ = number of unique splits (must be $\geq 2$); $m = \mathrm{median}(\{\text{test metric values}\})$; see `multiple_testing`.
 - It counts how often the (assumed) "selected" strategy underperforms that median:
 
-$$
-\text{underperform} = \sum_{k=1}^{K} \mathbf{1}\{ T_k < m \},
-$$
+$$\text{underperform} = \sum_{k=1}^{K} \mathbf{1}\{ T_k < m \},$$
 
 where $T_k$ is the test metric in row $k$, and $K = \mathrm{len}(\mathrm{results\_df})$; see `multiple_testing`.
 
 - It returns:
 
-$$
-\widehat{PBO}_{\mathrm{proxy}} = \frac{ \text{underperform} }{ K }
-$$
+$$\widehat{PBO}_{\mathrm{proxy}} = \frac{ \text{underperform} }{ K }$$
 
 (see `multiple_testing`).
 
@@ -175,9 +153,7 @@ For fixed block bootstrap in the RC module, indices are built by repeatedly samp
 
 For dependent stationary processes (mixing conditions), block bootstraps are consistent for many smooth functionals if block length $b = b_n$ satisfies:
 
-$$
-b_n \to \infty \quad \text{and} \quad \frac{b_n}{n} \to 0 \quad (n \to \infty).
-$$
+$$b_n \to \infty \quad \text{and} \quad \frac{b_n}{n} \to 0 \quad (n \to \infty).$$
 
 Stationary bootstrap uses random block lengths with mean $\ell_n$ playing the role of $b_n$; similar conditions apply: $\ell_n \to \infty$, $\ell_n / n \to 0$.
 
@@ -194,16 +170,12 @@ The repo's Phase 3 Slice 4 spec defines:
 - **Observed statistic:** $T_{\mathrm{obs}} = \max_{h \in \mathcal{H}} \hat{\theta}_h$, where $\hat{\theta}_h$ is a per-hypothesis statistic (default mean IC); see `phase3_reality_check_slice4_ali…`.
 - **Null generation:** For each bootstrap draw $b = 1, \ldots, B$, produce a vector $\hat{\theta}_h^{*(b)}$ using the **same resampling indices across hypotheses** to preserve dependence:
 
-$$
-T^{*(b)} = \max_{h \in \mathcal{H}} \hat{\theta}_h^{*(b)};
-$$
+$$T^{*(b)} = \max_{h \in \mathcal{H}} \hat{\theta}_h^{*(b)};$$
 
 see `phase3_reality_check_slice4_ali…`.
 - **P-value:**
 
-$$
-\hat{p}_{\mathrm{RC}} = \frac{ 1 + \bigl\lvert \lbrace b : T^{*(b)} \geq T_{\mathrm{obs}} \rbrace \bigr\rvert }{ B + 1 }
-$$
+$$\hat{p}_{\mathrm{RC}} = \frac{ 1 + \bigl\lvert \lbrace b : T^{*(b)} \geq T_{\mathrm{obs}} \rbrace \bigr\rvert }{ B + 1 }$$
 
 (see `phase3_reality_check_slice4_ali…` and implemented in `reality_check`).
 
@@ -211,9 +183,7 @@ $$
 
 The null generator builder intersects indices so every hypothesis series is aligned on a common index set (see `reality_check`). For bootstrap draw $b$, it uses a per-draw seed $\mathrm{seed\_b} = \mathrm{seed} + b$ (see `reality_check`) and computes (for mean-IC metric) the resampled statistic as a simple mean:
 
-$$
-\hat{\theta}_h^{*(b)} = \mathrm{nanmean}(\{ x_{h, t_j} \}_{j=1}^{n}).
-$$
+$$\hat{\theta}_h^{*(b)} = \mathrm{nanmean}(\{ x_{h, t_j} \}_{j=1}^{n}).$$
 
 See `reality_check`.
 

@@ -344,7 +344,7 @@ Below is a schema evolution plan that adds **(a)** versioned migrations, and **(
 
 * min\_obs INTEGER NOT NULL
 
-* factors\_json TEXT NOT NULL (e.g., $$"BTC\_spot","ETH\_spot"$$)
+* factors\_json TEXT NOT NULL (e.g. `"BTC_spot","ETH_spot"`)
 
 * estimator TEXT NOT NULL ("rolling\_ols" | "kalman" later)
 
@@ -356,7 +356,7 @@ Below is a schema evolution plan that adds **(a)** versioned migrations, and **(
 
 * Example row
 
-* ("fctr\_9a21c0d1e4fa2b7a","2026-02-19T18:30:00Z","7e3c1f2a9b1d4e0c","1h",72,24,"$$\\"BTC\_spot\\",\\"ETH\_spot\\"$$","rolling\_ols","{\\"add\_const\\":true}")
+* ("fctr\_9a21c0d1e4fa2b7a","2026-02-19T18:30:00Z","7e3c1f2a9b1d4e0c","1h",72,24,`"BTC_spot","ETH_spot"`,"rolling\_ols","{\\"add\_const\\":true}")
 
 **Table: factor\_betas** (materialized betas and fit diagnostics; avoids recompute + enables audit)
 
@@ -484,7 +484,7 @@ These contracts are designed to fit your current architecture: small, typed, det
 
 **Inputs**  
 - returns\_df (wide: index=ts\_utc, cols=asset\_id + factor cols)  
-- factor\_cols: list$$str$$  
+- factor\_cols: `list[str]`  
 - mode: "rolling\_ols" | "kalman"  
 - window\_bars, min\_obs  
 - as\_of\_lag\_bars (enforces causality; default = 1 for “trade next bar”)
@@ -497,7 +497,7 @@ These contracts are designed to fit your current architecture: small, typed, det
 interface Residualizer:  
   compute(  
     returns\_df: DataFrame,  
-    factor\_cols: list$$str$$,  
+    factor\_cols: `list[str]`,  
     config: FactorModelConfig,  
     as\_of\_lag\_bars: int = 1  
   ) \-\> FactorOutputs
@@ -557,7 +557,7 @@ interface ExecutionCostModel:
     weights: DataFrame,  
     market\_meta: DataFrame,  
     config: ExecutionConfig  
-  ) \-\> tuple$$Series, CostFrame$$
+  ) \-\> `tuple[Series, CostFrame]`
 
 **Error handling**  
 - If required meta missing: either raise (strict mode) or fall back to conservative defaults (explicitly logged).
@@ -594,7 +594,7 @@ interface MultipleTestingAdjuster:
 
 interface Bootstrapper:  
   sample(series: Series, config: BootstrapConfig) \-\> ndarray  
-  ci(samples: ndarray, ci\_pct: float) \-\> tuple$$float, float$$
+  ci(samples: ndarray, ci\_pct: float) \-\> `tuple[float, float]`
 
 ## Testing and acceptance criteria
 
@@ -754,24 +754,24 @@ Migration path (least disruptive):
 ### Phased execution checklist
 
 **Phase 1 (1–3 days)**  
-- $$$$ Patch leakage: replace/disable full-sample signal\_residual\_momentum\_24h with a rolling or fold-causal residualizer (enforce as\_of\_lag\_bars). [\[92\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/crypto_analyzer/alpha_research.py)  
-- $$$$ Create ValidationBundle contract (dataclass) and refactor reportv2 to emit it for each signal (IC series, t-stat, decay, turnover, lead/lag). [\[48\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/crypto_analyzer/alpha_research.py) [\[124\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/cli/research_report_v2.py)  
-- $$$$ Add integration test: deterministic rerun hash equality (manifest + artifact SHA). [\[110\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/crypto_analyzer/governance.py) [\[125\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/crypto_analyzer/artifacts.py)  
-- $$$$ Unify cost model: move slippage logic from cli/backtest.py and bps cost logic from portfolio.py into one ExecutionCostModel with a single config path. [\[104\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/cli/backtest.py) [\[87\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/crypto_analyzer/portfolio.py)
+- Patch leakage: replace/disable full-sample signal\_residual\_momentum\_24h with a rolling or fold-causal residualizer (enforce as\_of\_lag\_bars). [\[92\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/crypto_analyzer/alpha_research.py)  
+- Create ValidationBundle contract (dataclass) and refactor reportv2 to emit it for each signal (IC series, t-stat, decay, turnover, lead/lag). [\[48\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/crypto_analyzer/alpha_research.py) [\[124\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/cli/research_report_v2.py)  
+- Add integration test: deterministic rerun hash equality (manifest + artifact SHA). [\[110\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/crypto_analyzer/governance.py) [\[125\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/crypto_analyzer/artifacts.py)  
+- Unify cost model: move slippage logic from cli/backtest.py and bps cost logic from portfolio.py into one ExecutionCostModel with a single config path. [\[104\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/cli/backtest.py) [\[87\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/crypto_analyzer/portfolio.py)
 
 **Phase 2 (1–2 weeks)**  
-- $$$$ Implement schema\_migrations + versioned migration runner; add tables: factor\_model\_runs, factor\_betas, residual\_returns. [\[95\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/crypto_analyzer/db/migrations.py)  
-- $$$$ Implement BH FDR correction (MultipleTestingAdjuster) and wire into sweep runner + experiment registry metrics (store adjusted p-values). [\[126\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/crypto_analyzer/experiments.py)  
-- $$$$ Add stationary bootstrap option to Bootstrapper; update stats corrections outputs to record bootstrap method + seed. [\[127\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/crypto_analyzer/statistics.py)  
-- $$$$ Add a “null suite” runner: random signal, permuted cross-section, block-shuffled time; require reports to show null results next to real signals. [\[46\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/crypto_analyzer/alpha_research.py)  
-- $$$$ Implement basic spread model (vol/liquidity proxy) + size-dependent impact (participation proxy) and generate capacity-vs-performance curves.
+- Implement schema\_migrations + versioned migration runner; add tables: factor\_model\_runs, factor\_betas, residual\_returns. [\[95\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/crypto_analyzer/db/migrations.py)  
+- Implement BH FDR correction (MultipleTestingAdjuster) and wire into sweep runner + experiment registry metrics (store adjusted p-values). [\[126\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/crypto_analyzer/experiments.py)  
+- Add stationary bootstrap option to Bootstrapper; update stats corrections outputs to record bootstrap method + seed. [\[127\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/crypto_analyzer/statistics.py)  
+- Add a “null suite” runner: random signal, permuted cross-section, block-shuffled time; require reports to show null results next to real signals. [\[46\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/crypto_analyzer/alpha_research.py)  
+- Implement basic spread model (vol/liquidity proxy) + size-dependent impact (participation proxy) and generate capacity-vs-performance curves.
 
 **Phase 3 (1–2 months)**  
-- $$$$ Add statistically anchored regime models with causal filtering (ARCH/GARCH volatility regime OR Markov switching), persisted as regime\_runs / regime\_states. [\[91\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/crypto_analyzer/regimes.py)  
-- $$$$ Add dynamic beta estimator (Kalman) as optional factor model estimator; compare OOS factor exposure removal vs rolling OLS baseline. [\[34\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/crypto_analyzer/factors.py)  
-- $$$$ Build full parameter sweep registry: define “test families,” compute corrected inference, and adopt promotion criteria that require survival after correction + execution realism + regime robustness. [\[93\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/crypto_analyzer/diagnostics.py)  
-- $$$$ Performance optimization: cache factor/regime outputs by dataset\_id and config hash; profile rolling OLS loops; vectorize or accelerate (Numba or incremental regression) once correctness gates pass. [\[116\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/crypto_analyzer/factors.py)  
-- $$$$ Add an explicit “research promotion workflow” in the UI: exploratory → candidate → accepted, based on the acceptance criteria and stored evidence artifacts. [\[128\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/README.md)
+- Add statistically anchored regime models with causal filtering (ARCH/GARCH volatility regime OR Markov switching), persisted as regime\_runs / regime\_states. [\[91\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/crypto_analyzer/regimes.py)  
+- Add dynamic beta estimator (Kalman) as optional factor model estimator; compare OOS factor exposure removal vs rolling OLS baseline. [\[34\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/crypto_analyzer/factors.py)  
+- Build full parameter sweep registry: define “test families,” compute corrected inference, and adopt promotion criteria that require survival after correction + execution realism + regime robustness. [\[93\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/crypto_analyzer/diagnostics.py)  
+- Performance optimization: cache factor/regime outputs by dataset\_id and config hash; profile rolling OLS loops; vectorize or accelerate (Numba or incremental regression) once correctness gates pass. [\[116\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/crypto_analyzer/factors.py)  
+- Add an explicit “research promotion workflow” in the UI: exploratory → candidate → accepted, based on the acceptance criteria and stored evidence artifacts. [\[128\]](https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/README.md)
 
 ---
 
