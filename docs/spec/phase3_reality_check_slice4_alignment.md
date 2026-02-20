@@ -19,7 +19,7 @@
 
 - **Observed:** T_obs = max over hypotheses h of observed_stats[h].
 - **Null:** For each simulation b = 0..B-1, null_generator(b) returns a vector of null statistics (one per hypothesis). T_b = max over h of null_b[h].
-- **p-value:** RC p-value = (1 + #{b : T_b >= T_obs}) / (B + 1).
+- **p-value:** RC p-value = (1 + |{ b : T_b >= T_obs }|) / (B + 1) (cardinality of the set).
 - **Joint null:** The same resampling (e.g. one block draw per b) is used for all hypotheses so dependence is preserved.
 
 ## RW algorithm (Romano–Wolf stepdown)

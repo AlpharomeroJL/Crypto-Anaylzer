@@ -202,7 +202,7 @@ see `phase3_reality_check_slice4_ali…`.
 - **P-value:**
 
 $$
-\hat{p}_{\mathrm{RC}} = \frac{ 1 + \#\{ b : T^{*(b)} \geq T_{\mathrm{obs}} \} }{ B + 1 }
+\hat{p}_{\mathrm{RC}} = \frac{ 1 + |\{ b : T^{*(b)} \geq T_{\mathrm{obs}} \}| }{ B + 1 }
 $$
 
 (see `phase3_reality_check_slice4_ali…` and implemented in `reality_check`).
@@ -229,4 +229,4 @@ Romano–Wolf stepdown is explicitly **stubbed / not implemented** (raises if en
 - **BH/BY** are standard FDR adjustments; BY's harmonic inflation \( c_m \) makes it valid under arbitrary dependence and asymptotically costs a \( \ln m \) factor (see `multiple_testing_adjuster`).
 - **PBO proxy** is a heuristic "median underperformance rate" across walk-forward splits, not CSCV PBO (see `multiple_testing`).
 - **Bootstrap** uses fixed or stationary blocks; stationary bootstrap uses geometric block lengths with mean \( \ell \) and wrap-around (see `statistics`).
-- **Reality Check** is implemented as a max-statistic bootstrap test with dependence preserved by sharing resampling indices across hypotheses, and p-value \( (1 + \#\{ T^* \geq T \}) / (B + 1) \); see `reality_check`.
+- **Reality Check** is implemented as a max-statistic bootstrap test with dependence preserved by sharing resampling indices across hypotheses, and p-value \( (1 + |\{ T^* \geq T \}|) / (B + 1) \); see `reality_check`.
