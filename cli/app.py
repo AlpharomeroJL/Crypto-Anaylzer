@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Crypto quant monitoring + research dashboard.
-12 pages: Overview, Pair Detail, Scanner, Backtest, Walk-Forward, Market Structure,
-Signals, Research, Institutional Research, Experiments, Runtime/Health, Governance.
+13 pages: Overview, Pair Detail, Scanner, Backtest, Walk-Forward, Market Structure,
+Signals, Research, Institutional Research, Experiments, Promotion, Runtime/Health, Governance.
 Run: streamlit run app.py
 Width handled by crypto_analyzer.ui helpers (width='stretch' on Streamlit >= 1.40, use_container_width fallback for older).
 """
@@ -183,6 +183,7 @@ def main():
             "Research",
             "Institutional Research",
             "Experiments",
+            "Promotion",
             "Runtime / Health",
             "Governance",
         ],
@@ -1501,6 +1502,185 @@ def main():
                         )
                         st_plot(fig_hist, use_container_width=True)
                         st_df(hist_df[["run_id", "ts_utc", "metric_value"]].round(6))
+
+    elif page == "Promotion":
+        st.header("Promotion (exploratory → candidate → accepted)")
+        prom_db = st.sidebar.text_input(
+            "Promotion DB (same as main DB when Phase 3 migrations applied)",
+            value=db_path_str,
+            key="prom_db_path",
+        )
+        try:
+            import sqlite3
+
+            from crypto_analyzer.promotion.gating import ThresholdConfig
+            from crypto_analyzer.promotion.service import evaluate_and_record
+            from crypto_analyzer.promotion.store_sqlite import (
+                get_candidate,
+                get_events,
+                list_candidates,
+                update_status,
+            )
+
+            if not prom_db or not Path(prom_db).is_file():
+                st.info("Set a valid DB path. Apply run_migrations_phase3 to that DB to create promotion tables.")
+            else:
+                with st.sidebar.expander("Filters", expanded=True):
+                    filter_status = st.selectbox(
+                        "Status",
+                        ["all", "exploratory", "candidate", "accepted", "rejected"],
+                        key="prom_status",
+                    )
+                    filter_dataset = st.text_input("Dataset ID", value="", key="prom_dataset")
+                    filter_signal = st.text_input("Signal name", value="", key="prom_signal")
+                status_f = None if filter_status == "all" else filter_status
+                dataset_f = filter_dataset.strip() or None
+                signal_f = filter_signal.strip() or None
+                conn = sqlite3.connect(prom_db)
+                try:
+                    candidates = list_candidates(
+                        conn, status=status_f, dataset_id=dataset_f, signal_name=signal_f, limit=100
+                    )
+                except RuntimeError as e:
+                    st.info(str(e))
+                    candidates = []
+                finally:
+                    conn.close()
+
+                if candidates:
+                    df_c = pd.DataFrame(candidates)
+                    display_cols = [
+                        c
+                        for c in ["candidate_id", "status", "signal_name", "horizon", "dataset_id", "created_at_utc"]
+                        if c in df_c.columns
+                    ]
+                    st.subheader("Candidates")
+                    st_df(df_c[display_cols] if display_cols else df_c)
+                    sel_id = st.selectbox(
+                        "View details",
+                        [""] + [r["candidate_id"] for r in candidates],
+                        format_func=lambda x: x or "(select one)",
+                        key="prom_sel",
+                    )
+                    if sel_id:
+                        conn = sqlite3.connect(prom_db)
+                        try:
+                            row = get_candidate(conn, sel_id)
+                            events = get_events(conn, sel_id)
+                        finally:
+                            conn.close()
+                        if row:
+                            st.subheader("Details")
+                            st.json({k: v for k, v in row.items() if k != "evidence_json"})
+                            if row.get("evidence_json"):
+                                try:
+                                    st.json(json.loads(row["evidence_json"]))
+                                except Exception:
+                                    st.text(row["evidence_json"][:500])
+                            st.subheader("Events")
+                            if events:
+                                st_df(pd.DataFrame(events))
+                            with st.sidebar.expander("Evaluate / Status", expanded=True):
+                                require_rc = st.checkbox("Require Reality Check", value=False, key="prom_rc")
+                                max_rc_p = st.number_input(
+                                    "Max RC p-value", value=0.05, min_value=0.0, max_value=1.0, key="prom_rc_p"
+                                )
+                                st.caption("Execution realism (PR2)")
+                                require_exec = st.checkbox(
+                                    "Require execution realism", value=False, key="prom_require_exec"
+                                )
+                                min_liq = st.number_input(
+                                    "Min liquidity USD (optional)",
+                                    value=None,
+                                    min_value=0.0,
+                                    step=1000.0,
+                                    key="prom_min_liq",
+                                    format="%g",
+                                )
+                                max_part = st.number_input(
+                                    "Max participation rate (optional)",
+                                    value=None,
+                                    min_value=0.0,
+                                    max_value=100.0,
+                                    step=0.5,
+                                    key="prom_max_part",
+                                    format="%g",
+                                )
+                                allow_missing_exec = st.checkbox(
+                                    "Allow missing execution evidence (override)",
+                                    value=False,
+                                    key="prom_allow_missing_exec",
+                                    help="Auditable: promotion can proceed without execution evidence when targeting candidate/accepted.",
+                                )
+                                if allow_missing_exec:
+                                    st.warning(
+                                        "Override enabled: execution evidence will not be required. This is recorded in the event log."
+                                    )
+                                do_eval = st.button("Evaluate candidate", key="prom_eval")
+                                if do_eval:
+                                    thresh = ThresholdConfig(
+                                        require_reality_check=require_rc,
+                                        max_rc_p_value=max_rc_p,
+                                        require_execution_evidence=require_exec,
+                                        min_liquidity_usd_min=min_liq,
+                                        max_participation_rate_max=max_part,
+                                    )
+                                    evidence = json.loads(row["evidence_json"]) if row.get("evidence_json") else {}
+                                    bundle_path = evidence.get("bundle_path") or evidence.get("validation_bundle_path")
+                                    if not bundle_path:
+                                        st.warning("No bundle_path in evidence; add it when creating the candidate.")
+                                    else:
+                                        base = Path(bundle_path).parent if bundle_path else None
+                                        current_status = (row.get("status") or "exploratory").strip()
+                                        target_status = "candidate" if current_status == "exploratory" else "accepted"
+                                        conn2 = sqlite3.connect(prom_db)
+                                        try:
+                                            dec = evaluate_and_record(
+                                                conn2,
+                                                sel_id,
+                                                thresh,
+                                                bundle_path,
+                                                evidence_base_path=base,
+                                                target_status=target_status,
+                                                allow_missing_execution_evidence=allow_missing_exec,
+                                            )
+                                        except Exception as err:
+                                            st.error(f"Evaluation failed: {err}")
+                                            conn2.close()
+                                            st.stop()
+                                        finally:
+                                            conn2.close()
+                                        if dec.status == "accepted":
+                                            st.success(f"Decision: {dec.status}. Reasons: {dec.reasons or 'none'}")
+                                        else:
+                                            st.error(
+                                                f"Decision: {dec.status}. Reasons: {'; '.join(dec.reasons) if dec.reasons else 'none'}"
+                                            )
+                                        if getattr(dec, "warnings", None):
+                                            for w in dec.warnings:
+                                                st.warning(w)
+                                        st.rerun()
+                                new_status = st.selectbox(
+                                    "Set status",
+                                    ["exploratory", "candidate", "accepted", "rejected"],
+                                    key="prom_new_status",
+                                )
+                                reason = st.text_input("Reason (for audit)", value="", key="prom_reason")
+                                if st.button("Update status", key="prom_upd"):
+                                    conn3 = sqlite3.connect(prom_db)
+                                    try:
+                                        update_status(conn3, sel_id, new_status, reason=reason or None)
+                                    finally:
+                                        conn3.close()
+                                    st.success("Status updated.")
+                                    st.rerun()
+                else:
+                    st.info(
+                        "No candidates match filters. Use CLI: promotion create --from-run <run_id> --signal <name> --horizon <h>"
+                    )
+        except Exception as e:
+            st.error(f"Promotion: {e}")
+            st.code(traceback.format_exc())
 
     elif page == "Runtime / Health":
         st.header("Runtime / Health")

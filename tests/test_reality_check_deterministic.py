@@ -45,6 +45,4 @@ def test_reality_check_deterministic():
     r1 = run_reality_check(observed, null_gen, cfg)
     r2 = run_reality_check(observed, null_gen, cfg)
     assert r1["rc_p_value"] == r2["rc_p_value"]
-    np.testing.assert_array_almost_equal(
-        r1["null_max_distribution"], r2["null_max_distribution"], decimal=12
-    )
+    np.testing.assert_array_almost_equal(r1["null_max_distribution"], r2["null_max_distribution"], decimal=12)

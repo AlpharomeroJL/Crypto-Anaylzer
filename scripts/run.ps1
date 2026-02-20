@@ -59,6 +59,7 @@ switch ($Command) {
     "demo"           { & $py cli/demo.py @filtered; exit $LASTEXITCODE }
     "check-dataset"  { & $py tools/check_dataset.py @filtered; exit $LASTEXITCODE }
     "null_suite"     { & $py cli/null_suite.py @filtered; exit $LASTEXITCODE }
+    "promotion"      { & $py cli/promotion.py @filtered; exit $LASTEXITCODE }
     "verify"         {
         Write-Host "== verify: doctor -> pytest -> ruff -> research-only -> diagrams =="
         Write-Host "OS:        $(& $py -c "import platform; print(platform.platform())" 2>&1)"

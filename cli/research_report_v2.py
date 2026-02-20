@@ -8,9 +8,12 @@ Research-only. Does not replace research_report.py.
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import os
+import sqlite3
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -145,11 +148,34 @@ def main() -> int:
         metavar="REGIME_RUN_ID",
         help="Regime run ID for regime-conditioned IC summary (requires CRYPTO_ANALYZER_ENABLE_REGIMES=1)",
     )
-    ap.add_argument("--reality-check", dest="reality_check", action="store_true", help="Run Reality Check (RC) over signal×horizon family; write RC artifacts and registry metrics")
+    ap.add_argument(
+        "--execution-evidence",
+        dest="execution_evidence",
+        action="store_true",
+        help="Write capacity curve CSV and execution_evidence.json per signal for promotion gates",
+    )
+    ap.add_argument(
+        "--reality-check",
+        dest="reality_check",
+        action="store_true",
+        help="Run Reality Check (RC) over signal×horizon family; write RC artifacts and registry metrics",
+    )
     ap.add_argument("--rc-metric", dest="rc_metric", choices=["mean_ic", "deflated_sharpe"], default="mean_ic")
-    ap.add_argument("--rc-horizon", dest="rc_horizon", type=int, default=1, help="Horizon for mean_ic (required when rc-metric=mean_ic)")
+    ap.add_argument(
+        "--rc-horizon",
+        dest="rc_horizon",
+        type=int,
+        default=1,
+        help="Horizon for mean_ic (required when rc-metric=mean_ic)",
+    )
     ap.add_argument("--rc-n-sim", dest="rc_n_sim", type=int, default=200)
     ap.add_argument("--rc-seed", dest="rc_seed", type=int, default=42)
+    ap.add_argument(
+        "--no-cache",
+        dest="no_rc_cache",
+        action="store_true",
+        help="Disable RC null cache (env CRYPTO_ANALYZER_NO_CACHE=1 also disables)",
+    )
     ap.add_argument("--rc-method", dest="rc_method", choices=["stationary", "block_fixed"], default="stationary")
     ap.add_argument("--rc-avg-block-length", dest="rc_avg_block_length", type=int, default=12)
     args = ap.parse_args()
@@ -177,6 +203,9 @@ def main() -> int:
     ensure_dir(out_dir)
     for sub in ("csv", "charts", "manifests", "health"):
         ensure_dir(out_dir / sub)
+
+    profile_enabled = os.environ.get("CRYPTO_ANALYZER_PROFILE", "").strip() == "1"
+    profile_start = time.perf_counter() if profile_enabled else None
 
     # Integrity diagnostic: non-positive price counts per table/column (informative; loaders filter at read time)
     try:
@@ -293,8 +322,6 @@ def main() -> int:
             return False
 
     if is_regimes_enabled() and regime_run_id_early:
-        import sqlite3
-
         regime_rows = []
         try:
             conn = sqlite3.connect(db)
@@ -337,6 +364,8 @@ def main() -> int:
     rc_ic_series_by_hypothesis: dict = {}  # signal|horizon -> IC Series for Reality Check when --reality-check
     _rc_family_id: str | None = None
     _rc_result: dict | None = None
+    _rc_observed_stats: pd.Series | None = None  # for sweep registry persistence
+    _rc_family_payload: dict | None = None  # canonical family payload for sweep_families.sweep_payload_json
 
     for name, sig_df in (orth_dict or signals_dict).items():
         if sig_df is None or sig_df.empty:
@@ -468,12 +497,61 @@ def main() -> int:
             bundle_path = csv_dir / f"validation_bundle_{name}_{run_id_early}.json"
             write_json_sorted(bundle.to_dict(), bundle_path)
             bundle_output_paths.append(str(bundle_path))
+
+            # Execution evidence artifacts (optional; do not extend ValidationBundle)
+            if getattr(args, "execution_evidence", False):
+                try:
+                    from crypto_analyzer.execution_cost import capacity_curve
+                    from crypto_analyzer.promotion.execution_evidence import (
+                        ExecutionEvidence,
+                        execution_evidence_to_json,
+                    )
+
+                    cap_df = capacity_curve(
+                        port_ret,
+                        turnover_ser,
+                        freq=args.freq,
+                        fee_bps=args.fee_bps,
+                        slippage_bps=args.slippage_bps,
+                    )
+                    path_cap = csv_dir / f"capacity_curve_{name}_{run_id_early}.csv"
+                    write_df_csv_stable(cap_df, path_cap)
+                    cap_path_rel = str(path_cap.relative_to(out_dir))
+                    cost_config = {
+                        "fee_bps": args.fee_bps,
+                        "slippage_bps": args.slippage_bps,
+                        "spread_vol_scale": 0.0,
+                        "use_participation_impact": False,
+                        "impact_bps_per_participation": 5.0,
+                        "max_participation_pct": 10.0,
+                    }
+                    max_participation_rate = cost_config["max_participation_pct"]
+                    exec_ev = ExecutionEvidence(
+                        min_liquidity_usd=None,
+                        max_participation_rate=max_participation_rate,
+                        spread_model=None,
+                        impact_model=None,
+                        capacity_curve_path=cap_path_rel,
+                        cost_config=cost_config,
+                        notes=None,
+                    )
+                    path_exec_ev = csv_dir / f"execution_evidence_{name}_{run_id_early}.json"
+                    with open(path_exec_ev, "w", encoding="utf-8") as f:
+                        f.write(execution_evidence_to_json(exec_ev))
+                except Exception as exec_e:
+                    print(f"Execution evidence skip ({name}):", exec_e)
         except Exception as e:
             print(f"ValidationBundle skip ({name}):", e)
 
     # ---- Reality Check (opt-in) ----
     if getattr(args, "reality_check", False) and rc_ic_series_by_hypothesis:
         try:
+            from crypto_analyzer.stats.rc_cache import (
+                get_rc_cache_key,
+                is_cache_disabled,
+                load_cached_null_max,
+                save_cached_null_max,
+            )
             from crypto_analyzer.stats.reality_check import (
                 RealityCheckConfig,
                 make_null_generator_stationary,
@@ -490,7 +568,11 @@ def main() -> int:
                 "regime_run_id": regime_run_id_early or "",
             }
             _rc_family_id = compute_family_id(family_payload)
-            observed_stats = pd.Series({hid: float(s.mean()) for hid, s in rc_ic_series_by_hypothesis.items()}).sort_index()
+            _rc_family_payload = family_payload
+            observed_stats = pd.Series(
+                {hid: float(s.mean()) for hid, s in rc_ic_series_by_hypothesis.items()}
+            ).sort_index()
+            _rc_observed_stats = observed_stats
             cfg = RealityCheckConfig(
                 metric=getattr(args, "rc_metric", "mean_ic"),
                 horizon=getattr(args, "rc_horizon", 1),
@@ -500,15 +582,50 @@ def main() -> int:
                 avg_block_length=getattr(args, "rc_avg_block_length", 12),
                 block_size=getattr(args, "rc_avg_block_length", 12),
             )
+            cache_dir = out_dir / "rc_cache"
+            use_cache = not is_cache_disabled(no_cache_flag=getattr(args, "no_rc_cache", False))
+            cached_null_max = None
+            if use_cache:
+                _ds_id = getattr(args, "dataset_id", None) or _computed_dataset_id_early
+                _key = get_rc_cache_key(
+                    _rc_family_id,
+                    _ds_id or "",
+                    get_git_commit(),
+                    cfg.metric,
+                    cfg.horizon,
+                    cfg.n_sim,
+                    cfg.seed,
+                    cfg.method,
+                    cfg.avg_block_length,
+                )
+                cached_null_max = load_cached_null_max(cache_dir, _key)
             null_gen = make_null_generator_stationary(rc_ic_series_by_hypothesis, cfg)
-            _rc_result = run_reality_check(observed_stats, null_gen, cfg)
+            _rc_result = run_reality_check(observed_stats, null_gen, cfg, cached_null_max=cached_null_max)
+            if (
+                use_cache
+                and cached_null_max is None
+                and _rc_result.get("null_max_distribution") is not None
+                and len(_rc_result["null_max_distribution"]) > 0
+            ):
+                _ds_id = getattr(args, "dataset_id", None) or _computed_dataset_id_early
+                _key = get_rc_cache_key(
+                    _rc_family_id,
+                    _ds_id or "",
+                    get_git_commit(),
+                    cfg.metric,
+                    cfg.horizon,
+                    cfg.n_sim,
+                    cfg.seed,
+                    cfg.method,
+                    cfg.avg_block_length,
+                )
+                save_cached_null_max(cache_dir, _key, _rc_result["null_max_distribution"])
             _rc_result["family_id"] = _rc_family_id
             csv_dir = out_dir / "csv"
             ensure_dir(csv_dir)
             summary_path = csv_dir / f"reality_check_summary_{_rc_family_id}.json"
             summary_json = {
-                k: v for k, v in _rc_result.items()
-                if k not in ("null_max_distribution", "rw_adjusted_p_values")
+                k: v for k, v in _rc_result.items() if k not in ("null_max_distribution", "rw_adjusted_p_values")
             }
             summary_json["observed_stats"] = {k: float(v) for k, v in observed_stats.items()}
             if "null_max_distribution" in _rc_result:
@@ -679,7 +796,16 @@ def main() -> int:
             metrics_summary = {
                 k: float(v.mean() / v.std()) if v.std() and v.std() > 0 else np.nan for k, v in portfolio_pnls.items()
             }
-            outputs_with_hashes = snapshot_outputs(output_paths)
+            outputs_for_manifest = list(output_paths)
+            if profile_enabled and profile_start is not None:
+                total_sec = time.perf_counter() - profile_start
+                timings_path = out_dir / "timings.json"
+                write_json_sorted(
+                    {"stages": [{"name": "total", "seconds": round(total_sec, 6)}], "run_id": run_id_early},
+                    timings_path,
+                )
+                outputs_for_manifest.append(str(timings_path))
+            outputs_with_hashes = snapshot_outputs(outputs_for_manifest)
             manifest = make_run_manifest(
                 name=getattr(args, "run_name", None) or "research_report_v2",
                 args={
@@ -771,7 +897,9 @@ def main() -> int:
             canonical_metrics["rc_p_value"] = _rc_result["rc_p_value"]
             canonical_metrics["rc_observed_max"] = _rc_result["observed_max"]
             canonical_metrics["rc_metric"] = _rc_result.get("rc_metric", "mean_ic")
-            canonical_metrics["rc_horizon"] = float(_rc_result["rc_horizon"]) if _rc_result.get("rc_horizon") is not None else None
+            canonical_metrics["rc_horizon"] = (
+                float(_rc_result["rc_horizon"]) if _rc_result.get("rc_horizon") is not None else None
+            )
             canonical_metrics["rc_n_sim"] = _rc_result.get("n_sim", 0)
             canonical_metrics["rc_seed"] = _rc_result.get("rc_seed")
             canonical_metrics["rc_method"] = _rc_result.get("rc_method", "stationary")
@@ -817,6 +945,66 @@ def main() -> int:
             artifacts_list=artifacts_for_db,
         )
         print(f"Experiment recorded: {run_id_early} -> {experiment_db_path}")
+
+        # Sweep registry (opt-in): persist family + hypotheses when --reality-check and Phase 3 tables exist
+        if (
+            getattr(args, "reality_check", False)
+            and _rc_family_id is not None
+            and _rc_result is not None
+            and _rc_observed_stats is not None
+            and _rc_family_payload is not None
+        ):
+            try:
+                from crypto_analyzer.sweeps.hypothesis_id import compute_hypothesis_id
+                from crypto_analyzer.sweeps.store_sqlite import persist_sweep_family
+
+                sweep_payload_json = json.dumps(_rc_family_payload, sort_keys=True)
+                hypotheses = []
+                for key in _rc_observed_stats.index:
+                    parts = str(key).split("|", 1)
+                    signal_name = parts[0] if parts else ""
+                    horizon = 0
+                    if len(parts) >= 2:
+                        try:
+                            horizon = int(parts[1])
+                        except (ValueError, TypeError):
+                            horizon = 0
+                    payload = {
+                        "signal_name": signal_name,
+                        "horizon": horizon,
+                        "estimator": None,
+                        "params": None,
+                        "regime_run_id": regime_run_id_early or "",
+                    }
+                    hypothesis_id = compute_hypothesis_id(payload)
+                    hypotheses.append(
+                        {
+                            "hypothesis_id": hypothesis_id,
+                            "signal_name": signal_name,
+                            "horizon": horizon,
+                            "estimator": None,
+                            "params_json": None,
+                            "regime_run_id": regime_run_id_early or None,
+                        }
+                    )
+                conn = sqlite3.connect(experiment_db_path)
+                try:
+                    if persist_sweep_family(
+                        conn,
+                        family_id=_rc_family_id,
+                        dataset_id=experiment_row["dataset_id"],
+                        sweep_payload_json=sweep_payload_json,
+                        run_id=run_id_early,
+                        sweep_name=None,
+                        git_commit=get_git_commit(),
+                        config_hash=config_hash_early,
+                        hypotheses=hypotheses,
+                    ):
+                        print(f"Sweep registry: persisted family {_rc_family_id} with {len(hypotheses)} hypotheses")
+                finally:
+                    conn.close()
+            except Exception as sweep_err:
+                print("Sweep registry skip:", sweep_err)
     except Exception as e:
         print("SQLite experiment registry skip:", e)
 

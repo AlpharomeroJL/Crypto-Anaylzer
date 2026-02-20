@@ -76,10 +76,12 @@ def run_reality_check(
     observed_stats: pd.Series,
     null_generator: Callable[[int], np.ndarray],
     cfg: RealityCheckConfig,
+    cached_null_max: Optional[np.ndarray] = None,
 ) -> Dict:
     """
     Run RC: build null_stats_matrix by calling null_generator(b) for b in 0..n_sim-1,
     then compute rc_p_value. Returns dict with rc_p_value, observed_max, null_max_distribution.
+    If cached_null_max is provided (1d array of length n_sim), skip null_generator and use it.
     Romano–Wolf stepdown: stub (returns empty or NotImplemented when CRYPTO_ANALYZER_ENABLE_ROMANOWOLF=1).
     """
     if observed_stats.empty:
@@ -92,24 +94,30 @@ def run_reality_check(
         }
     hypothesis_ids = sorted(observed_stats.index.tolist())
     n_sim = cfg.n_sim
-    null_rows = []
-    for b in range(n_sim):
-        row = null_generator(b)
-        if row is not None and len(row) == len(hypothesis_ids):
-            null_rows.append(row)
-    null_stats_matrix = np.array(null_rows, dtype=float) if null_rows else np.zeros((0, len(hypothesis_ids)))
-    if null_stats_matrix.shape[0] == 0:
-        rc_p_value = 1.0
+    if cached_null_max is not None and cached_null_max.size == n_sim:
+        null_max_dist = np.asarray(cached_null_max, dtype=float).ravel()
+        T_obs = float(observed_stats.max())
+        count_ge = int(np.sum(null_max_dist >= T_obs))
+        rc_p_value = (1.0 + count_ge) / (n_sim + 1.0)
     else:
-        rc_p_value = reality_check_pvalue(observed_stats, null_stats_matrix)
+        null_rows = []
+        for b in range(n_sim):
+            row = null_generator(b)
+            if row is not None and len(row) == len(hypothesis_ids):
+                null_rows.append(row)
+        null_stats_matrix = np.array(null_rows, dtype=float) if null_rows else np.zeros((0, len(hypothesis_ids)))
+        if null_stats_matrix.shape[0] == 0:
+            rc_p_value = 1.0
+        else:
+            rc_p_value = reality_check_pvalue(observed_stats, null_stats_matrix)
+        null_max_dist = np.nanmax(null_stats_matrix, axis=1) if null_stats_matrix.size else np.array([])
     observed_max = float(observed_stats.max())
-    null_max_dist = np.nanmax(null_stats_matrix, axis=1) if null_stats_matrix.size else np.array([])
 
     out = {
         "rc_p_value": float(rc_p_value),
         "observed_max": observed_max,
         "null_max_distribution": null_max_dist,
-        "n_sim": null_stats_matrix.shape[0],
+        "n_sim": len(null_max_dist),
         "hypothesis_ids": hypothesis_ids,
         "rc_metric": cfg.metric,
         "rc_horizon": cfg.horizon,
@@ -118,7 +126,9 @@ def run_reality_check(
         "rc_avg_block_length": cfg.avg_block_length,
     }
     if os.environ.get("CRYPTO_ANALYZER_ENABLE_ROMANOWOLF", "").strip() == "1":
-        raise NotImplementedError("Romano–Wolf stepdown not implemented; set CRYPTO_ANALYZER_ENABLE_ROMANOWOLF=0 or unset")
+        raise NotImplementedError(
+            "Romano–Wolf stepdown not implemented; set CRYPTO_ANALYZER_ENABLE_ROMANOWOLF=0 or unset"
+        )
     out["rw_adjusted_p_values"] = pd.Series(dtype=float)
     return out
 
@@ -149,21 +159,22 @@ def make_null_generator_stationary(
     """
     hyps = sorted(series_by_hypothesis.keys())
     if not hyps:
+
         def _null(b: int) -> np.ndarray:
             return np.array([])
+
         return _null
     common_idx = series_by_hypothesis[hyps[0]].index
     for h in hyps[1:]:
         common_idx = common_idx.intersection(series_by_hypothesis[h].index)
     length = len(common_idx)
     if length < 2:
+
         def _null(b: int) -> np.ndarray:
             return np.full(len(hyps), np.nan)
+
         return _null
-    arrs = {
-        h: np.asarray(series_by_hypothesis[h].reindex(common_idx).values, dtype=float)
-        for h in hyps
-    }
+    arrs = {h: np.asarray(series_by_hypothesis[h].reindex(common_idx).values, dtype=float) for h in hyps}
 
     def _null(b: int) -> np.ndarray:
         seed_b = cfg.seed + b
@@ -178,4 +189,5 @@ def make_null_generator_stationary(
             vals = arrs[h][idx]
             stats.append(float(np.nanmean(vals)))
         return np.array(stats)
+
     return _null

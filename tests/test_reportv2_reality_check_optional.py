@@ -40,13 +40,20 @@ def test_reportv2_without_reality_check_no_rc_artifacts():
         (out_dir / "health").mkdir(exist_ok=True)
         argv = [
             "research_report_v2",
-            "--freq", "1h",
-            "--signals", "momentum_24h",
-            "--portfolio", "simple",
-            "--out-dir", str(out_dir),
-            "--db", ":memory:",
-            "--top-k", "2",
-            "--bottom-k", "2",
+            "--freq",
+            "1h",
+            "--signals",
+            "momentum_24h",
+            "--portfolio",
+            "simple",
+            "--out-dir",
+            str(out_dir),
+            "--db",
+            ":memory:",
+            "--top-k",
+            "2",
+            "--bottom-k",
+            "2",
         ]
         with patch.dict(os.environ, {}, clear=False):
             with (
@@ -57,6 +64,7 @@ def test_reportv2_without_reality_check_no_rc_artifacts():
             ):
                 sys.argv = argv
                 from cli import research_report_v2
+
                 research_report_v2.main()
         rc_files = list((out_dir / "csv").glob("reality_check_*.json")) + list(
             (out_dir / "csv").glob("reality_check_*.csv")
@@ -64,6 +72,7 @@ def test_reportv2_without_reality_check_no_rc_artifacts():
         assert len(rc_files) == 0
     finally:
         import shutil
+
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -78,16 +87,25 @@ def test_reportv2_with_reality_check_produces_artifacts():
         (out_dir / "health").mkdir(exist_ok=True)
         argv = [
             "research_report_v2",
-            "--freq", "1h",
-            "--signals", "momentum_24h",
-            "--portfolio", "simple",
-            "--out-dir", str(out_dir),
-            "--db", ":memory:",
+            "--freq",
+            "1h",
+            "--signals",
+            "momentum_24h",
+            "--portfolio",
+            "simple",
+            "--out-dir",
+            str(out_dir),
+            "--db",
+            ":memory:",
             "--reality-check",
-            "--rc-n-sim", "25",
-            "--rc-seed", "42",
-            "--top-k", "2",
-            "--bottom-k", "2",
+            "--rc-n-sim",
+            "25",
+            "--rc-seed",
+            "42",
+            "--top-k",
+            "2",
+            "--bottom-k",
+            "2",
         ]
         metrics_captured = {}
 
@@ -103,14 +121,85 @@ def test_reportv2_with_reality_check_produces_artifacts():
             ):
                 sys.argv = argv
                 from cli import research_report_v2
+
                 research_report_v2.main()
         summary_files = list((out_dir / "csv").glob("reality_check_summary_*.json"))
         assert len(summary_files) >= 1
         import json
+
         s = json.loads(summary_files[0].read_text(encoding="utf-8"))
         assert "rc_p_value" in s and "family_id" in s
         assert "family_id" in metrics_captured
         assert "rc_p_value" in metrics_captured
     finally:
         import shutil
+
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_reportv2_rc_persists_sweep_family_when_phase3():
+    """With --reality-check and EXPERIMENT_DB_PATH pointing to a DB with Phase 3 migrations, sweep_families and sweep_hypotheses are populated."""
+    import sqlite3
+
+    from crypto_analyzer.db.migrations import run_migrations
+    from crypto_analyzer.db.migrations_phase3 import run_migrations_phase3
+
+    tmp = tempfile.mkdtemp()
+    try:
+        out_dir = Path(tmp) / "reports"
+        out_dir.mkdir(parents=True)
+        (out_dir / "csv").mkdir(exist_ok=True)
+        (out_dir / "manifests").mkdir(exist_ok=True)
+        (out_dir / "health").mkdir(exist_ok=True)
+        experiment_db = Path(tmp) / "experiments.db"
+        conn = sqlite3.connect(str(experiment_db))
+        run_migrations(conn, str(experiment_db))
+        run_migrations_phase3(conn, str(experiment_db))
+        conn.close()
+
+        argv = [
+            "research_report_v2",
+            "--freq",
+            "1h",
+            "--signals",
+            "momentum_24h",
+            "--portfolio",
+            "simple",
+            "--out-dir",
+            str(out_dir),
+            "--db",
+            ":memory:",
+            "--reality-check",
+            "--rc-n-sim",
+            "25",
+            "--rc-seed",
+            "42",
+            "--top-k",
+            "2",
+            "--bottom-k",
+            "2",
+        ]
+        with patch.dict(os.environ, {"EXPERIMENT_DB_PATH": str(experiment_db)}, clear=False):
+            with (
+                patch("crypto_analyzer.research_universe.get_research_assets", return_value=_fake_returns_and_meta()),
+                patch("cli.research_report_v2.get_research_assets", return_value=_fake_returns_and_meta()),
+                patch("cli.research_report_v2.get_factor_returns", return_value=None),
+            ):
+                sys.argv = argv
+                from cli import research_report_v2
+
+                research_report_v2.main()
+
+        conn2 = sqlite3.connect(str(experiment_db))
+        cur = conn2.execute("SELECT family_id, dataset_id FROM sweep_families")
+        families = cur.fetchall()
+        cur = conn2.execute("SELECT family_id, hypothesis_id, signal_name, horizon FROM sweep_hypotheses")
+        hypotheses = cur.fetchall()
+        conn2.close()
+        assert len(families) >= 1, "sweep_families should have at least one row"
+        assert len(hypotheses) >= 1, "sweep_hypotheses should have at least one row"
+        assert families[0][0].startswith("rcfam_")
+    finally:
+        import shutil
+
         shutil.rmtree(tmp, ignore_errors=True)

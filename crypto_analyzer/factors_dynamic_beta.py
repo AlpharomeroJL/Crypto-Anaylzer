@@ -127,9 +127,7 @@ def dynamic_beta_rls(
                     )
                 if not np.isnan(y_all[out_row]) and not np.any(np.isnan(X_all[out_row])):
                     fitted_out = (X_all[out_row] @ beta_out).item()
-                    residual_df.iloc[out_row, residual_df.columns.get_loc(col)] = float(
-                        y_all[out_row] - fitted_out
-                    )
+                    residual_df.iloc[out_row, residual_df.columns.get_loc(col)] = float(y_all[out_row] - fitted_out)
                 if len(y_hist) >= min_obs:
                     y_a = np.array(y_hist)
                     r_a = np.array(resid_hist)

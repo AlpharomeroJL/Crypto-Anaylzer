@@ -16,6 +16,12 @@ from typing import Any, Dict, Optional
 
 import pandas as pd
 
+from ..stats.cache_flags import is_cache_disabled
+from ..stats.regime_cache import (
+    regime_run_exists,
+    regime_run_matches_invocation,
+    regime_states_rowcount_match,
+)
 from ..timeutils import now_utc_iso
 from .regime_detector import RegimeStateSeries
 
@@ -57,10 +63,14 @@ def materialize_regime_run(
     config: RegimeMaterializeConfig,
     *,
     created_at_utc: Optional[str] = None,
+    use_cache: bool = True,
+    force: bool = False,
 ) -> str:
     """
     Write regime_runs row and regime_states rows. Idempotent: same regime_run_id
     replaces existing states (delete then insert). Deterministic: ts_utc sorted.
+    PR3: If use_cache True and not force and cache not disabled, skip compute when
+    regime_run exists and metadata + regime_states count match (return regime_run_id early).
 
     Call only when CRYPTO_ANALYZER_ENABLE_REGIMES=1. Phase 3 tables must exist
     (call run_migrations_phase3 first). Returns regime_run_id.
@@ -76,6 +86,21 @@ def materialize_regime_run(
     regime_run_id = compute_regime_run_id(config)
     created_at_utc = created_at_utc or now_utc_iso()
     params_json = json.dumps(config.model_params) if config.model_params else None
+
+    no_cache = is_cache_disabled(no_cache_flag=(not use_cache) or force)
+    if not no_cache:
+        row = regime_run_exists(conn, regime_run_id)
+        if row is not None:
+            if regime_run_matches_invocation(
+                row,
+                dataset_id=config.dataset_id,
+                freq=config.freq,
+                model=config.model,
+                params_json=params_json,
+            ):
+                expected_count = len(states.ts_utc) if not states.ts_utc.empty else 0
+                if regime_states_rowcount_match(conn, regime_run_id, expected_count):
+                    return regime_run_id
 
     conn.execute(
         """

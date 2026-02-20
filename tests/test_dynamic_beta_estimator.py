@@ -141,7 +141,5 @@ def test_dynamic_beta_no_exploit_future_factor():
     common = resid.index.intersection(btc_next.index)
     if len(common) < 10:
         pytest.skip("Insufficient overlap for IC check")
-    corr = np.corrcoef(resid.reindex(common).dropna().values, btc_next.reindex(common).dropna().values)[
-        0, 1
-    ]
+    corr = np.corrcoef(resid.reindex(common).dropna().values, btc_next.reindex(common).dropna().values)[0, 1]
     assert np.isnan(corr) or abs(corr) < 0.5

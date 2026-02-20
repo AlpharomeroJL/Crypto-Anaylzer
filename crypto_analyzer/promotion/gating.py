@@ -7,11 +7,15 @@ See docs/spec/phase3_regimes_slice2_alignment.md and components/testing_acceptan
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal, Optional
+from pathlib import Path
+from typing import TYPE_CHECKING, Literal, Optional
 
 import pandas as pd
 
 from crypto_analyzer.validation_bundle import ValidationBundle
+
+if TYPE_CHECKING:
+    from .execution_evidence import ExecutionEvidence
 
 # Minimum number of regimes with enough samples when require_regime_robustness is True (documented default)
 MIN_REGIMES_WITH_SAMPLES = 2
@@ -19,7 +23,7 @@ MIN_REGIMES_WITH_SAMPLES = 2
 
 @dataclass
 class ThresholdConfig:
-    """Minimum evidence thresholds; require_regime_robustness=False by default. Slice 4: RC opt-in."""
+    """Minimum evidence thresholds; require_regime_robustness=False by default. Slice 4: RC opt-in. PR2: execution gates."""
 
     ic_mean_min: float = 0.02
     tstat_min: float = 2.5
@@ -29,15 +33,20 @@ class ThresholdConfig:
     worst_regime_ic_mean_min: Optional[float] = None  # used only when require_regime_robustness=True
     require_reality_check: bool = False
     max_rc_p_value: float = 0.05  # used only when require_reality_check=True
+    # Execution realism (PR2): default None to avoid brittleness
+    require_execution_evidence: bool = False
+    min_liquidity_usd_min: Optional[float] = None
+    max_participation_rate_max: Optional[float] = None
 
 
 @dataclass
 class PromotionDecision:
-    """Result of evaluate_candidate: status, reasons, metrics_snapshot."""
+    """Result of evaluate_candidate: status, reasons, metrics_snapshot. PR2: warnings (e.g. override) recorded for audit, do not cause reject."""
 
     status: Literal["exploratory", "candidate", "accepted", "rejected"]
     reasons: list[str] = field(default_factory=list)
     metrics_snapshot: dict = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)  # audit only; do not cause reject
 
 
 def evaluate_candidate(
@@ -45,15 +54,22 @@ def evaluate_candidate(
     thresholds: ThresholdConfig,
     regime_summary_df: Optional[pd.DataFrame] = None,
     rc_summary: Optional[dict] = None,
+    execution_evidence: Optional["ExecutionEvidence"] = None,
+    target_status: str = "exploratory",
+    allow_missing_execution_evidence: bool = False,
+    execution_evidence_base_path: Optional[Path] = None,
 ) -> PromotionDecision:
     """
     Deterministic promotion gate. No randomness.
     If require_regime_robustness: reject if any regime's mean_ic < worst_regime_ic_mean_min
     or if fewer than MIN_REGIMES_WITH_SAMPLES regimes have enough samples.
-    Otherwise ignore regime robustness.
+    PR2: When target_status in {candidate, accepted} or require_execution_evidence=True,
+    require execution evidence unless allow_missing_execution_evidence=True (then add WARN and record override).
+    Soft thresholds (min_liquidity_usd_min, max_participation_rate_max) applied only when set.
     """
     reasons: list[str] = []
     metrics_snapshot: dict = {}
+    warnings: list[str] = []
 
     # Snapshot from bundle (primary horizon or first)
     horizons = getattr(bundle, "horizons", []) or []
@@ -111,6 +127,33 @@ def evaluate_candidate(
         elif rc_p > thresholds.max_rc_p_value:
             reasons.append(f"rc_p_value {rc_p:.4f} > {thresholds.max_rc_p_value}")
 
+    # Execution evidence gate (PR2): when target is candidate/accepted or require_execution_evidence
+    enforce_exec = (
+        target_status in ("candidate", "accepted") or thresholds.require_execution_evidence
+    )
+    if enforce_exec:
+        if allow_missing_execution_evidence:
+            warnings.append("allow_missing_execution_evidence: execution evidence not checked")
+        elif execution_evidence is None:
+            reasons.append("execution evidence required (target beyond exploratory or require_execution_evidence) but none provided")
+        else:
+            base = execution_evidence_base_path
+            missing = execution_evidence.validate_required(base_path=base)
+            if missing:
+                reasons.append("execution evidence missing required: " + ", ".join(missing))
+            else:
+                # Soft thresholds only when explicitly set
+                if thresholds.min_liquidity_usd_min is not None and execution_evidence.min_liquidity_usd is not None:
+                    if execution_evidence.min_liquidity_usd < thresholds.min_liquidity_usd_min:
+                        reasons.append(
+                            f"min_liquidity_usd {execution_evidence.min_liquidity_usd} < {thresholds.min_liquidity_usd_min}"
+                        )
+                if thresholds.max_participation_rate_max is not None and execution_evidence.max_participation_rate is not None:
+                    if execution_evidence.max_participation_rate > thresholds.max_participation_rate_max:
+                        reasons.append(
+                            f"max_participation_rate {execution_evidence.max_participation_rate} > {thresholds.max_participation_rate_max}"
+                        )
+
     if reasons:
-        return PromotionDecision(status="rejected", reasons=reasons, metrics_snapshot=metrics_snapshot)
-    return PromotionDecision(status="accepted", reasons=[], metrics_snapshot=metrics_snapshot)
+        return PromotionDecision(status="rejected", reasons=reasons, metrics_snapshot=metrics_snapshot, warnings=warnings)
+    return PromotionDecision(status="accepted", reasons=[], metrics_snapshot=metrics_snapshot, warnings=warnings)

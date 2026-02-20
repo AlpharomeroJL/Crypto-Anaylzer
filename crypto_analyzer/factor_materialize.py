@@ -15,6 +15,13 @@ import pandas as pd
 
 from .factors import causal_rolling_ols
 from .factors_dynamic_beta import dynamic_beta_rls
+from .stats.cache_flags import is_cache_disabled
+from .stats.factor_cache import (
+    expected_factor_rowcounts_from_shape,
+    factor_run_exists,
+    factor_run_matches_invocation,
+    factor_run_rowcounts_match,
+)
 from .timeutils import now_utc_iso
 
 
@@ -57,11 +64,15 @@ def materialize_factor_run(
     config: FactorMaterializeConfig,
     *,
     created_at_utc: Optional[str] = None,
+    use_cache: bool = True,
+    force: bool = False,
 ) -> str:
     """
     Compute causal rolling OLS (as_of_lag_bars=1), write factor_model_runs row and
     bulk insert factor_betas and residual_returns. Idempotent: same factor_run_id
     deletes existing rows and re-inserts.
+    PR3: If use_cache True and not force and cache not disabled (env/flag), skip compute
+    when factor_run exists and metadata + rowcounts match (return factor_run_id early).
 
     returns_df: wide DataFrame index=ts_utc, columns=asset_ids + factor columns (e.g. BTC_spot, ETH_spot).
     Returns factor_run_id.
@@ -70,6 +81,24 @@ def materialize_factor_run(
     created_at_utc = created_at_utc or now_utc_iso()
     factors_json = json.dumps(config.factors)
     params_json = json.dumps(config.params) if config.params else None
+
+    no_cache = is_cache_disabled(no_cache_flag=(not use_cache) or force)
+    if not no_cache:
+        row = factor_run_exists(conn, factor_run_id)
+        if row is not None:
+            if factor_run_matches_invocation(
+                row,
+                dataset_id=config.dataset_id,
+                freq=config.freq,
+                window_bars=config.window_bars,
+                min_obs=config.min_obs,
+                params_json=params_json,
+            ):
+                exp_betas, exp_resids = expected_factor_rowcounts_from_shape(
+                    returns_df, config.window_bars, config.factors
+                )
+                if factor_run_rowcounts_match(conn, factor_run_id, exp_betas, exp_resids):
+                    return factor_run_id
 
     if config.estimator == "rolling_ols":
         result = causal_rolling_ols(

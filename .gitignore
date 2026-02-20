@@ -24,6 +24,13 @@ __pycache__/
 tmp_rerun_1/
 tmp_rerun_2/
 
+# profile test output dirs (do not commit)
+tmp_profile_off/
+tmp_profile_on/
+
+# migration backup artifacts (do not commit)
+*.sqlite.bak*
+
 # streamlit
 .streamlit/
 

@@ -26,12 +26,8 @@ def test_rc_under_null_not_always_tiny():
     series_by_hyp = {}
     for sig in ["s1", "s2"]:
         for h in [1]:
-            series_by_hyp[f"{sig}|{h}"] = pd.Series(
-                np.random.randn(n).astype(float) * 0.01, index=idx
-            )
-    observed = pd.Series(
-        {hid: float(s.mean()) for hid, s in series_by_hyp.items()}
-    ).sort_index()
+            series_by_hyp[f"{sig}|{h}"] = pd.Series(np.random.randn(n).astype(float) * 0.01, index=idx)
+    observed = pd.Series({hid: float(s.mean()) for hid, s in series_by_hyp.items()}).sort_index()
     cfg = RealityCheckConfig(n_sim=30, seed=123, method="stationary", avg_block_length=10)
     null_gen = make_null_generator_stationary(series_by_hyp, cfg)
     result = run_reality_check(observed, null_gen, cfg)

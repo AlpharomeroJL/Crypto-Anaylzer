@@ -45,11 +45,34 @@ def test_run_migrations_phase3_creates_tables_and_records():
         assert _schema_migrations_phase3_exists(conn)
         assert _max_applied_version_phase3(conn) == len(MIGRATIONS_PHASE3)
         cur = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('regime_runs','regime_states')"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('regime_runs','regime_states','promotion_candidates','promotion_events','sweep_families','sweep_hypotheses')"
         )
         tables = [r[0] for r in cur.fetchall()]
         assert "regime_runs" in tables
         assert "regime_states" in tables
+        assert "promotion_candidates" in tables
+        assert "promotion_events" in tables
+        assert "sweep_families" in tables
+        assert "sweep_hypotheses" in tables
+        cur = conn.execute("PRAGMA table_info(promotion_candidates)")
+        cols = [r[1] for r in cur.fetchall()]
+        for c in (
+            "candidate_id",
+            "created_at_utc",
+            "status",
+            "dataset_id",
+            "run_id",
+            "signal_name",
+            "horizon",
+            "config_hash",
+            "git_commit",
+            "evidence_json",
+        ):
+            assert c in cols
+        cur = conn.execute("PRAGMA table_info(promotion_events)")
+        cols_ev = [r[1] for r in cur.fetchall()]
+        for c in ("event_id", "candidate_id", "ts_utc", "event_type", "payload_json"):
+            assert c in cols_ev
         conn.close()
     finally:
         Path(path).unlink(missing_ok=True)

@@ -1,0 +1,265 @@
+"""
+Promotion service: evaluate_and_record using gating and store.
+Phase 3 Slice 5. No UI dependencies.
+"""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from pathlib import Path
+from typing import Any, Dict, Optional, Union
+
+import pandas as pd
+
+from crypto_analyzer.validation_bundle import ValidationBundle
+
+from .execution_evidence import ExecutionEvidence
+from .gating import PromotionDecision, ThresholdConfig, evaluate_candidate
+from .store_sqlite import get_candidate, record_event, update_status
+
+
+def _thresholds_snapshot(
+    t: ThresholdConfig,
+    allow_missing_execution_evidence: bool = False,
+) -> Dict[str, Any]:
+    """Snapshot of threshold config for event payload (reproducibility). PR2: execution fields + override."""
+    out: Dict[str, Any] = {
+        "require_reality_check": t.require_reality_check,
+        "max_rc_p_value": t.max_rc_p_value,
+        "ic_mean_min": t.ic_mean_min,
+        "tstat_min": t.tstat_min,
+        "p_value_max": t.p_value_max,
+        "require_regime_robustness": t.require_regime_robustness,
+        "worst_regime_ic_mean_min": t.worst_regime_ic_mean_min,
+        "require_execution_evidence": t.require_execution_evidence,
+        "min_liquidity_usd_min": t.min_liquidity_usd_min,
+        "max_participation_rate_max": t.max_participation_rate_max,
+        "allow_missing_execution_evidence": allow_missing_execution_evidence,
+    }
+    return out
+
+
+def _artifact_pointers(
+    bundle_or_path: Union[ValidationBundle, str, Path],
+    evidence: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Pointers to artifacts consumed (bundle path, rc summary path, regime paths, execution_evidence_path)."""
+    out: Dict[str, Any] = {}
+    if isinstance(bundle_or_path, (str, Path)):
+        out["bundle_path"] = str(bundle_or_path)
+    elif evidence.get("bundle_path"):
+        out["bundle_path"] = evidence["bundle_path"]
+    elif evidence.get("validation_bundle_path"):
+        out["bundle_path"] = evidence["validation_bundle_path"]
+    for key in (
+        "rc_summary_path",
+        "ic_summary_by_regime_path",
+        "ic_decay_by_regime_path",
+        "regime_coverage_path",
+        "execution_evidence_path",
+    ):
+        if evidence.get(key):
+            out[key] = evidence[key]
+    return out
+
+
+def _load_bundle(path: Union[str, Path]) -> Optional[ValidationBundle]:
+    """Load ValidationBundle from JSON path. Returns None if file missing or invalid."""
+    path = Path(path)
+    if not path.is_file():
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            d = json.load(f)
+        # ValidationBundle expects specific fields; build from dict
+        return ValidationBundle(
+            run_id=d.get("run_id", ""),
+            dataset_id=d.get("dataset_id", ""),
+            signal_name=d.get("signal_name", ""),
+            freq=d.get("freq", ""),
+            horizons=d.get("horizons", []),
+            ic_summary_by_horizon={int(k): v for k, v in (d.get("ic_summary_by_horizon") or {}).items()},
+            ic_decay_table=d.get("ic_decay_table", []),
+            meta=d.get("meta", {}),
+            ic_series_path_by_horizon={int(k): v for k, v in (d.get("ic_series_path_by_horizon") or {}).items()},
+            ic_decay_path=d.get("ic_decay_path"),
+            turnover_path=d.get("turnover_path"),
+            gross_returns_path=d.get("gross_returns_path"),
+            net_returns_path=d.get("net_returns_path"),
+            ic_summary_by_regime_path=d.get("ic_summary_by_regime_path"),
+            ic_decay_by_regime_path=d.get("ic_decay_by_regime_path"),
+            regime_coverage_path=d.get("regime_coverage_path"),
+        )
+    except Exception:
+        return None
+
+
+def _load_regime_summary(path: Union[str, Path]) -> Optional[pd.DataFrame]:
+    """Load regime summary CSV (columns e.g. regime, mean_ic). Returns None if missing."""
+    path = Path(path)
+    if not path.is_file():
+        return None
+    try:
+        return pd.read_csv(path)
+    except Exception:
+        return None
+
+
+def _load_rc_summary(path: Union[str, Path]) -> Optional[Dict[str, Any]]:
+    """Load RC summary JSON. Returns None if missing."""
+    path = Path(path)
+    if not path.is_file():
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _load_execution_evidence(path: Union[str, Path]) -> Optional[ExecutionEvidence]:
+    """Load ExecutionEvidence from JSON file. Returns None if missing or invalid."""
+    path = Path(path)
+    if not path.is_file():
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            d = json.load(f)
+        return ExecutionEvidence.from_dict(d)
+    except Exception:
+        return None
+
+
+def evaluate_and_record(
+    conn: sqlite3.Connection,
+    candidate_id: str,
+    thresholds: ThresholdConfig,
+    bundle_or_path: Union[ValidationBundle, str, Path],
+    *,
+    regime_summary_df: Optional[pd.DataFrame] = None,
+    rc_summary: Optional[Dict[str, Any]] = None,
+    evidence_base_path: Optional[Union[str, Path]] = None,
+    target_status: str = "exploratory",
+    allow_missing_execution_evidence: bool = False,
+) -> PromotionDecision:
+    """
+    Load candidate; resolve bundle (from instance or path); run gating.evaluate_candidate;
+    update candidate status to decision.status; record evaluated event with reasons and snapshot.
+    If regime_summary_df or rc_summary not provided but evidence_json has paths, load from
+    evidence_base_path (directory for relative paths).
+    PR2: Load execution evidence from evidence_json.execution_evidence_path; pass target_status and
+    allow_missing_execution_evidence to evaluate_candidate; include in event payload.
+    """
+    row = get_candidate(conn, candidate_id)
+    if row is None:
+        return PromotionDecision(
+            status="rejected",
+            reasons=[f"candidate_id not found: {candidate_id}"],
+            metrics_snapshot={},
+        )
+
+    bundle: Optional[ValidationBundle] = None
+    if isinstance(bundle_or_path, ValidationBundle):
+        bundle = bundle_or_path
+    else:
+        bundle = _load_bundle(bundle_or_path)
+    if bundle is None:
+        return PromotionDecision(
+            status="rejected",
+            reasons=["could not load ValidationBundle from path"],
+            metrics_snapshot={},
+        )
+
+    # Resolve evidence and base path once (for regime, RC, execution evidence)
+    evidence: Dict[str, Any] = {}
+    if row.get("evidence_json"):
+        try:
+            evidence = json.loads(row["evidence_json"])
+        except Exception:
+            pass
+    base = Path(evidence_base_path) if evidence_base_path else Path(".")
+
+    if regime_summary_df is None and evidence.get("ic_summary_by_regime_path"):
+        p = (
+            base / evidence["ic_summary_by_regime_path"]
+            if not Path(evidence["ic_summary_by_regime_path"]).is_absolute()
+            else Path(evidence["ic_summary_by_regime_path"])
+        )
+        regime_summary_df = _load_regime_summary(p)
+    if rc_summary is None and evidence.get("rc_summary_path"):
+        p = (
+            base / evidence["rc_summary_path"]
+            if not Path(evidence["rc_summary_path"]).is_absolute()
+            else Path(evidence["rc_summary_path"])
+        )
+        rc_summary = _load_rc_summary(p)
+
+    # Load execution evidence from candidate evidence_json (PR2)
+    execution_evidence_loaded: Optional[ExecutionEvidence] = None
+    exec_path = evidence.get("execution_evidence_path")
+    if exec_path:
+        p = (
+            base / exec_path
+            if not Path(exec_path).is_absolute()
+            else Path(exec_path)
+        )
+        execution_evidence_loaded = _load_execution_evidence(p)
+
+    # Sweep-originated candidates: require RC for Candidate/Accepted by default (data-snooping policy).
+    # If family_id is set and caller did not set require_reality_check=True, enforce it for this evaluation.
+    effective_thresholds = thresholds
+    family_id = (row.get("family_id") or "").strip()
+    if family_id and not thresholds.require_reality_check:
+        effective_thresholds = ThresholdConfig(
+            ic_mean_min=thresholds.ic_mean_min,
+            tstat_min=thresholds.tstat_min,
+            p_value_max=thresholds.p_value_max,
+            deflated_sharpe_min=thresholds.deflated_sharpe_min,
+            require_regime_robustness=thresholds.require_regime_robustness,
+            worst_regime_ic_mean_min=thresholds.worst_regime_ic_mean_min,
+            require_reality_check=True,
+            max_rc_p_value=thresholds.max_rc_p_value,
+            require_execution_evidence=thresholds.require_execution_evidence,
+            min_liquidity_usd_min=thresholds.min_liquidity_usd_min,
+            max_participation_rate_max=thresholds.max_participation_rate_max,
+        )
+
+    decision = evaluate_candidate(
+        bundle,
+        effective_thresholds,
+        regime_summary_df=regime_summary_df,
+        rc_summary=rc_summary,
+        execution_evidence=execution_evidence_loaded,
+        target_status=target_status,
+        allow_missing_execution_evidence=allow_missing_execution_evidence,
+        execution_evidence_base_path=base,
+    )
+
+    # Snapshot inputs for "why was this accepted?" reproducibility
+    evidence = {}
+    if row.get("evidence_json"):
+        try:
+            evidence = json.loads(row["evidence_json"])
+        except Exception:
+            pass
+    bundle_path_for_pointers: Union[ValidationBundle, str, Path] = bundle_or_path
+    if isinstance(bundle_or_path, ValidationBundle) and evidence.get("bundle_path"):
+        bundle_path_for_pointers = evidence["bundle_path"]
+    elif isinstance(bundle_or_path, ValidationBundle) and evidence.get("validation_bundle_path"):
+        bundle_path_for_pointers = evidence["validation_bundle_path"]
+
+    update_status(conn, candidate_id, decision.status, reason="; ".join(decision.reasons) if decision.reasons else None)
+    payload: Dict[str, Any] = {
+        "status": decision.status,
+        "reasons": decision.reasons,
+        "metrics_snapshot": decision.metrics_snapshot,
+        "thresholds_used": _thresholds_snapshot(
+            effective_thresholds, allow_missing_execution_evidence=allow_missing_execution_evidence
+        ),
+        "artifact_pointers": _artifact_pointers(bundle_path_for_pointers, evidence),
+    }
+    if getattr(decision, "warnings", None):
+        payload["warnings"] = decision.warnings
+    record_event(conn, candidate_id, "evaluated", payload)
+    return decision

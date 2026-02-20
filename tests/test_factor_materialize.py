@@ -173,16 +173,12 @@ def test_materialize_kalman_beta_writes_tables():
         )
         run_id = materialize_factor_run(conn, returns_df, config)
         assert run_id.startswith("fctr_")
-        cur = conn.execute(
-            "SELECT estimator FROM factor_model_runs WHERE factor_run_id = ?", (run_id,)
-        )
+        cur = conn.execute("SELECT estimator FROM factor_model_runs WHERE factor_run_id = ?", (run_id,))
         row = cur.fetchone()
         assert row is not None and row[0] == "kalman_beta"
         cur = conn.execute("SELECT COUNT(*) FROM factor_betas WHERE factor_run_id = ?", (run_id,))
         assert cur.fetchone()[0] > 0
-        cur = conn.execute(
-            "SELECT COUNT(*) FROM residual_returns WHERE factor_run_id = ?", (run_id,)
-        )
+        cur = conn.execute("SELECT COUNT(*) FROM residual_returns WHERE factor_run_id = ?", (run_id,))
         assert cur.fetchone()[0] > 0
         conn.close()
     finally:
