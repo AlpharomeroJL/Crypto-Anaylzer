@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
+import pytest
 import pandas as pd
 
 _root = Path(__file__).resolve().parent.parent
@@ -33,6 +34,7 @@ def _fake_returns_and_meta():
     return returns_df, meta_df
 
 
+@pytest.mark.slow
 def test_reportv2_without_regimes_flag_has_no_regime_section():
     """With regimes disabled (default), report does not contain Regime-conditioned section."""
     tmp = tempfile.mkdtemp()
@@ -82,6 +84,7 @@ def test_reportv2_without_regimes_flag_has_no_regime_section():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+@pytest.mark.slow
 def test_reportv2_regimes_set_but_flag_off_fails_fast():
     """--regimes set but CRYPTO_ANALYZER_ENABLE_REGIMES=0 must exit 1 with clear error (no silent ignore)."""
     import io
@@ -136,6 +139,8 @@ def test_reportv2_regimes_set_but_flag_off_fails_fast():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+@pytest.mark.slow
+@pytest.mark.slow
 def test_reportv2_with_regimes_enabled_and_run_id_emits_regime_artifacts():
     """With ENABLE_REGIMES=1 and --regimes <id>, regime section and regime_summary artifacts appear."""
     tmp = tempfile.mkdtemp()

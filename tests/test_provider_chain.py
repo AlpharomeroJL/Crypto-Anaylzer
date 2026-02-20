@@ -237,11 +237,11 @@ class TestCircuitBreaker:
         assert cb.is_open
 
     def test_half_open_after_cooldown(self):
-        cb = CircuitBreaker(provider_name="test", failure_threshold=1, cooldown_seconds=0.1)
+        cb = CircuitBreaker(provider_name="test", failure_threshold=1, cooldown_seconds=0.01)
         cb.record_failure("error")
         assert cb.state == "OPEN"
 
-        time.sleep(0.15)
+        time.sleep(0.015)
         assert cb.state == "HALF_OPEN"
 
     def test_closes_on_success(self):

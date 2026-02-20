@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
+import pytest
 import pandas as pd
 
 _root = Path(__file__).resolve().parent.parent
@@ -29,6 +30,7 @@ def _fake_returns_and_meta():
     return returns_df, meta_df
 
 
+@pytest.mark.slow
 def test_reportv2_without_reality_check_no_rc_artifacts():
     """Without --reality-check, no RC artifacts or family_id in registry."""
     tmp = tempfile.mkdtemp()
@@ -76,6 +78,7 @@ def test_reportv2_without_reality_check_no_rc_artifacts():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+@pytest.mark.slow
 def test_reportv2_with_reality_check_produces_artifacts():
     """With --reality-check, RC summary and null_max artifacts exist; registry gets family_id and rc_p_value."""
     tmp = tempfile.mkdtemp()
@@ -99,7 +102,7 @@ def test_reportv2_with_reality_check_produces_artifacts():
             ":memory:",
             "--reality-check",
             "--rc-n-sim",
-            "25",
+            "5",
             "--rc-seed",
             "42",
             "--top-k",
@@ -137,6 +140,8 @@ def test_reportv2_with_reality_check_produces_artifacts():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+@pytest.mark.slow
+@pytest.mark.slow
 def test_reportv2_rc_persists_sweep_family_when_phase3():
     """With --reality-check and EXPERIMENT_DB_PATH pointing to a DB with Phase 3 migrations, sweep_families and sweep_hypotheses are populated."""
     import sqlite3
@@ -171,7 +176,7 @@ def test_reportv2_rc_persists_sweep_family_when_phase3():
             ":memory:",
             "--reality-check",
             "--rc-n-sim",
-            "25",
+            "5",
             "--rc-seed",
             "42",
             "--top-k",

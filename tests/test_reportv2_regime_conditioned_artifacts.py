@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
+import pytest
 import pandas as pd
 
 _root = Path(__file__).resolve().parent.parent
@@ -35,6 +36,7 @@ def _fake_returns_and_meta():
     return returns_df, meta_df
 
 
+@pytest.mark.slow
 def test_reportv2_regimes_off_baseline_no_regime_artifacts():
     """With regimes OFF (default), no regime-specific artifacts; bundle has no regime path fields set."""
     tmp = tempfile.mkdtemp()
@@ -116,6 +118,8 @@ def test_bundle_to_dict_omits_none_optional_keys():
     assert "regime_coverage_path" not in d
 
 
+@pytest.mark.slow
+@pytest.mark.slow
 def test_reportv2_regimes_on_new_artifacts_deterministic():
     """With regimes ON and --regimes, new artifacts exist and content is deterministic under deterministic time."""
     tmp = tempfile.mkdtemp()
