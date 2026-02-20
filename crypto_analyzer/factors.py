@@ -12,6 +12,35 @@ import numpy as np
 import pandas as pd
 
 
+def _solve_normal_equations(X: np.ndarray, y: np.ndarray, ridge_lambda: float = 1e-8) -> np.ndarray:
+    """
+    Solve OLS normal equations (X'X) @ sol = X'y with fallbacks for ill-conditioning.
+    X: (n, k) design matrix (with or without constant column). y: (n,) target.
+    Returns (k,) solution; NaN vector on failure.
+    """
+    if X.size == 0 or len(y) == 0 or X.shape[0] != len(y):
+        k = X.shape[1] if X.ndim == 2 and X.shape[0] > 0 else 1
+        return np.full(k, np.nan)
+    XtX = X.T @ X
+    Xty = X.T @ y
+    k = XtX.shape[0]
+    try:
+        sol = np.linalg.solve(XtX, Xty)
+        return sol
+    except np.linalg.LinAlgError:
+        pass
+    try:
+        sol, *_ = np.linalg.lstsq(X, y, rcond=None)
+        return sol
+    except np.linalg.LinAlgError:
+        pass
+    try:
+        sol = np.linalg.solve(XtX + ridge_lambda * np.eye(k, dtype=XtX.dtype), Xty)
+        return sol
+    except np.linalg.LinAlgError:
+        return np.full(k, np.nan)
+
+
 def build_factor_matrix(
     returns_df: pd.DataFrame,
     factor_cols: Optional[List[str]] = None,
@@ -32,7 +61,7 @@ def build_factor_matrix(
 
 def fit_ols(X: np.ndarray, y: np.ndarray, add_const: bool = True) -> Tuple[np.ndarray, float, float]:
     """
-    Fit OLS via numpy.linalg.lstsq. No sklearn dependency.
+    Fit OLS via normal equations with robust fallback (lstsq, then ridge if singular).
     Returns (betas, intercept, r_squared).
     If add_const, prepends a column of ones to X.
     """
@@ -43,11 +72,10 @@ def fit_ols(X: np.ndarray, y: np.ndarray, add_const: bool = True) -> Tuple[np.nd
     if add_const:
         ones = np.ones((X_.shape[0], 1))
         X_ = np.hstack([ones, X_])
-    try:
-        sol, residuals, rank, sv = np.linalg.lstsq(X_, y, rcond=None)
-    except np.linalg.LinAlgError:
-        k = X.shape[1] if X.ndim == 2 else 1
-        return np.full(k, np.nan), np.nan, np.nan
+    sol = _solve_normal_equations(X_, y)
+    if np.any(np.isnan(sol)):
+        k = X_.shape[1]
+        return np.full(k - (1 if add_const else 0), np.nan), np.nan, np.nan
     if add_const:
         intercept = float(sol[0])
         betas = sol[1:]
@@ -78,15 +106,12 @@ def compute_ols_betas(y: pd.Series, X: pd.DataFrame) -> tuple:
     X_mat = X_a.loc[idx].values.astype(float)
     ones = np.ones((len(X_mat), 1))
     X_with_const = np.hstack([ones, X_mat])
-    try:
-        xtx = X_with_const.T @ X_with_const
-        xty = X_with_const.T @ y_vec
-        sol = np.linalg.solve(xtx, xty)
-        alpha = float(sol[0])
-        betas = sol[1:]
-        return betas, alpha
-    except np.linalg.LinAlgError:
+    sol = _solve_normal_equations(X_with_const, y_vec)
+    if np.any(np.isnan(sol)):
         return np.array([]), np.nan
+    alpha = float(sol[0])
+    betas = sol[1:]
+    return betas, alpha
 
 
 def rolling_multifactor_ols(
@@ -179,6 +204,13 @@ def causal_rolling_ols(
     Causal rolling OLS: at time t, fit on data ending at t - as_of_lag_bars;
     residual and betas at t use only that fit. No lookahead.
 
+    Causality (which timestamp's data is permitted):
+    - For row index i (timestamp t_i): fit uses returns at indices [start_i, fit_end_i]
+      where fit_end_i = i - as_of_lag_bars and start_i = max(0, fit_end_i - window_bars + 1).
+    - Thus the fit at t_i uses only data known at t_i (observations up to t_{i - lag}).
+    - The residual and betas stored at t_i are: residual_t_i = y_i - (alpha + F_i @ beta),
+      where (alpha, beta) were estimated from data strictly up to t_{i - lag}.
+
     Returns (betas_dict, r2_df, residual_df, alpha_df). alpha_df is intercept per (ts, asset).
     """
     if as_of_lag_bars < 1:
@@ -256,6 +288,12 @@ def causal_residual_returns(
     """
     Causal residual returns: at time t, fit betas using data ending at t - as_of_lag_bars,
     then residual at t = y_t - (intercept + X_t @ betas). No lookahead.
+
+    Causality (which timestamp's data is permitted):
+    - At row index i (timestamp t_i): fit uses [start_i : fit_end_i + 1] where
+      fit_end_i = i - as_of_lag_bars, start_i = max(0, fit_end_i - window_bars + 1).
+    - The residual written at t_i uses only that fit and the contemporaneous y_i, F_i;
+      no future returns are used in the fit.
 
     Returns DataFrame with same index as returns_df; columns = asset columns (non-factor).
     Rows where insufficient history or t - lag < 0 get NaN.

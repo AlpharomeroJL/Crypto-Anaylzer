@@ -15,6 +15,7 @@ _DEFAULTS = {
         "table": "sol_monitor_snapshots",
         "price_column": "dex_price_usd",
         "timezone": "UTC",
+        "busy_timeout_ms": 5000,
     },
     "defaults": {"freq": "5min", "window": 288},
     "filters": {
@@ -80,6 +81,11 @@ def get_config() -> dict:
 # Convenience accessors
 def db_path() -> str:
     return get_config()["db"]["path"]
+
+
+def db_busy_timeout_ms() -> int:
+    """Busy timeout in milliseconds for SQLite connections (default 5000)."""
+    return int(get_config()["db"].get("busy_timeout_ms", _DEFAULTS["db"]["busy_timeout_ms"]))
 
 
 def db_table() -> str:
@@ -167,6 +173,17 @@ def universe_max_churn_pct() -> float:
 
 STABLE_SYMBOLS = frozenset({"USDC", "USDT", "DAI", "BUSD", "TUSD", "USDP", "FRAX"})
 FACTOR_SYMBOLS = frozenset({"BTC", "WBTC", "CBBTC"})
+
+# SQL identifier allowlists for data loaders (table and price column validation).
+# To extend safely: add new table/column here and ensure migrations + writer use the same
+# names; otherwise load_snapshots/load_bars will raise ValueError for invalid identifiers.
+ALLOWED_SNAPSHOT_TABLES = frozenset({"sol_monitor_snapshots"})
+ALLOWED_PRICE_COLUMNS = frozenset({"dex_price_usd", "price_usd"})
+
+
+def allowed_bars_tables() -> frozenset:
+    """Set of valid bars table names (e.g. bars_5min, bars_1h) from config bars_freqs."""
+    return frozenset(f"bars_{f.replace(' ', '')}" for f in bars_freqs())
 
 
 def is_btc_pair(label: str) -> bool:

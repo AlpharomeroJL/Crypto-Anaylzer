@@ -75,12 +75,8 @@ def factor_run_rowcounts_match(
     expected_resids: int,
 ) -> bool:
     """True if stored factor_betas and residual_returns counts match expected."""
-    cur_b = conn.execute(
-        "SELECT COUNT(*) FROM factor_betas WHERE factor_run_id = ?", (factor_run_id,)
-    )
-    cur_r = conn.execute(
-        "SELECT COUNT(*) FROM residual_returns WHERE factor_run_id = ?", (factor_run_id,)
-    )
+    cur_b = conn.execute("SELECT COUNT(*) FROM factor_betas WHERE factor_run_id = ?", (factor_run_id,))
+    cur_r = conn.execute("SELECT COUNT(*) FROM residual_returns WHERE factor_run_id = ?", (factor_run_id,))
     got_b = cur_b.fetchone()[0]
     got_r = cur_r.fetchone()[0]
     return got_b == expected_betas and got_r == expected_resids

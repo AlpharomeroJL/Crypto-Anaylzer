@@ -494,21 +494,30 @@ def fig_style(fig: go.Figure, title: str, height: int = 430) -> go.Figure:
 # -----------------------------
 # Load data
 # -----------------------------
+conn = None
 try:
     conn = sqlite3.connect(db_path)
     tables = load_tables(conn)
 
     if SOL_MONITOR_TABLE not in tables:
         st.error(f"Missing table: {SOL_MONITOR_TABLE}. Your poller should create it.")
+        conn.close()
         st.stop()
 
     sol_df = load_sol_monitor(conn)
     spot_df = load_spot_prices(conn) if SPOT_TABLE in tables else None
+except Exception:
+    tables = []
+    sol_df = pd.DataFrame()
+    spot_df = None
+    st.warning("No data yet—run poll.")
+    st.stop()
 finally:
-    try:
-        conn.close()
-    except Exception:
-        pass
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 if spot_df is None or spot_df.empty:
     sol_df2 = sol_df.copy()

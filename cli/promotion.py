@@ -210,7 +210,11 @@ def main() -> int:
     p_create.add_argument("--bundle-path", default=None, help="Path to ValidationBundle JSON")
     p_create.add_argument("--family-id", default=None)
     p_create.add_argument("--rc-summary-path", default=None)
-    p_create.add_argument("--execution-evidence-path", default=None, help="Path to execution_evidence.json (stored relative when --evidence-base-path set)")
+    p_create.add_argument(
+        "--execution-evidence-path",
+        default=None,
+        help="Path to execution_evidence.json (stored relative when --evidence-base-path set)",
+    )
     p_create.add_argument("--evidence-base-path", default=None, help="Base path for relativizing evidence paths")
     p_create.set_defaults(run=cmd_create)
 
@@ -218,10 +222,22 @@ def main() -> int:
     p_eval.add_argument("--id", dest="id", required=True, help="candidate_id")
     p_eval.add_argument("--require-rc", dest="require_rc", action="store_true", help="Require Reality Check pass")
     p_eval.add_argument("--max-rc-p-value", type=float, default=0.05)
-    p_eval.add_argument("--require-exec", dest="require_exec", action="store_true", help="Require execution evidence (capacity curve, participation cap, cost config)")
+    p_eval.add_argument(
+        "--require-exec",
+        dest="require_exec",
+        action="store_true",
+        help="Require execution evidence (capacity curve, participation cap, cost config)",
+    )
     p_eval.add_argument("--min-liquidity-usd", type=float, default=None, help="Min liquidity USD threshold (optional)")
-    p_eval.add_argument("--max-participation", type=float, default=None, help="Max participation rate threshold (optional)")
-    p_eval.add_argument("--allow-missing-exec", dest="allow_missing_exec", action="store_true", help="Allow promotion without execution evidence (auditable override)")
+    p_eval.add_argument(
+        "--max-participation", type=float, default=None, help="Max participation rate threshold (optional)"
+    )
+    p_eval.add_argument(
+        "--allow-missing-exec",
+        dest="allow_missing_exec",
+        action="store_true",
+        help="Allow promotion without execution evidence (auditable override)",
+    )
     p_eval.set_defaults(run=cmd_evaluate)
 
     args = ap.parse_args()

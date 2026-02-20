@@ -209,33 +209,17 @@ def check_dataset_id() -> None:
 
 
 def _warn_universe_zero_if_enabled() -> None:
-    """If universe.enabled, run one-shot fetch; warn if 0 pairs accepted."""
+    """If universe.enabled, remind user to run universe-poll (no CLI import)."""
     try:
         from .config import get_config
 
         u = get_config().get("universe") or {}
         if not u.get("enabled"):
             return
-        import sys
-
-        sys.path.insert(0, str(_REPO_ROOT))
-        sys.path.insert(0, str(_REPO_ROOT / "cli"))
-        from poll import fetch_dex_universe_top_pairs, load_universe_config
-
-        cfg = load_universe_config(str(_REPO_ROOT / "config.yaml"))
-        chain = cfg.get("chain_id", "solana")
-        queries = cfg.get("queries") or ["USDC", "USDT", "SOL"]
-        pairs = fetch_dex_universe_top_pairs(
-            chain_id=chain,
-            page_size=20,
-            min_liquidity_usd=0,
-            min_vol_h24=0,
-            queries=queries,
+        print(
+            "[INFO] Universe mode enabled. Run universe-poll to refresh allowlist: "
+            ".\\scripts\\run.ps1 universe-poll --universe --universe-chain solana --interval 60"
         )
-        if len(pairs) == 0:
-            print(
-                "[WARN] Universe enabled but one-shot fetch returned 0 accepted pairs. Try broader queries: --universe-query USDC --universe-query USDT"
-            )
     except Exception:
         pass
 

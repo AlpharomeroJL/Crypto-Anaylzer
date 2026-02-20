@@ -22,9 +22,14 @@ from ..providers.defaults import create_default_registry, create_dex_chain, crea
 
 logger = logging.getLogger(__name__)
 
+# Symbol used for DEX snapshot USD conversion (Solana native).
+# When SOL quote is missing (all spot providers failed for SOL), DEX snapshots are skipped this cycle
+# and no DEX rows are written; spot rows for other symbols (ETH, BTC) are still written.
+SOL_SYMBOL = "SOL"
+
 # Default spot assets: (symbol, Coinbase product, Kraken pair). Used by run_one_cycle.
 SPOT_ASSETS = [
-    ("SOL", "SOL-USD", "SOLUSD"),
+    (SOL_SYMBOL, "SOL-USD", "SOLUSD"),
     ("ETH", "ETH-USD", "ETHUSD"),
     ("BTC", "BTC-USD", "XBTUSD"),
 ]
@@ -66,18 +71,37 @@ class PollContext:
         self.close()
 
 
-def get_poll_context(db_path: str) -> PollContext:
+def _apply_ingestion_pragmas(conn: sqlite3.Connection) -> None:
+    """Set SQLite pragmas for ingestion connections: foreign_keys, WAL, busy_timeout (from config)."""
+    from ..config import db_busy_timeout_ms
+
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute(f"PRAGMA busy_timeout={int(db_busy_timeout_ms())}")
+
+
+def get_poll_context(
+    db_path: str,
+    *,
+    spot_chain: Any = None,
+    dex_chain: Any = None,
+) -> PollContext:
     """
     Open DB, run migrations, create writer/health store and provider chains.
     Use as: with get_poll_context(db_path) as ctx: ...
+    If spot_chain or dex_chain are provided, they are used instead of creating defaults (for tests).
     """
     conn = sqlite3.connect(db_path)
+    _apply_ingestion_pragmas(conn)
     run_migrations(conn, db_path)
     db_writer = DbWriter(conn)
     health_store = ProviderHealthStore(conn)
-    registry = create_default_registry()
-    spot_chain = create_spot_chain(registry)
-    dex_chain = create_dex_chain(registry)
+    if spot_chain is None or dex_chain is None:
+        registry = create_default_registry()
+        if spot_chain is None:
+            spot_chain = create_spot_chain(registry)
+        if dex_chain is None:
+            dex_chain = create_dex_chain(registry)
     return PollContext(
         conn=conn,
         db_writer=db_writer,
@@ -101,7 +125,7 @@ def run_one_cycle(
     """
     _log = log if log is not None else logger
     ts = utc_now_iso()
-    spot_quotes = []
+    spot_quotes: List[Any] = []
     for symbol, _cb_product, _kraken_pair in SPOT_ASSETS:
         try:
             quote = ctx.spot_chain.get_spot(symbol)
@@ -109,8 +133,15 @@ def run_one_cycle(
         except Exception as e:
             _log.warning("spot %s: all providers failed: %s", symbol, e)
 
+    # Symbol-safe mapping: never assume order; SOL price and provenance come only from SOL quote.
+    spot_by_symbol = {q.symbol: q for q in spot_quotes}
+    sol_quote = spot_by_symbol.get(SOL_SYMBOL)
+    sol_price: float = sol_quote.price_usd if sol_quote is not None else 0.0
+    sol_spot_source: str = sol_quote.provider_name if sol_quote is not None else "unknown"
+    # When SOL is missing, we skip DEX snapshots (no USD conversion) and record degraded behavior.
+    dex_skipped_no_sol = sol_quote is None
+
     try:
-        sol_price = spot_quotes[0].price_usd if spot_quotes else 0.0
         for quote in spot_quotes:
             ctx.db_writer.write_spot_price(ts, quote)
 
@@ -122,37 +153,39 @@ def run_one_cycle(
             spot_details.append(f"{q.symbol}={q.price_usd:.2f}[{provider_tag}]")
 
         dex_summaries: List[str] = []
-        for i, p in enumerate(dex_pairs):
-            chain_id = p["chain_id"]
-            pair_addr = p["pair_address"]
-            label = p.get("label", "")
-            try:
-                snapshot = ctx.dex_chain.get_snapshot(chain_id, pair_addr)
-                ctx.db_writer.write_dex_snapshot(
-                    ts,
-                    snapshot,
-                    sol_price,
-                    spot_source=spot_quotes[0].provider_name if spot_quotes else "unknown",
-                )
-                lbl = label or f"{snapshot.base_symbol}/{snapshot.quote_symbol}"
-                dex_summaries.append(f"[{lbl} liq={snapshot.liquidity_usd} vol24={snapshot.vol_h24}]")
-            except Exception as e:
-                _log.warning("dex %s:%s: all providers failed: %s", chain_id, pair_addr, e)
-            if i < len(dex_pairs) - 1 and pair_delay > 0:
-                time.sleep(pair_delay)
+        if not dex_skipped_no_sol:
+            for i, p in enumerate(dex_pairs):
+                chain_id = p["chain_id"]
+                pair_addr = p["pair_address"]
+                label = p.get("label", "")
+                try:
+                    snapshot = ctx.dex_chain.get_snapshot(chain_id, pair_addr)
+                    ctx.db_writer.write_dex_snapshot(
+                        ts,
+                        snapshot,
+                        sol_price,
+                        spot_source=sol_spot_source,
+                    )
+                    lbl = label or f"{snapshot.base_symbol}/{snapshot.quote_symbol}"
+                    dex_summaries.append(f"[{lbl} liq={snapshot.liquidity_usd} vol24={snapshot.vol_h24}]")
+                except Exception as e:
+                    _log.warning("dex %s:%s: all providers failed: %s", chain_id, pair_addr, e)
+                if i < len(dex_pairs) - 1 and pair_delay > 0:
+                    time.sleep(pair_delay)
+        else:
+            _log.warning("SOL quote missing: skipping DEX snapshots this cycle (no USD conversion)")
 
-        ctx.db_writer.commit()
-        try:
-            ctx.health_store.upsert_all(ctx.spot_chain.get_health())
-            ctx.health_store.upsert_all(ctx.dex_chain.get_health())
-        except Exception:
-            pass
+        ctx.health_store.upsert_all(ctx.spot_chain.get_health(), commit=False)
+        ctx.health_store.upsert_all(ctx.dex_chain.get_health(), commit=False)
+        ctx.conn.commit()
 
         spot_str = "  ".join(spot_details)
         dex_str = (
             f"  dex_pairs={len(dex_pairs)} " + " ".join(dex_summaries)
             if dex_summaries
             else f"  dex_pairs={len(dex_pairs)} (no ok)"
+            if not dex_skipped_no_sol
+            else "  dex_pairs=0 (skipped: no SOL)"
         )
         _log.info("%s  OK  %s%s", ts, spot_str, dex_str)
     except Exception:

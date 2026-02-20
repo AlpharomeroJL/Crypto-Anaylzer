@@ -11,20 +11,22 @@ import numpy as np
 import pandas as pd
 
 from .config import (
+    ALLOWED_PRICE_COLUMNS,
+    ALLOWED_SNAPSHOT_TABLES,
+    allowed_bars_tables,
     db_path,
     db_table,
     is_btc_pair,
     price_column,
 )
-from .config import (
-    factor_symbol as config_factor_symbol,
-)
+from .config import factor_symbol as config_factor_symbol
 from .config import (
     min_liquidity_usd as config_min_liq,
 )
 from .config import (
     min_vol_h24 as config_min_vol,
 )
+from .read_api import _with_conn
 
 NORMAL_COLUMNS = [
     "ts_utc",
@@ -38,6 +40,14 @@ NORMAL_COLUMNS = [
 ]
 
 
+def _validate_snapshot_table_and_price_col(table: str, price_col: str) -> None:
+    """Raise ValueError if table or price_col is not in the allowlist."""
+    if table not in ALLOWED_SNAPSHOT_TABLES:
+        raise ValueError(f"Invalid snapshot table {table!r}; allowed: {sorted(ALLOWED_SNAPSHOT_TABLES)}")
+    if price_col not in ALLOWED_PRICE_COLUMNS:
+        raise ValueError(f"Invalid price column {price_col!r}; allowed: {sorted(ALLOWED_PRICE_COLUMNS)}")
+
+
 def load_snapshots(
     db_path_override: Optional[str] = None,
     table_override: Optional[str] = None,
@@ -47,17 +57,12 @@ def load_snapshots(
     only_pairs: Optional[List[tuple]] = None,
     apply_filters: bool = True,
 ) -> pd.DataFrame:
-    path = db_path_override or (db_path() if callable(db_path) else db_path)
-    table = table_override or (db_table() if callable(db_table) else db_table)
-    price_col = price_col_override or (price_column() if callable(price_column) else price_column)
-    min_liq = (
-        min_liquidity_usd
-        if min_liquidity_usd is not None
-        else (config_min_liq() if callable(config_min_liq) else config_min_liq)
-    )
-    min_vol = (
-        min_vol_h24 if min_vol_h24 is not None else (config_min_vol() if callable(config_min_vol) else config_min_vol)
-    )
+    path = db_path_override or db_path()
+    table = table_override or db_table()
+    price_col = price_col_override or price_column()
+    _validate_snapshot_table_and_price_col(table, price_col)
+    min_liq = min_liquidity_usd if min_liquidity_usd is not None else config_min_liq()
+    min_vol = min_vol_h24 if min_vol_h24 is not None else config_min_vol()
 
     where = ""
     params: List[str] = []
@@ -75,8 +80,31 @@ def load_snapshots(
         FROM {table} {where}
         ORDER BY ts_utc ASC
     """
-    with sqlite3.connect(path) as con:
-        df = pd.read_sql_query(query, con, params=params if params else None)
+    try:
+        with _with_conn(path) as con:
+            df = pd.read_sql_query(query, con, params=params if params else None)
+    except Exception as e:
+        if "no such table" not in str(e).lower():
+            raise
+        import warnings
+
+        warnings.warn(
+            f"load_snapshots: table {table!r} does not exist (DEX may be skipped). Return empty.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return pd.DataFrame(
+            columns=[
+                "ts_utc",
+                "chain_id",
+                "pair_address",
+                "base_symbol",
+                "quote_symbol",
+                "price_usd",
+                "liquidity_usd",
+                "vol_h24",
+            ]
+        )
 
     if df.empty:
         return df
@@ -123,8 +151,11 @@ def load_bars(
     min_bars: Optional[int] = None,
     only_pairs: Optional[List[tuple]] = None,
 ) -> pd.DataFrame:
-    path = db_path_override or (db_path() if callable(db_path) else db_path)
+    path = db_path_override or db_path()
     table = f"bars_{freq.replace(' ', '')}"
+    allowed = allowed_bars_tables()
+    if table not in allowed:
+        raise ValueError(f"Invalid bars table {table!r}; allowed: {sorted(allowed)}")
     where = ""
     params: List[str] = []
     if only_pairs:
@@ -141,14 +172,20 @@ def load_bars(
         ORDER BY ts_utc ASC
     """
     try:
-        with sqlite3.connect(path) as con:
+        with _with_conn(path) as con:
             df = pd.read_sql_query(query, con, params=params if params else None)
-    except sqlite3.OperationalError as e:
-        if "no such table" in str(e).lower():
-            raise FileNotFoundError(
-                f"Bars table '{table}' not found. Run: python materialize_bars.py --freq {freq}"
-            ) from e
-        raise
+    except Exception as e:
+        # pandas wraps sqlite3.OperationalError as pandas.errors.DatabaseError
+        if "no such table" not in str(e).lower():
+            raise
+        import warnings
+
+        warnings.warn(
+            f"load_bars: table {table!r} does not exist (run materialize_bars for this freq). Return empty.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return pd.DataFrame()
     if df.empty:
         return df
     df["ts_utc"] = pd.to_datetime(df["ts_utc"], utc=True, errors="coerce")
@@ -237,8 +274,8 @@ def load_snapshots_as_bars(
 
 
 def load_spot_series(db_path_override: Optional[str] = None, symbol: str = "BTC") -> pd.Series:
-    path = db_path_override or (db_path() if callable(db_path) else db_path())
-    with sqlite3.connect(path) as con:
+    path = db_path_override or db_path()
+    with _with_conn(path) as con:
         df = pd.read_sql_query(
             "SELECT ts_utc, spot_price_usd FROM spot_price_snapshots WHERE symbol = ? ORDER BY ts_utc ASC",
             con,
@@ -309,7 +346,7 @@ def get_factor_returns(
     if "BTC_spot" in returns_df.columns:
         s = returns_df["BTC_spot"].copy()
         return s if not s.dropna().empty else None
-    sym = factor_symbol or (config_factor_symbol() if callable(config_factor_symbol) else "BTC")
+    sym = factor_symbol or config_factor_symbol()
     for col in returns_df.columns:
         if is_btc_pair(meta.get(col, "")):
             return returns_df[col].copy()
@@ -334,8 +371,7 @@ def load_factor_run(
     Returns None if factor_run_id has no rows (run missing or empty).
     """
     try:
-        conn = sqlite3.connect(db_path_override)
-        try:
+        with _with_conn(db_path_override) as conn:
             cur = conn.execute(
                 "SELECT ts_utc, asset_id, factor_name, beta, alpha, r2 FROM factor_betas WHERE factor_run_id = ?",
                 (factor_run_id,),
@@ -350,8 +386,6 @@ def load_factor_run(
             resid_rows = cur.fetchall()
             if not resid_rows:
                 return None
-        finally:
-            conn.close()
     except sqlite3.OperationalError:
         return None
 

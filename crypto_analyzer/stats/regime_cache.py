@@ -65,8 +65,6 @@ def regime_states_rowcount_match(
     expected_count: int,
 ) -> bool:
     """True if regime_states row count for this run matches expected."""
-    cur = conn.execute(
-        "SELECT COUNT(*) FROM regime_states WHERE regime_run_id = ?", (regime_run_id,)
-    )
+    cur = conn.execute("SELECT COUNT(*) FROM regime_states WHERE regime_run_id = ?", (regime_run_id,))
     got = cur.fetchone()[0]
     return got == expected_count

@@ -10,8 +10,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
-import pytest
 import pandas as pd
+import pytest
 
 _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))

@@ -784,9 +784,7 @@ def main() -> int:
         else:
             factor_matrix = build_factor_matrix(returns_df)
             if not factor_matrix.empty:
-                betas_dict, r2_mf, resid_mf = rolling_multifactor_ols(
-                    returns_df, factor_matrix, window=72, min_obs=24
-                )
+                betas_dict, r2_mf, resid_mf = rolling_multifactor_ols(returns_df, factor_matrix, window=72, min_obs=24)
                 if "BTC_spot" in betas_dict and not betas_dict["BTC_spot"].empty:
                     mf_metrics["beta_btc_mean"] = float(betas_dict["BTC_spot"].mean(skipna=True).mean())
                 if "ETH_spot" in betas_dict and not betas_dict["ETH_spot"].empty:

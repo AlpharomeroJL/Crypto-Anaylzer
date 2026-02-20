@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 from .alpha_research import information_coefficient
+from .artifacts import write_json_sorted
 from .features import bars_per_year
 
 
@@ -169,7 +170,8 @@ def write_null_suite_artifacts(result: NullSuiteResult, out_dir: str | Path) -> 
     if rows_ic:
         df_ic = pd.DataFrame(rows_ic)
         p_ic = out_dir / "null_ic_dist.csv"
-        df_ic.to_csv(p_ic, index=False)
+        # Stable column order and no index for deterministic hashes
+        df_ic.reindex(columns=sorted(df_ic.columns)).to_csv(p_ic, index=False, encoding="utf-8")
         paths.append(str(p_ic))
     rows_sharpe = []
     for null_type, vals in result.null_sharpe.items():
@@ -178,9 +180,8 @@ def write_null_suite_artifacts(result: NullSuiteResult, out_dir: str | Path) -> 
     if rows_sharpe:
         df_sharpe = pd.DataFrame(rows_sharpe)
         p_sharpe = out_dir / "null_sharpe_dist.csv"
-        df_sharpe.to_csv(p_sharpe, index=False)
+        df_sharpe.reindex(columns=sorted(df_sharpe.columns)).to_csv(p_sharpe, index=False, encoding="utf-8")
         paths.append(str(p_sharpe))
-    import json
 
     pvals = {
         "observed_mean_ic": result.observed_mean_ic,
@@ -189,7 +190,6 @@ def write_null_suite_artifacts(result: NullSuiteResult, out_dir: str | Path) -> 
         "p_value_sharpe": result.p_value_sharpe,
     }
     p_pvals = out_dir / "null_pvalues.json"
-    with open(p_pvals, "w") as f:
-        json.dump(pvals, f, indent=2)
+    write_json_sorted(pvals, p_pvals)
     paths.append(str(p_pvals))
     return paths

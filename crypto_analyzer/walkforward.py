@@ -74,22 +74,18 @@ def run_walkforward_backtest(
     expanding: bool = False,
 ) -> Tuple[pd.Series, pd.DataFrame, List[Dict]]:
     """
-    Run backtest on each fold (train then test). Strategy state is fit only on train;
-    for trend/vol_breakout we just compute indicators on train and simulate on test using test data only.
-    Returns: (stitched_equity_series, per_fold_metrics_list).
+    Run backtest on each fold (train then test). For trend/vol_breakout we simulate on test
+    data only (no separate fit on train in this implementation; train window is for fold boundaries).
+    Returns: (stitched_equity_series, fold_df, per_fold_metrics_list).
     stitched_equity: concatenated equity from each test fold (no overlap).
     """
-    import sys
-    from pathlib import Path
-
-    _root = Path(__file__).resolve().parent.parent
-    _cli = _root / "cli"
-    if str(_root) not in sys.path:
-        sys.path.insert(0, str(_root))
-    if str(_cli) not in sys.path:
-        sys.path.insert(0, str(_cli))
-    from backtest import metrics as backtest_metrics
-    from backtest import run_trend_strategy, run_vol_breakout_strategy
+    from crypto_analyzer.backtest_core import (
+        metrics as backtest_metrics,
+    )
+    from crypto_analyzer.backtest_core import (
+        run_trend_strategy,
+        run_vol_breakout_strategy,
+    )
 
     params = params or {}
     costs = costs or {}
@@ -108,7 +104,7 @@ def run_walkforward_backtest(
     for fold_idx, (train_idx, test_idx) in enumerate(folds):
         train_ts = train_idx
         test_ts = test_idx
-        bars_df[bars_df["ts_utc"].isin(train_ts)]
+        # Train slice available as bars_df[bars_df["ts_utc"].isin(train_ts)] if needed for future fit-on-train logic
         test_bars_sub = bars_df[bars_df["ts_utc"].isin(test_ts)]
         if test_bars_sub.empty:
             continue

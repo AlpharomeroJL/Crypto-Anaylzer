@@ -25,8 +25,6 @@ _here = Path(__file__).resolve().parent
 sys.path.insert(0, str(_here.parent))
 sys.path.insert(0, str(_here))
 
-from backtest import metrics as backtest_metrics
-from backtest import run_trend_strategy, run_vol_breakout_strategy
 from report_daily import run_momentum_scan, run_risk_snapshot, run_vol_scan
 from scan import run_scan as dex_run_scan
 
@@ -46,6 +44,13 @@ from crypto_analyzer.alpha_research import (
 )
 from crypto_analyzer.alpha_research import (
     signal_momentum_24h as calc_signal_momentum_24h,
+)
+from crypto_analyzer.backtest_core import (
+    metrics as backtest_metrics,
+)
+from crypto_analyzer.backtest_core import (
+    run_trend_strategy,
+    run_vol_breakout_strategy,
 )
 from crypto_analyzer.config import (
     db_path,
@@ -206,13 +211,15 @@ def main():
                 "Min bars", value=_min_bars, min_value=10, max_value=10000, step=1, key="overview_bars"
             )
             top_n = st.number_input("Top N", value=10, min_value=1, max_value=50, step=1, key="overview_top")
-        snap_df, summary = load_leaderboard(freq, min_liq, min_vol, int(min_bars_count))
         try:
+            snap_df, summary = load_leaderboard(freq, min_liq, min_vol, int(min_bars_count))
             bars_overview = load_bars(freq, db_path_override=db_path_str, min_bars=int(min_bars_count))
-        except FileNotFoundError:
+        except Exception:
+            snap_df = pd.DataFrame()
+            summary = pd.DataFrame()
             bars_overview = pd.DataFrame()
         if summary.empty and (bars_overview.empty or bars_overview is None):
-            st.warning("No data. Check DB path and run poller + materialize_bars if needed.")
+            st.warning("No data yet—run poll. Check DB path and run materialize_bars if needed.")
         else:
             n_dex = len(summary) if not summary.empty else 0
             st.metric("Universe size", f"{n_dex} DEX pairs" + (" (+ spot in Research when ≥3 assets)" if n_dex else ""))
@@ -281,10 +288,10 @@ def main():
         freq = st.selectbox("Freq", ["5min", "15min", "1h", "1D"], key="pair_freq")
         try:
             bars = load_bars(freq, db_path_override=db_path_str)
-        except FileNotFoundError:
+        except Exception:
             bars = pd.DataFrame()
         if bars.empty:
-            st.warning("No bars. Run materialize_bars.py --freq " + freq)
+            st.warning("No data yet—run poll. If DB exists, run materialize_bars for this freq.")
         else:
             pairs = bars.groupby(["chain_id", "pair_address"]).first().reset_index()
             pairs["label"] = pairs["base_symbol"].fillna("") + "/" + pairs["quote_symbol"].fillna("")
@@ -598,10 +605,10 @@ def main():
         )
         try:
             bars_ms = load_bars(freq_ms, db_path_override=db_path_str)
-        except FileNotFoundError:
+        except Exception:
             bars_ms = pd.DataFrame()
         if bars_ms.empty:
-            st.warning("No bars. Run materialize_bars.py --freq " + freq_ms)
+            st.warning("No data yet—run poll. If DB exists, run materialize_bars for this freq.")
         else:
             bars_ms = bars_ms.copy()
             bars_ms["pair_id"] = bars_ms["chain_id"].astype(str) + ":" + bars_ms["pair_address"].astype(str)
@@ -617,7 +624,10 @@ def main():
                 bars_ms = pd.concat(out, ignore_index=True)
             returns_df = bars_ms.pivot_table(index="ts_utc", columns="pair_id", values="log_return").dropna(how="all")
             meta = bars_ms.groupby("pair_id")["label"].last().to_dict()
-            returns_df, meta = append_spot_returns_to_returns_df(returns_df, meta, db_path_str, freq_ms)
+            try:
+                returns_df, meta = append_spot_returns_to_returns_df(returns_df, meta, db_path_str, freq_ms)
+            except Exception:
+                pass  # keep returns_df/meta as-is if spot append fails
             factor_ret = (
                 get_factor_returns(returns_df, meta, db_path_str, freq_ms, factor_symbol="BTC")
                 if not returns_df.empty
@@ -683,7 +693,10 @@ def main():
             else:
                 st.info("Need 2+ pairs for correlation matrix.")
 
-            btc_price = load_spot_price_resampled(db_path_str, "BTC", freq_ms)
+            try:
+                btc_price = load_spot_price_resampled(db_path_str, "BTC", freq_ms)
+            except Exception:
+                btc_price = pd.Series(dtype=float)
             dex_cols_for_ratio = [c for c in returns_df.columns if not str(c).endswith("_spot")]
             if not btc_price.empty and dex_cols_for_ratio:
                 st.subheader("Asset/BTC ratio")
@@ -1014,7 +1027,10 @@ def main():
         )
         last_n = st.sidebar.number_input("Last N signals", value=100, min_value=1, max_value=1000, step=10, key="sig_n")
         sig_type = None if signal_type_filter == "all" else signal_type_filter
-        signals_df = load_signals(db_path_str, signal_type=sig_type, last_n=int(last_n))
+        try:
+            signals_df = load_signals(db_path_str, signal_type=sig_type, last_n=int(last_n))
+        except Exception:
+            signals_df = pd.DataFrame()
         if not signals_df.empty:
             st_df(signals_df)
             st.download_button(
@@ -1025,7 +1041,7 @@ def main():
                 key="sig_dl",
             )
         else:
-            st.info("No signals in journal. Run report_daily.py to detect and log signals.")
+            st.info("No data yet—run poll. If DB exists, run report_daily to detect and log signals.")
 
     elif page == "Research":
         st.header("Research (cross-sectional alpha)")
@@ -1377,17 +1393,23 @@ def main():
                     filter_search = st.text_input("Search hypothesis", value="", key="exp_hyp_search")
                 tag_val = filter_tag.strip() if filter_tag.strip() else None
                 search_val = filter_search.strip() if filter_search.strip() else None
-                if tag_val or search_val:
-                    df_runs = load_exp_filtered(exp_db, tag=tag_val, search=search_val, limit=200)
-                else:
-                    df_runs = load_exp_db(exp_db, limit=200)
+                try:
+                    if tag_val or search_val:
+                        df_runs = load_exp_filtered(exp_db, tag=tag_val, search=search_val, limit=200)
+                    else:
+                        df_runs = load_exp_db(exp_db, limit=200)
+                except Exception:
+                    df_runs = pd.DataFrame()
                 if df_runs.empty:
                     st.info("No experiments recorded yet. Run `reportv2` to create entries.")
                 else:
                     preview_rows = []
                     for _, row in df_runs.iterrows():
                         r = row.to_dict()
-                        metrics = load_exp_metrics(exp_db, row["run_id"])
+                        try:
+                            metrics = load_exp_metrics(exp_db, row["run_id"])
+                        except Exception:
+                            metrics = pd.DataFrame()
                         if not metrics.empty:
                             for _, m in metrics.head(5).iterrows():
                                 r[m["metric_name"]] = m["metric_value"]
@@ -1431,7 +1453,10 @@ def main():
 
             with tab_compare:
                 st.subheader("Compare two runs")
-                df_runs = load_exp_db(exp_db, limit=200)
+                try:
+                    df_runs = load_exp_db(exp_db, limit=200)
+                except Exception:
+                    df_runs = pd.DataFrame()
                 if df_runs.empty or len(df_runs) < 1:
                     st.info("Need at least 1 experiment run to compare.")
                 else:
@@ -1450,8 +1475,11 @@ def main():
                             format_func=lambda i: run_labels[i],
                             key="cmp_b",
                         )
-                    metrics_a = load_exp_metrics(exp_db, run_ids[idx_a])
-                    metrics_b = load_exp_metrics(exp_db, run_ids[idx_b])
+                    try:
+                        metrics_a = load_exp_metrics(exp_db, run_ids[idx_a])
+                        metrics_b = load_exp_metrics(exp_db, run_ids[idx_b])
+                    except Exception:
+                        metrics_a = metrics_b = pd.DataFrame()
                     if metrics_a.empty and metrics_b.empty:
                         st.info("No metrics for selected runs.")
                     else:
@@ -1474,12 +1502,18 @@ def main():
 
             with tab_hist:
                 st.subheader("Metric history across runs")
-                mnames = load_mnames(exp_db)
+                try:
+                    mnames = load_mnames(exp_db)
+                except Exception:
+                    mnames = []
                 if not mnames:
                     st.info("No metrics in registry.")
                 else:
                     sel_metric = st.selectbox("Metric", mnames, key="hist_metric")
-                    hist_df = load_mhist(exp_db, sel_metric, limit=500)
+                    try:
+                        hist_df = load_mhist(exp_db, sel_metric, limit=500)
+                    except Exception:
+                        hist_df = pd.DataFrame()
                     if hist_df.empty:
                         st.info(f"No data for {sel_metric}.")
                     else:
@@ -1807,7 +1841,10 @@ def main():
     elif page == "Governance":
         st.header("Governance (manifests & health)")
         reports_dir = Path("reports")
-        manifests_df = load_manifests(reports_dir)
+        try:
+            manifests_df = load_manifests(reports_dir)
+        except Exception:
+            manifests_df = pd.DataFrame()
         if manifests_df.empty:
             st.info("No manifests yet. Run research_report.py or research_report_v2.py with --save-manifest (default).")
         else:

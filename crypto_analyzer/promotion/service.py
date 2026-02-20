@@ -199,11 +199,7 @@ def evaluate_and_record(
     execution_evidence_loaded: Optional[ExecutionEvidence] = None
     exec_path = evidence.get("execution_evidence_path")
     if exec_path:
-        p = (
-            base / exec_path
-            if not Path(exec_path).is_absolute()
-            else Path(exec_path)
-        )
+        p = base / exec_path if not Path(exec_path).is_absolute() else Path(exec_path)
         execution_evidence_loaded = _load_execution_evidence(p)
 
     # Sweep-originated candidates: require RC for Candidate/Accepted by default (data-snooping policy).

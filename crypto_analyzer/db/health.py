@@ -23,8 +23,8 @@ class ProviderHealthStore:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
 
-    def upsert(self, health: ProviderHealth) -> None:
-        """Insert or update a provider's health record."""
+    def upsert(self, health: ProviderHealth, *, commit: bool = True) -> None:
+        """Insert or update a provider's health record. If commit is False, caller must commit."""
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         self._conn.execute(
             """
@@ -50,12 +50,15 @@ class ProviderHealthStore:
                 now,
             ),
         )
-        self._conn.commit()
+        if commit:
+            self._conn.commit()
 
-    def upsert_all(self, health_map: Dict[str, ProviderHealth]) -> None:
-        """Batch upsert all provider health records."""
+    def upsert_all(self, health_map: Dict[str, ProviderHealth], *, commit: bool = True) -> None:
+        """Batch upsert all provider health records. If commit is False, caller must commit (e.g. one transaction with writes)."""
         for h in health_map.values():
-            self.upsert(h)
+            self.upsert(h, commit=False)
+        if commit:
+            self._conn.commit()
 
     def load_all(self) -> List[ProviderHealth]:
         """Load all provider health records."""

@@ -179,6 +179,27 @@ class TestProviderHealthStore:
         assert loaded["coinbase"].status == ProviderStatus.OK
         assert loaded["kraken"].status == ProviderStatus.DEGRADED
 
+    def test_upsert_commit_false_does_not_commit_until_caller_commits(self, tmp_path):
+        """commit=False must not commit; a new connection must not see the row until outer commit."""
+        db_path = str(tmp_path / "health_commit_test.sqlite")
+        conn1 = sqlite3.connect(db_path)
+        run_migrations(conn1)
+        store = ProviderHealthStore(conn1)
+        store.upsert(
+            ProviderHealth("no_commit_provider", ProviderStatus.OK, fail_count=0),
+            commit=False,
+        )
+        conn2 = sqlite3.connect(db_path)
+        n = conn2.execute("SELECT COUNT(*) FROM provider_health").fetchone()[0]
+        conn2.close()
+        assert n == 0, "Row must not be visible before caller commits"
+        conn1.commit()
+        conn2 = sqlite3.connect(db_path)
+        n = conn2.execute("SELECT COUNT(*) FROM provider_health").fetchone()[0]
+        conn2.close()
+        conn1.close()
+        assert n == 1, "Row must be visible after caller commits"
+
 
 class TestMigrations:
     def test_idempotent_migrations(self, db_conn):

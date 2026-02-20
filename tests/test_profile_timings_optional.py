@@ -42,13 +42,20 @@ def test_profiling_off_no_timings_file():
     env.pop("CRYPTO_ANALYZER_PROFILE", None)
     argv = [
         "research_report_v2",
-        "--freq", "1h",
-        "--signals", "momentum_24h",
-        "--portfolio", "simple",
-        "--out-dir", str(out_dir),
-        "--db", ":memory:",
-        "--top-k", "2",
-        "--bottom-k", "2",
+        "--freq",
+        "1h",
+        "--signals",
+        "momentum_24h",
+        "--portfolio",
+        "simple",
+        "--out-dir",
+        str(out_dir),
+        "--db",
+        ":memory:",
+        "--top-k",
+        "2",
+        "--bottom-k",
+        "2",
     ]
 
     with patch.dict(os.environ, env, clear=False):
@@ -56,6 +63,7 @@ def test_profiling_off_no_timings_file():
             with patch("crypto_analyzer.data.get_factor_returns", return_value=None):
                 sys.argv = argv
                 from cli import research_report_v2
+
                 research_report_v2.main()
     assert not timings_path.exists(), "timings.json must not be created when profiling is off"
 
@@ -71,13 +79,20 @@ def test_profiling_on_timings_written():
     env["CRYPTO_ANALYZER_PROFILE"] = "1"
     argv = [
         "research_report_v2",
-        "--freq", "1h",
-        "--signals", "momentum_24h",
-        "--portfolio", "simple",
-        "--out-dir", str(out_dir),
-        "--db", ":memory:",
-        "--top-k", "2",
-        "--bottom-k", "2",
+        "--freq",
+        "1h",
+        "--signals",
+        "momentum_24h",
+        "--portfolio",
+        "simple",
+        "--out-dir",
+        str(out_dir),
+        "--db",
+        ":memory:",
+        "--top-k",
+        "2",
+        "--bottom-k",
+        "2",
     ]
 
     with patch.dict(os.environ, env, clear=False):
@@ -85,9 +100,11 @@ def test_profiling_on_timings_written():
             with patch("crypto_analyzer.data.get_factor_returns", return_value=None):
                 sys.argv = argv
                 from cli import research_report_v2
+
                 research_report_v2.main()
     assert timings_path.is_file(), "timings.json must be written when CRYPTO_ANALYZER_PROFILE=1"
     import json
+
     data = json.loads(timings_path.read_text(encoding="utf-8"))
     assert "stages" in data
     assert "run_id" in data

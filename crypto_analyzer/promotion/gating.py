@@ -128,14 +128,14 @@ def evaluate_candidate(
             reasons.append(f"rc_p_value {rc_p:.4f} > {thresholds.max_rc_p_value}")
 
     # Execution evidence gate (PR2): when target is candidate/accepted or require_execution_evidence
-    enforce_exec = (
-        target_status in ("candidate", "accepted") or thresholds.require_execution_evidence
-    )
+    enforce_exec = target_status in ("candidate", "accepted") or thresholds.require_execution_evidence
     if enforce_exec:
         if allow_missing_execution_evidence:
             warnings.append("allow_missing_execution_evidence: execution evidence not checked")
         elif execution_evidence is None:
-            reasons.append("execution evidence required (target beyond exploratory or require_execution_evidence) but none provided")
+            reasons.append(
+                "execution evidence required (target beyond exploratory or require_execution_evidence) but none provided"
+            )
         else:
             base = execution_evidence_base_path
             missing = execution_evidence.validate_required(base_path=base)
@@ -148,12 +148,17 @@ def evaluate_candidate(
                         reasons.append(
                             f"min_liquidity_usd {execution_evidence.min_liquidity_usd} < {thresholds.min_liquidity_usd_min}"
                         )
-                if thresholds.max_participation_rate_max is not None and execution_evidence.max_participation_rate is not None:
+                if (
+                    thresholds.max_participation_rate_max is not None
+                    and execution_evidence.max_participation_rate is not None
+                ):
                     if execution_evidence.max_participation_rate > thresholds.max_participation_rate_max:
                         reasons.append(
                             f"max_participation_rate {execution_evidence.max_participation_rate} > {thresholds.max_participation_rate_max}"
                         )
 
     if reasons:
-        return PromotionDecision(status="rejected", reasons=reasons, metrics_snapshot=metrics_snapshot, warnings=warnings)
+        return PromotionDecision(
+            status="rejected", reasons=reasons, metrics_snapshot=metrics_snapshot, warnings=warnings
+        )
     return PromotionDecision(status="accepted", reasons=[], metrics_snapshot=metrics_snapshot, warnings=warnings)

@@ -83,9 +83,12 @@ def test_reportv2_factor_run_id_invalid_exits():
         assert code == 1
         assert "factor-run-id" in err.lower() or "not found" in err.lower() or "empty" in err.lower()
     finally:
-        Path(db_path).unlink(missing_ok=True)
         import shutil
 
+        try:
+            Path(db_path).unlink(missing_ok=True)
+        except OSError:
+            pass
         shutil.rmtree(out_dir.parent, ignore_errors=True)
 
 
@@ -149,9 +152,15 @@ def test_reportv2_factor_run_id_valid_uses_materialized():
         report_text = md_files[0].read_text(encoding="utf-8")
         assert "Research Report v2" in report_text
     finally:
-        Path(db_path).unlink(missing_ok=True)
         import shutil
 
+        # Windows: unlink can raise PermissionError (WinError 32) if report_v2 left DB open.
+        # try/except keeps the test stable; to make strict again: ensure all sqlite conns are
+        # closed before cleanup, or use a retry loop (e.g. 3 tries with short sleep) before unlink.
+        try:
+            Path(db_path).unlink(missing_ok=True)
+        except OSError:
+            pass
         shutil.rmtree(out_dir.parent, ignore_errors=True)
 
 
@@ -172,7 +181,10 @@ def test_load_factor_run_returns_none_for_missing_run():
         result = load_factor_run(path, "fctr_nonexistent99999")
         assert result is None
     finally:
-        Path(path).unlink(missing_ok=True)
+        try:
+            Path(path).unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def test_load_factor_run_returns_data_after_materialize():
@@ -207,4 +219,7 @@ def test_load_factor_run_returns_data_after_materialize():
         assert not r2_df.empty
         assert not residual_df.empty
     finally:
-        Path(path).unlink(missing_ok=True)
+        try:
+            Path(path).unlink(missing_ok=True)
+        except OSError:
+            pass

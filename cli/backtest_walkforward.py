@@ -5,12 +5,9 @@ Walk-forward backtest CLI. Converts train_days/test_days/step_days to bars and r
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-import argparse
 
 from crypto_analyzer.config import db_path, default_freq
 from crypto_analyzer.config import min_bars as config_min_bars

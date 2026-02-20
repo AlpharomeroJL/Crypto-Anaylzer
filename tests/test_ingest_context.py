@@ -42,7 +42,7 @@ def test_context_manager_rollback_and_close_on_exception(tmp_path: Path) -> None
 
 
 def test_run_one_cycle_rollback_on_exception(tmp_path: Path) -> None:
-    """If run_one_cycle fails after some writes, conn is rolled back (no partial commit)."""
+    """If run_one_cycle fails before commit (e.g. health upsert raises), conn is rolled back."""
     import logging
     from unittest.mock import patch
 
@@ -51,7 +51,7 @@ def test_run_one_cycle_rollback_on_exception(tmp_path: Path) -> None:
     quiet.addHandler(logging.NullHandler())
     quiet.setLevel(logging.INFO)
     with get_poll_context(db) as ctx:
-        with patch.object(ctx.db_writer, "commit", side_effect=RuntimeError("commit failed")):
-            with pytest.raises(RuntimeError, match="commit failed"):
+        with patch.object(ctx.health_store, "upsert_all", side_effect=RuntimeError("upsert failed")):
+            with pytest.raises(RuntimeError, match="upsert failed"):
                 run_one_cycle(ctx, [], log=quiet)
     assert ctx._closed

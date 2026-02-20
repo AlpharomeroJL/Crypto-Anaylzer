@@ -43,16 +43,15 @@ def winsorize_cross_section(signal_df: pd.DataFrame, p: float = 0.01) -> pd.Data
 
 
 def _ols_residual_cross_section(y: np.ndarray, X: np.ndarray) -> np.ndarray:
-    """y and X aligned; return residual y - X @ beta (with const in X)."""
+    """y and X aligned; return residual y - X @ beta (with const in X). Robust to singular X'X."""
+    from .factors import _solve_normal_equations
+
     if X.size == 0 or len(y) < 3 or X.shape[0] != len(y):
         return y.copy()
-    try:
-        XtX = X.T @ X
-        Xty = X.T @ y
-        beta = np.linalg.solve(XtX, Xty)
-        return y - X @ beta
-    except np.linalg.LinAlgError:
+    beta = _solve_normal_equations(X, y)
+    if np.any(np.isnan(beta)):
         return y.copy()
+    return y - X @ beta
 
 
 def neutralize_signal_to_exposures(
@@ -95,9 +94,7 @@ def neutralize_signal_to_exposures(
     return out
 
 
-def _flatten_pair(
-    df1: pd.DataFrame, df2: pd.DataFrame, idx: pd.Index
-) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+def _flatten_pair(df1: pd.DataFrame, df2: pd.DataFrame, idx: pd.Index) -> Optional[Tuple[np.ndarray, np.ndarray]]:
     """Flatten two dataframes to 1d over common index and columns; same shape or None."""
     cols = df1.columns.intersection(df2.columns)
     if len(cols) == 0:
