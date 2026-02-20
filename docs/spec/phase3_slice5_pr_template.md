@@ -1,5 +1,34 @@
 # Phase 3 Slice 5 — Promotion Workflow + UI + Performance (PR Checklist)
 
+> This PR completes Phase 3 of the architecture roadmap.
+> It is governance-level and must satisfy reproducibility, leakage, and determinism invariants.
+> No default behavior may change unless explicitly documented and justified.
+
+---
+
+## When opening this PR
+
+**Recommended PR title**
+
+Phase 3 Slice 5 — Promotion Workflow + UI + Deterministic Caching
+
+**At the top of the PR description, include:**
+
+Spec reference:
+- docs/spec/master_architecture_spec.md
+- docs/spec/phase3_promotion_slice5_alignment.md
+- docs/spec/phase3_slice5_pr_template.md
+
+**Before submitting the PR, fill in:**
+- Files changed
+- Migration versions (e.g., 004 promotion_candidates, 005 promotion_events)
+- Example candidate row (sanitized)
+- Example promotion_events entries
+- Cache key example (showing full key components)
+- Output of `.\scripts\run.ps1 verify` (PASS)
+
+---
+
 ## Summary
 - [ ] Implements persisted promotion workflow: exploratory → candidate → accepted/rejected
 - [ ] Adds Streamlit Promotion UI (minimal) + CLI commands (minimal)
