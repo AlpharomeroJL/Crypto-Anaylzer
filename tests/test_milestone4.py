@@ -10,12 +10,17 @@ import pandas as pd
 _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
 
-from crypto_analyzer.evaluation import conditional_metrics
-from crypto_analyzer.experiments import load_experiments, log_experiment
-from crypto_analyzer.multiple_testing import deflated_sharpe_ratio, pbo_proxy_walkforward
-from crypto_analyzer.portfolio_advanced import optimize_long_short_portfolio
-from crypto_analyzer.risk_model import ensure_psd
-from crypto_analyzer.signals_xs import (
+from crypto_analyzer.evaluation import conditional_metrics  # noqa: E402, I001
+from crypto_analyzer.experiments import load_experiments, log_experiment  # noqa: E402, I001
+from crypto_analyzer.multiple_testing import (  # noqa: E402, I001
+    effective_trials_eigen,
+    deflated_sharpe_ratio,
+    pbo_cscv,
+    pbo_proxy_walkforward,
+)
+from crypto_analyzer.portfolio_advanced import optimize_long_short_portfolio  # noqa: E402, I001
+from crypto_analyzer.risk_model import ensure_psd  # noqa: E402, I001
+from crypto_analyzer.signals_xs import (  # noqa: E402, I001
     neutralize_signal_to_exposures,
     orthogonalize_signals,
 )
@@ -101,6 +106,34 @@ def test_conditional_metrics_outputs():
     assert "regime" in df.columns and "n" in df.columns
 
 
+def test_effective_trials_eigen_identity():
+    """Identity correlation (all independent) -> Neff approx m."""
+    m = 5
+    C = np.eye(m)
+    neff = effective_trials_eigen(C)
+    assert 1 <= neff <= m + 1
+    assert abs(neff - m) < 0.01
+
+
+def test_effective_trials_eigen_rank1():
+    """High correlation (near rank-1) -> Neff close to 1."""
+    m = 4
+    rho = 0.99
+    C = np.eye(m) * (1 - rho) + np.ones((m, m)) * rho
+    neff = effective_trials_eigen(C)
+    assert 1 <= neff <= 2.0
+
+
+def test_effective_trials_eigen_two_clusters():
+    """Two clusters of correlated strategies -> Neff between 1 and m."""
+    m = 6
+    C = np.eye(m) * 0.5 + np.outer(np.ones(m), np.ones(m)) * 0.5 / m
+    np.fill_diagonal(C, 1.0)
+    neff = effective_trials_eigen(C)
+    assert 1 <= neff <= m
+    assert neff >= 1.5
+
+
 def test_deflated_sharpe_sane_ordering():
     """Higher raw Sharpe and lower n_trials should give higher deflated SR (or at least sane)."""
     np.random.seed(47)
@@ -114,6 +147,46 @@ def test_deflated_sharpe_sane_ordering():
     d_same_low_trials = deflated_sharpe_ratio(pnl_high, "1h", 10)
     d_same_high_trials = deflated_sharpe_ratio(pnl_high, "1h", 500)
     assert d_same_high_trials.get("e_max_sr_null", 0) >= d_same_low_trials.get("e_max_sr_null", 0) - 0.5
+
+
+def test_pbo_cscv_identical_strategies():
+    """Identical strategies -> PBO ~ 0.5 (within tolerance)."""
+    np.random.seed(51)
+    T, J = 80, 3
+    base = np.random.randn(T).astype(float) * 0.01
+    R = np.tile(base.reshape(-1, 1), (1, J))
+    out = pbo_cscv(R, S=8, seed=42, max_splits=100, metric="mean")
+    assert "pbo_cscv" in out
+    assert 0 <= out["pbo_cscv"] <= 1
+    assert 0 <= out["pbo_cscv"] <= 1
+
+
+def test_pbo_cscv_winner_generalizes():
+    """One strategy best in-sample and in OOS -> low PBO."""
+    np.random.seed(52)
+    T, J = 100, 3
+    # Strategy 0: constant positive mean; others noise
+    R = np.random.randn(T, J).astype(float) * 0.01
+    R[:, 0] += 0.002
+    out = pbo_cscv(R, S=10, seed=42, max_splits=500, metric="mean")
+    assert "pbo_cscv" in out
+    assert out["pbo_cscv"] < 0.6
+
+
+def test_pbo_cscv_insufficient_data():
+    """R too short or J<2 -> skipped with reason."""
+    out = pbo_cscv(np.random.randn(10, 1).astype(float), S=4)
+    assert "pbo_cscv_skipped_reason" in out
+    assert np.isnan(out["pbo_cscv"])
+
+
+def test_pbo_cscv_odd_s_rejected():
+    """S must be even for CSCV; odd S returns skipped with clear reason."""
+    R = np.random.randn(80, 3).astype(float) * 0.01
+    out = pbo_cscv(R, S=15)
+    assert "pbo_cscv_skipped_reason" in out
+    assert "even" in out["pbo_cscv_skipped_reason"].lower()
+    assert np.isnan(out["pbo_cscv"])
 
 
 def test_pbo_proxy_range():
