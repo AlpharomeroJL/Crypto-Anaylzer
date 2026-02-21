@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
+import numpy as np
 import pandas as pd
 
 # Conservative fallback when liquidity is missing (documented)
@@ -140,6 +141,18 @@ def apply_costs(
     return model.apply_costs(gross_returns, turnover_series, slippage_bps_series=slippage_bps_series)
 
 
+# Capacity curve: column order contract (additive columns after these two)
+CAPACITY_CURVE_REQUIRED_COLUMNS = ["notional_multiplier", "sharpe_annual"]
+CAPACITY_CURVE_EXTRA_COLUMNS = [
+    "mean_ret_annual",
+    "vol_annual",
+    "avg_turnover",
+    "est_cost_bps",
+    "impact_bps",
+    "spread_bps",
+]
+
+
 def capacity_curve(
     gross_returns: pd.Series,
     turnover_series: pd.Series,
@@ -147,25 +160,85 @@ def capacity_curve(
     freq: str = "1h",
     fee_bps: float = 30.0,
     slippage_bps: float = 10.0,
+    use_participation_impact: bool = True,
+    impact_bps_per_participation: float = 5.0,
+    max_participation_pct: float = 10.0,
+    impact_k: float = 5.0,
+    impact_alpha: float = 0.5,
+    spread_bps: float = 0.0,
 ) -> pd.DataFrame:
     """
-    Minimal capacity curve: at each notional multiplier, scale turnover (same pattern, higher size)
-    and apply costs; return Sharpe (annualized) vs multiplier. Higher multiplier -> higher turnover
-    -> higher costs -> lower net Sharpe typically.
+    Capacity curve: at each notional multiplier m, scale turnover (same pattern, higher size),
+    apply size-aware costs so net returns degrade with m; return Sharpe (annualized) vs multiplier.
+
+    Cost model (increases with m, sensitive to turnover):
+    - Fee + slippage: fixed bps applied to turnover.
+    - Spread: spread_bps (linear in turnover via apply_costs).
+    - Impact: when use_participation_impact=True we have a participation proxy (m * mean(turnover) as %),
+      so impact_bps = impact_bps_from_participation(participation_pct). When False, fallback to
+      power-law impact_bps(m) = impact_k * (m ** impact_alpha). Cost = turnover * (fee + slippage + spread + impact_bps) / 10000.
+
+    Contract: first two columns are notional_multiplier, sharpe_annual (order fixed). Extra columns additive only.
+    Artifacts (e.g. execution_evidence cost_config) must describe the same model used here.
     """
     from .features import bars_per_year
 
     if multipliers is None:
         multipliers = [1.0, 2.0, 5.0]
+    bars_yr = bars_per_year(freq)
     rows = []
     for mult in multipliers:
         scaled_turnover = turnover_series * mult
-        net_ret, _ = apply_costs(gross_returns, scaled_turnover, fee_bps=fee_bps, slippage_bps=slippage_bps)
+        avg_turnover = float(scaled_turnover.mean())
+        if use_participation_impact:
+            # Participation-based impact: proxy participation_pct = m * mean(turnover) as %, capped
+            participation_pct = min(max_participation_pct, float(mult * turnover_series.mean() * 100.0))
+            impact_bps = impact_bps_from_participation(
+                participation_pct,
+                impact_per_pct=impact_bps_per_participation,
+                max_pct=max_participation_pct,
+            )
+        else:
+            # Fallback: power-law in multiplier (no participation proxy)
+            impact_bps = float(impact_k * (mult ** impact_alpha)) if impact_k else 0.0
+        effective_slippage = slippage_bps + impact_bps + spread_bps
+        net_ret, cost_series = apply_costs(
+            gross_returns, scaled_turnover, fee_bps=fee_bps, slippage_bps=effective_slippage
+        )
         n = net_ret.dropna()
         if len(n) < 2 or n.std(ddof=1) == 0:
             sharpe = float("nan")
         else:
-            bars_yr = bars_per_year(freq)
             sharpe = float(n.mean() / n.std(ddof=1) * (bars_yr**0.5))
-        rows.append({"notional_multiplier": mult, "sharpe_annual": sharpe})
-    return pd.DataFrame(rows)
+        mean_ret_annual = float(n.mean() * bars_yr) if len(n) else float("nan")
+        vol_annual = float(n.std(ddof=1) * (bars_yr**0.5)) if len(n) >= 2 else float("nan")
+        est_cost_bps = fee_bps + slippage_bps + impact_bps + spread_bps
+        rows.append({
+            "notional_multiplier": mult,
+            "sharpe_annual": sharpe,
+            "mean_ret_annual": mean_ret_annual,
+            "vol_annual": vol_annual,
+            "avg_turnover": avg_turnover,
+            "est_cost_bps": est_cost_bps,
+            "impact_bps": impact_bps,
+            "spread_bps": spread_bps,
+        })
+    # Enforce column order: required first, then extra (additive only)
+    col_order = CAPACITY_CURVE_REQUIRED_COLUMNS + CAPACITY_CURVE_EXTRA_COLUMNS
+    return pd.DataFrame(rows, columns=col_order)
+
+
+def capacity_curve_is_non_monotone(cap_df: pd.DataFrame) -> bool:
+    """
+    True if any strict increase in sharpe_annual: any(diff(sharpe_annual) > 0) on consecutive rows (finite values).
+    Used to set non_monotone_capacity_curve_observed in stats_overview; does not enforce monotonicity.
+    Logic is "local increase" (consecutive pairs only); when multiple curves are written, callers OR the flag.
+    """
+    if cap_df is None or cap_df.empty or "sharpe_annual" not in cap_df.columns:
+        return False
+    s = cap_df["sharpe_annual"].values
+    for i in range(1, len(s)):
+        a, b = s[i - 1], s[i]
+        if np.isfinite(a) and np.isfinite(b) and b > a:
+            return True
+    return False
