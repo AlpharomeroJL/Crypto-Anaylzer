@@ -62,7 +62,12 @@ from crypto_analyzer.integrity import (
     bad_row_rate,
     count_non_positive_prices,
 )
-from crypto_analyzer.multiple_testing import deflated_sharpe_ratio, pbo_proxy_walkforward, reality_check_warning
+from crypto_analyzer.multiple_testing import (
+    deflated_sharpe_ratio,
+    pbo_cscv,
+    pbo_proxy_walkforward,
+    reality_check_warning,
+)
 from crypto_analyzer.multiple_testing_adjuster import adjust as adjust_pvalues
 from crypto_analyzer.portfolio import (
     apply_costs_to_portfolio,
@@ -80,7 +85,7 @@ from crypto_analyzer.signals_xs import (
     orthogonalize_signals,
     value_vs_beta,
 )
-from crypto_analyzer.statistics import safe_nanmean
+from crypto_analyzer.statistics import hac_mean_inference, safe_nanmean
 from crypto_analyzer.validation import (
     ic_decay_by_regime,
     ic_summary_by_regime_multi,
@@ -115,7 +120,32 @@ def main() -> int:
     ap.add_argument("--signals", default="clean_momentum,value_vs_beta", help="Comma-separated signal names")
     ap.add_argument("--portfolio", choices=["simple", "advanced", "qp_ls"], default="advanced")
     ap.add_argument("--cov-method", choices=["ewma", "lw", "shrink"], default="ewma")
-    ap.add_argument("--n-trials", type=int, default=50, help="For deflated Sharpe")
+    ap.add_argument(
+        "--n-trials",
+        default="auto",
+        help="Deflated Sharpe: 'auto' (default) = compute Neff from strategy returns; or integer (e.g. 50). Do not infer intent from value.",
+    )
+    ap.add_argument(
+        "--hac-lags",
+        default="auto",
+        dest="hac_lags",
+        help="HAC (Newey-West) lag: 'auto' (default) or integer. Used for mean-return inference.",
+    )
+    ap.add_argument("--pbo-cscv-blocks", type=int, default=16, dest="pbo_cscv_blocks", help="CSCV number of blocks S (default 16).")
+    ap.add_argument(
+        "--pbo-cscv-max-splits",
+        type=int,
+        default=20000,
+        dest="pbo_cscv_max_splits",
+        help="CSCV cap on enumerated splits; beyond this, random-sample with seed.",
+    )
+    ap.add_argument(
+        "--pbo-metric",
+        choices=["mean", "sharpe"],
+        default="mean",
+        dest="pbo_metric",
+        help="CSCV in-fold metric: mean or sharpe.",
+    )
     ap.add_argument("--out-dir", default="reports")
     ap.add_argument("--run-name", default=None, help="Run name for manifest (default: research_report_v2)")
     ap.add_argument("--notes", default="")
@@ -215,6 +245,30 @@ def main() -> int:
     )
     args = ap.parse_args()
 
+    # Normalize --n-trials: "auto" (default) vs explicit int; do not infer intent from value
+    _n_trials_raw = getattr(args, "n_trials", "auto")
+    if str(_n_trials_raw).strip().lower() == "auto":
+        args._n_trials_mode = "auto"
+        args._n_trials_int = None
+    else:
+        try:
+            args._n_trials_int = int(float(str(_n_trials_raw)))
+            args._n_trials_mode = "user"
+        except (ValueError, TypeError):
+            args._n_trials_mode = "auto"
+            args._n_trials_int = None
+
+    # Normalize --hac-lags: "auto" vs explicit int
+    _hac_raw = getattr(args, "hac_lags", "auto")
+    if str(_hac_raw).strip().lower() == "auto":
+        args._hac_lags_int = None
+    else:
+        try:
+            args._hac_lags_int = int(float(str(_hac_raw)))
+            args._hac_lags_int = max(0, args._hac_lags_int)
+        except (ValueError, TypeError):
+            args._hac_lags_int = None
+
     # Fail fast if --regimes set but regimes disabled (no silent ignore)
     regime_opt = (getattr(args, "regimes", None) or "").strip()
     if regime_opt:
@@ -306,7 +360,7 @@ def main() -> int:
         "| cost model | fee + slippage (bps) |",
         f"| cov_method | {args.cov_method} |",
         f"| portfolio | {args.portfolio} |",
-        f"| deflated_sharpe n_trials | {getattr(args, 'n_trials', 50)} |",
+        f"| deflated_sharpe n_trials | {args.n_trials if hasattr(args, 'n_trials') else 'auto'} |",
         "",
         "## 1) Universe",
     ]
@@ -424,13 +478,12 @@ def main() -> int:
     if is_regimes_enabled() and regime_run_id_early:
         regime_rows = []
         try:
-            conn = sqlite3.connect(db)
-            cur = conn.execute(
-                "SELECT ts_utc, regime_label FROM regime_states WHERE regime_run_id = ? ORDER BY ts_utc",
-                (regime_run_id_early,),
-            )
-            regime_rows = cur.fetchall()
-            conn.close()
+            with sqlite3.connect(db) as conn:
+                cur = conn.execute(
+                    "SELECT ts_utc, regime_label FROM regime_states WHERE regime_run_id = ? ORDER BY ts_utc",
+                    (regime_run_id_early,),
+                )
+                regime_rows = cur.fetchall()
         except sqlite3.OperationalError:
             pass
         if regime_rows:
@@ -460,6 +513,8 @@ def main() -> int:
     portfolio_pnls = {}
     walk_forward_rows = []
     bundle_output_paths: list[str] = []
+    non_monotone_capacity_curve_observed = False
+    capacity_curve_written = False
     _regime_coverage_rel_path: str | None = None  # written once per run when --regimes set
     rc_ic_series_by_hypothesis: dict = {}  # signal|horizon -> IC Series for Reality Check when --reality-check
     _rc_family_id: str | None = None
@@ -601,7 +656,10 @@ def main() -> int:
             # Execution evidence artifacts (optional; do not extend ValidationBundle)
             if getattr(args, "execution_evidence", False):
                 try:
-                    from crypto_analyzer.execution_cost import capacity_curve
+                    from crypto_analyzer.execution_cost import (
+                        capacity_curve,
+                        capacity_curve_is_non_monotone,
+                    )
                     from crypto_analyzer.promotion.execution_evidence import (
                         ExecutionEvidence,
                         execution_evidence_to_json,
@@ -613,15 +671,22 @@ def main() -> int:
                         freq=args.freq,
                         fee_bps=args.fee_bps,
                         slippage_bps=args.slippage_bps,
+                        use_participation_impact=True,
+                        impact_bps_per_participation=5.0,
+                        max_participation_pct=10.0,
                     )
+                    capacity_curve_written = True
+                    if capacity_curve_is_non_monotone(cap_df):
+                        non_monotone_capacity_curve_observed = True
                     path_cap = csv_dir / f"capacity_curve_{name}_{run_id_early}.csv"
                     write_df_csv_stable(cap_df, path_cap)
                     cap_path_rel = str(path_cap.relative_to(out_dir))
+                    # cost_config must match what capacity_curve() used (participation-based impact)
                     cost_config = {
                         "fee_bps": args.fee_bps,
                         "slippage_bps": args.slippage_bps,
                         "spread_vol_scale": 0.0,
-                        "use_participation_impact": False,
+                        "use_participation_impact": True,
                         "impact_bps_per_participation": 5.0,
                         "max_participation_pct": 10.0,
                     }
@@ -642,6 +707,40 @@ def main() -> int:
                     print(f"Execution evidence skip ({name}):", exec_e)
         except Exception as e:
             print(f"ValidationBundle skip ({name}):", e)
+
+    # ---- Resolve n_trials for DSR (Neff when auto) ----
+    n_trials_used: float = 50.0
+    n_trials_user: int | None = None
+    n_trials_eff_eigen: float | None = None
+    n_trials_eff_inputs_total: int | None = None
+    n_trials_eff_inputs_used: int | None = None
+    if getattr(args, "_n_trials_mode", "auto") == "user" and getattr(args, "_n_trials_int", None) is not None:
+        n_trials_used = float(args._n_trials_int)
+        n_trials_user = args._n_trials_int
+    else:
+        # auto: compute Neff from strategy return correlation (trial universe = columns of R after alignment)
+        from crypto_analyzer.multiple_testing import effective_trials_eigen
+
+        if len(portfolio_pnls) >= 2:
+            n_trials_eff_inputs_total = len(portfolio_pnls)
+            try:
+                common_idx = None
+                for pnl in portfolio_pnls.values():
+                    idx = pnl.dropna().index
+                    common_idx = idx if common_idx is None else common_idx.intersection(idx)
+                if common_idx is not None and len(common_idx) >= 10:
+                    R = pd.DataFrame({k: v.reindex(common_idx) for k, v in portfolio_pnls.items()})
+                    R = R.dropna(how="any")
+                    if R.shape[1] >= 2 and R.shape[0] >= 10:
+                        n_trials_eff_inputs_used = R.shape[1]
+                        C = R.corr()
+                        neff = effective_trials_eigen(C.values)
+                        n_trials_eff_eigen = float(neff)
+                        n_trials_used = max(1.0, round(neff))
+            except Exception:
+                pass
+        if n_trials_eff_eigen is None:
+            n_trials_used = max(1.0, n_trials_used)
 
     # ---- Reality Check (opt-in) ----
     if getattr(args, "reality_check", False) and rc_ic_series_by_hypothesis:
@@ -731,6 +830,9 @@ def main() -> int:
             if "null_max_distribution" in _rc_result:
                 nd = _rc_result["null_max_distribution"]
                 summary_json["null_max_sample"] = float(nd[0]) if len(nd) else None
+            rw_adj = _rc_result.get("rw_adjusted_p_values")
+            if rw_adj is not None and hasattr(rw_adj, "to_dict") and len(rw_adj) > 0:
+                summary_json["rw_adjusted_p_values"] = {k: float(v) for k, v in rw_adj.items()}
             write_json_sorted(summary_json, summary_path)
             bundle_output_paths.append(str(summary_path))
             null_max_path = csv_dir / f"reality_check_null_max_{_rc_family_id}.csv"
@@ -744,14 +846,132 @@ def main() -> int:
 
     # ---- Deflated Sharpe ----
     lines.append("## 4) Overfitting defenses")
-    lines.append(f"Deflated Sharpe (n_trials={args.n_trials}):")
+    lines.append(
+        f"Deflated Sharpe: n_trials_used={n_trials_used:.0f}  "
+        f"n_trials_user={n_trials_user}  n_trials_eff_eigen={n_trials_eff_eigen}"
+    )
     for name, pnl in portfolio_pnls.items():
         if len(pnl) < 10:
             continue
-        dsr = deflated_sharpe_ratio(pnl, args.freq, args.n_trials, skew_kurtosis_optional=True)
+        dsr = deflated_sharpe_ratio(pnl, args.freq, int(max(1, n_trials_used)), skew_kurtosis_optional=True)
         lines.append(
             f"- **{name}**: raw_sr={dsr.get('raw_sr', np.nan):.4f}  deflated_sr={dsr.get('deflated_sr', np.nan):.4f}"
         )
+    # HAC inference for mean return (first portfolio)
+    hac_lags_used: int | None = getattr(args, "_hac_lags_int", None)
+    t_hac_mean_return: float | None = None
+    p_hac_mean_return: float | None = None
+    hac_result: dict = {}
+    if portfolio_pnls:
+        first_pnl = next(iter(portfolio_pnls.values()))
+        hac_result = hac_mean_inference(first_pnl.values, L=hac_lags_used)
+        hac_lags_used = hac_result.get("hac_lags_used")
+        if hac_result.get("hac_skipped_reason"):
+            t_hac_mean_return = None
+            p_hac_mean_return = None
+        else:
+            t_hac_mean_return = hac_result.get("t_hac")
+            p_hac_mean_return = hac_result.get("p_hac")
+        if hac_result.get("hac_skipped_reason"):
+            lines.append(f"HAC mean return: skipped ({hac_result['hac_skipped_reason']})")
+        elif t_hac_mean_return is not None and p_hac_mean_return is not None:
+            lines.append(
+                f"HAC mean return: t_hac={t_hac_mean_return:.4f}  p_hac={p_hac_mean_return:.4f}  (lags={hac_lags_used})"
+            )
+    # CSCV PBO (when J>=2 and T sufficient)
+    pbo_cscv_result: dict = {}
+    if len(portfolio_pnls) >= 2:
+        try:
+            common_idx = None
+            for pnl in portfolio_pnls.values():
+                idx = pnl.dropna().index
+                common_idx = idx if common_idx is None else common_idx.intersection(idx)
+            if common_idx is not None and len(common_idx) >= 8:
+                R_cscv = pd.DataFrame({k: v.reindex(common_idx) for k, v in portfolio_pnls.items()}).dropna(how="any")
+                if R_cscv.shape[1] >= 2 and R_cscv.shape[0] >= 8:
+                    pbo_cscv_result = pbo_cscv(
+                        R_cscv.values,
+                        S=getattr(args, "pbo_cscv_blocks", 16),
+                        seed=getattr(args, "rc_seed", 42),
+                        max_splits=getattr(args, "pbo_cscv_max_splits", 20000),
+                        metric=getattr(args, "pbo_metric", "mean"),
+                    )
+        except Exception:
+            pass
+    if pbo_cscv_result and "pbo_cscv_skipped_reason" not in pbo_cscv_result:
+        lines.append(
+            f"PBO (CSCV): {pbo_cscv_result.get('pbo_cscv', np.nan)}  "
+            f"(blocks={pbo_cscv_result.get('n_blocks')}, splits={pbo_cscv_result.get('n_splits')}, "
+            f"metric={getattr(args, 'pbo_metric', 'mean')})"
+        )
+    elif pbo_cscv_result and pbo_cscv_result.get("pbo_cscv_skipped_reason"):
+        lines.append(f"PBO (CSCV): skipped ({pbo_cscv_result['pbo_cscv_skipped_reason']})")
+    # stats_overview.json (audit: n_trials, HAC, PBO CSCV, RW)
+    hac_skipped_reason = hac_result.get("hac_skipped_reason") if portfolio_pnls else None
+    rw_enabled = os.environ.get("CRYPTO_ANALYZER_ENABLE_ROMANOWOLF", "").strip() == "1"
+    stats_overview = {
+        "n_trials_used": n_trials_used,
+        "n_trials_user": n_trials_user,
+        "n_trials_eff_eigen": n_trials_eff_eigen,
+        "n_trials_eff_inputs_total": n_trials_eff_inputs_total,
+        "n_trials_eff_inputs_used": n_trials_eff_inputs_used,
+        "hac_lags_used": hac_lags_used,
+        "hac_skipped_reason": hac_skipped_reason,
+        "t_hac_mean_return": t_hac_mean_return,
+        "p_hac_mean_return": p_hac_mean_return,
+        "rw_enabled": rw_enabled,
+    }
+    if pbo_cscv_result and "pbo_cscv_skipped_reason" not in pbo_cscv_result:
+        stats_overview["pbo_cscv"] = pbo_cscv_result.get("pbo_cscv")
+        stats_overview["pbo_cscv_blocks"] = pbo_cscv_result.get("n_blocks")
+        stats_overview["pbo_cscv_total_splits"] = pbo_cscv_result.get("pbo_cscv_total_splits")
+        stats_overview["pbo_cscv_splits_used"] = pbo_cscv_result.get("n_splits")
+        stats_overview["pbo_metric"] = getattr(args, "pbo_metric", "mean")
+    elif pbo_cscv_result and pbo_cscv_result.get("pbo_cscv_skipped_reason"):
+        stats_overview["pbo_cscv_skipped_reason"] = pbo_cscv_result["pbo_cscv_skipped_reason"]
+    # Break diagnostics (run before writing stats_overview so we can set break_diagnostics_written)
+    break_result: dict = {}
+    break_diagnostics_written = False
+    break_diagnostics_skipped_reason: str | None = None
+    try:
+        from crypto_analyzer.structural_breaks import run_break_diagnostics
+
+        break_series = {}
+        if portfolio_pnls:
+            first_pnl = next(iter(portfolio_pnls.values()))
+            break_series["net_returns"] = first_pnl
+        if rc_ic_series_by_hypothesis:
+            first_ic = next(iter(rc_ic_series_by_hypothesis.values()))
+            if first_ic is not None and not first_ic.empty:
+                break_series["ic_series"] = first_ic
+        if break_series:
+            break_result = run_break_diagnostics(
+                break_series,
+                hac_lags=getattr(args, "_hac_lags_int", None),
+            )
+            if break_result.get("series"):
+                break_diagnostics_written = True
+            else:
+                break_diagnostics_skipped_reason = "no series with sufficient data"
+        else:
+            break_diagnostics_skipped_reason = "no portfolio or IC series"
+    except Exception as e:
+        break_diagnostics_skipped_reason = str(e)
+        # Log so failures are visible; report continues and reason is in stats_overview
+        print("Break diagnostics skip:", e)
+    stats_overview["break_diagnostics_written"] = break_diagnostics_written
+    if break_diagnostics_skipped_reason is not None:
+        stats_overview["break_diagnostics_skipped_reason"] = break_diagnostics_skipped_reason
+    stats_overview["non_monotone_capacity_curve_observed"] = non_monotone_capacity_curve_observed
+    stats_overview["capacity_curve_written"] = capacity_curve_written
+    ensure_dir(out_dir)
+    stats_overview_path = out_dir / "stats_overview.json"
+    write_json_sorted(stats_overview, stats_overview_path)
+    bundle_output_paths.append(str(stats_overview_path))
+    if break_result.get("series"):
+        break_path = out_dir / "break_diagnostics.json"
+        write_json_sorted(break_result, break_path)
+        bundle_output_paths.append(str(break_path))
     wf_df = pd.DataFrame(walk_forward_rows) if walk_forward_rows else pd.DataFrame()
     pbo = pbo_proxy_walkforward(wf_df)
     lines.append(f"PBO proxy: {pbo.get('pbo_proxy', np.nan)}  ({pbo.get('explanation', '')})")
@@ -1126,8 +1346,7 @@ def main() -> int:
                             "regime_run_id": regime_run_id_early or None,
                         }
                     )
-                conn = sqlite3.connect(experiment_db_path)
-                try:
+                with sqlite3.connect(experiment_db_path) as conn:
                     if persist_sweep_family(
                         conn,
                         family_id=_rc_family_id,
@@ -1140,8 +1359,6 @@ def main() -> int:
                         hypotheses=hypotheses,
                     ):
                         print(f"Sweep registry: persisted family {_rc_family_id} with {len(hypotheses)} hypotheses")
-                finally:
-                    conn.close()
             except Exception as sweep_err:
                 print("Sweep registry skip:", sweep_err)
     except Exception as e:

@@ -228,13 +228,33 @@ Given correlation matrix $\Sigma$ of signal returns with eigenvalues $\lambda_1,
 
 $$N_{\mathrm{eff}} = \frac{\left( \sum_{i=1}^{m} \lambda_i \right)^2}{\sum_{i=1}^{m} \lambda_i^2}$$
 
-This reduces inflation when signals are correlated.
+This reduces inflation when signals are correlated. **Repo:** When `--n-trials auto`, reportv2 uses Neff from strategy return correlation; artifact keys: `n_trials_user`, `n_trials_eff_eigen`, `n_trials_used`, `n_trials_eff_inputs_total`, `n_trials_eff_inputs_used`. Strategies with insufficient data may be dropped.
 
-## A.8 Null Suite (Placebo Testing)
+## A.8 HAC Mean Inference (Newey–West)
+
+Long-run variance $\Omega$ for a mean is estimated with Bartlett weights (Newey–West). Then $t = \bar{x}\sqrt{n}/\sqrt{\widehat{\Omega}}$, and p-value via normal approximation. **Repo:** Lag $L$ = auto rule (e.g. $\lfloor 4(n/100)^{2/9} \rfloor$ capped by $n/3$) or user integer. Minimum $n \geq 30$; below that, HAC is skipped: `hac_skipped_reason` set, `t_hac_mean_return` and `p_hac_mean_return` null. This is inference on the *mean* (return or IC), not full Sharpe inference.
+
+## A.9 Reality Check and Romano–Wolf Output Contract
+
+**RC:** Observed $T_{\mathrm{obs}} = \max_h \hat{\theta}_h$; null uses same resampling indices across hypotheses. **RW:** MaxT stepdown on the same null matrix; adjusted p-values monotone in stepdown order. **Repo output contract:** `rw_adjusted_p_values` is absent when RW disabled; when enabled and computed, present (hypothesis_id → adjusted p-value). `stats_overview.json`: `rw_enabled` (bool).
+
+## A.10 CSCV PBO: Splits and Skip Behavior
+
+CSCV splits data into $S$ equal blocks ($S$ even); train/test = half each. $\lambda = \mathrm{logit}(\mathrm{rank}_{\mathrm{OOS}})$; PBO = $P(\lambda < 0)$. **Repo:** If $\binom{S}{S/2} > \mathrm{max\_splits}$, splits are random-sampled with seed. Midrank for ties. **Skip:** When $T < S \times 4$ or $J < 2$ or $S$ odd: `pbo_cscv_skipped_reason` set; no `pbo_cscv`. Artifacts: `pbo_cscv_total_splits` (combinatorial or sample size), `pbo_cscv_splits_used` (actual number used).
+
+## A.11 Structural Break Diagnostics
+
+**CUSUM mean-shift:** HAC-calibrated; `calibration_method`: "HAC". **Sup-Chow single-break scan:** asymptotic; `calibration_method`: "asymptotic". Both: `estimated_break_index`, `estimated_break_date` (UTC→naive, format `%Y-%m-%dT%H:%M:%S`). When skipped (e.g. $n$ below minimum): `skipped_reason` set, `break_suspected` false. **Repo:** `break_diagnostics.json` has `series` → list of test entries per series; `stats_overview`: `break_diagnostics_written`, `break_diagnostics_skipped_reason`.
+
+## A.12 Capacity Curve (Participation-Based Impact)
+
+Net returns = gross − (fee + slippage + spread + impact) applied to turnover. **Participation-based:** impact_bps from participation proxy (e.g. multiplier × mean turnover as %), capped; linear in participation. **Repo:** CSV required columns `notional_multiplier`, `sharpe_annual`; extra columns additive. Non-monotone behavior is not forced; `capacity_curve_is_non_monotone()` flags strict increase in Sharpe; `non_monotone_capacity_curve_observed` in stats_overview. `execution_evidence.json` cost_config must match the model used.
+
+## A.13 Null Suite (Placebo Testing)
 
 Define synthetic signals: random permutations, lag shifts, sign inversions. If placebo signals survive validation gates, thresholds are tightened. This acts as an empirical analogue to White's Reality Check (2000).
 
-## A.9 Method Interaction Hierarchy
+## A.14 Method Interaction Hierarchy
 
 A signal is promoted only if:
 
@@ -247,7 +267,7 @@ A signal is promoted only if:
 
 All conditions are required.
 
-## A.10 Global Limitations
+## A.15 Global Limitations
 
 This framework does not guarantee:
 

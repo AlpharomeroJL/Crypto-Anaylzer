@@ -15,6 +15,7 @@ logs/
 archive/
 reports/
 # research artifacts / local outputs
+artifacts/
 out_*/
 out_exec_evidence/
 __pycache__/

@@ -12,11 +12,14 @@ _root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_root))
 
 from crypto_analyzer.execution_cost import (
+    CAPACITY_CURVE_EXTRA_COLUMNS,
+    CAPACITY_CURVE_REQUIRED_COLUMNS,
     DEFAULT_SLIPPAGE_BPS_WHEN_MISSING_LIQUIDITY,
     ExecutionCostConfig,
     ExecutionCostModel,
     apply_costs,
     capacity_curve,
+    capacity_curve_is_non_monotone,
     impact_bps_from_participation,
     slippage_bps_from_liquidity,
     spread_bps_from_vol_liquidity,
@@ -109,3 +112,53 @@ def test_capacity_curve_multipliers():
     assert list(df["notional_multiplier"]) == [1.0, 2.0, 5.0]
     # Typically Sharpe decreases as multiplier increases (more cost)
     assert df["sharpe_annual"].iloc[0] >= df["sharpe_annual"].iloc[2] or np.isnan(df["sharpe_annual"].iloc[2])
+
+
+def test_capacity_curve_extra_columns():
+    """Capacity curve: required columns first; extra columns present (additive only, backwards compatible)."""
+    n = 80
+    gross = pd.Series(np.random.randn(n) * 0.01)
+    turnover = pd.Series(np.ones(n) * 0.1)
+    df = capacity_curve(gross, turnover, multipliers=[1.0, 2.0, 5.0], freq="1h")
+    # CSV contract: first two columns in order
+    assert list(df.columns[:2]) == CAPACITY_CURVE_REQUIRED_COLUMNS
+    for col in CAPACITY_CURVE_REQUIRED_COLUMNS + CAPACITY_CURVE_EXTRA_COLUMNS:
+        assert col in df.columns
+
+
+def test_capacity_curve_monotone_sharpe_with_impact():
+    """Synthetic: stable gross + constant turnover + costs increasing with m -> sharpe_annual non-increasing."""
+    np.random.seed(42)
+    n = 500  # enough points so Sharpe is stable (same freq pattern as stats stack)
+    gross = pd.Series(0.001 + np.random.randn(n) * 0.002)  # positive mean, low vol so curve is stable
+    turnover = pd.Series(np.ones(n) * 0.05)  # constant turnover
+    df = capacity_curve(
+        gross,
+        turnover,
+        multipliers=[1.0, 2.0, 4.0, 8.0],
+        freq="1h",
+        use_participation_impact=True,
+        impact_bps_per_participation=5.0,
+        max_participation_pct=10.0,
+    )
+    sharpes = df["sharpe_annual"].values
+    for i in range(1, len(sharpes)):
+        if not np.isnan(sharpes[i]) and not np.isnan(sharpes[i - 1]):
+            assert sharpes[i] <= sharpes[i - 1] + 1e-9, "net Sharpe should be non-increasing with multiplier"
+    assert not capacity_curve_is_non_monotone(df), "synthetic curve with impact should be monotone (non-increasing)"
+
+
+def test_capacity_curve_is_non_monotone():
+    """capacity_curve_is_non_monotone: False when monotone; True when any increase; False for empty/missing."""
+    # Monotone decreasing
+    df_mono = pd.DataFrame({"sharpe_annual": [0.5, 0.4, 0.3]})
+    assert not capacity_curve_is_non_monotone(df_mono)
+    # Non-monotone (one increase)
+    df_up = pd.DataFrame({"sharpe_annual": [0.3, 0.5, 0.2]})
+    assert capacity_curve_is_non_monotone(df_up)
+    # NaN/inf ignored for comparison; only finite increase counts
+    df_nan = pd.DataFrame({"sharpe_annual": [0.5, np.nan, 0.3]})
+    assert not capacity_curve_is_non_monotone(df_nan)
+    # Empty or no column
+    assert not capacity_curve_is_non_monotone(pd.DataFrame())
+    assert not capacity_curve_is_non_monotone(pd.DataFrame({"x": [1]}))
