@@ -83,11 +83,15 @@ Lifecycle: **Ingestion** → **Bars** (materialization) → **Factors** (+ optio
 
 ## Statistical correction stack
 
-- **Deflated Sharpe:** Adjusts for multiple trials; implementation warns on rough (iid/normality) assumptions. `crypto_analyzer/multiple_testing.py`.
-- **PBO proxy:** Based on walk-forward results schema. `crypto_analyzer/multiple_testing.py`.
+- **Deflated Sharpe:** Adjusts for multiple trials; when `--n-trials auto`, effective trials (Neff) from strategy return correlation. `crypto_analyzer/multiple_testing.py`. Artifacts: `n_trials_user`, `n_trials_eff_eigen`, `n_trials_used`, `n_trials_eff_inputs_total`, `n_trials_eff_inputs_used`.
+- **PBO proxy + CSCV PBO:** Walk-forward PBO proxy and canonical CSCV PBO (split sampling when combinations exceed max_splits); skip when T &lt; S×4 or J &lt; 2 with reason in artifacts. `crypto_analyzer/multiple_testing.py`.
 - **Bootstrap:** Block (fixed-length) and stationary options; seed and method recorded in artifacts. `crypto_analyzer/statistics.py`. Block bootstrap does not assume iid when dependence exists.
 - **Reality Check (RC):** Bootstrap-based null for “data snooping”; family_id; reportv2 --reality-check opt-in. `crypto_analyzer/stats/reality_check.py`. RC null cache keyed by family_id + config + dataset + git.
-- **Multiple-testing adjustment:** BH/BY FDR; adjusted p-values stored in experiment registry. `crypto_analyzer/multiple_testing_adjuster.py`. Romano–Wolf: stub behind CRYPTO_ANALYZER_ENABLE_ROMANOWOLF=1 (NotImplementedError).
+- **Romano–Wolf:** MaxT stepdown on RC null matrix; opt-in via CRYPTO_ANALYZER_ENABLE_ROMANOWOLF=1. Outputs `rw_adjusted_p_values` when enabled. `crypto_analyzer/stats/reality_check.py`.
+- **Multiple-testing adjustment:** BH/BY FDR; adjusted p-values stored in experiment registry. `crypto_analyzer/multiple_testing_adjuster.py`.
+- **HAC mean inference:** Newey–West LRV for mean return/IC; t and p when n ≥ 30; else `hac_skipped_reason` and null t/p. `crypto_analyzer/statistics.py`.
+- **Structural break diagnostics:** CUSUM mean-shift (HAC) and sup-Chow single-break scan; `break_diagnostics.json`; skip reasons and `estimated_break_date`. `crypto_analyzer/structural_breaks.py`.
+- **Capacity curve:** Participation-based impact (or power-law fallback); required columns `notional_multiplier`, `sharpe_annual`; additive audit columns; `non_monotone_capacity_curve_observed` flag. `crypto_analyzer/execution_cost.py`. Execution evidence JSON matches cost_config to model used.
 
 ---
 
@@ -102,7 +106,7 @@ Lifecycle: **Ingestion** → **Bars** (materialization) → **Factors** (+ optio
 | **reportv2 --execution-evidence** | Writes capacity curve and execution_evidence.json for promotion gates. |
 | **--no-cache / CRYPTO_ANALYZER_NO_CACHE** | Disables factor, regime, and RC caches. |
 | **CRYPTO_ANALYZER_DETERMINISTIC_TIME** | Makes materialize and reportv2 timestamps deterministic for rerun tests. |
-| **CRYPTO_ANALYZER_ENABLE_ROMANOWOLF** | Enables Romano–Wolf code path; currently raises NotImplementedError (stub). |
+| **CRYPTO_ANALYZER_ENABLE_ROMANOWOLF** | Enables Romano–Wolf stepdown; outputs `rw_adjusted_p_values` in RC summary when enabled. |
 
 ---
 

@@ -187,16 +187,57 @@ $$\hat{\theta}_h^{*(b)} = \mathrm{nanmean}(\{ x_{h, t_j} \}_{j=1}^{n}).$$
 
 See `reality_check`.
 
-### E.3 Romano–Wolf
+### E.3 Romano–Wolf (implemented, opt-in)
 
-Romano–Wolf stepdown is explicitly **stubbed / not implemented** (raises if enabled); see `reality_check`. The spec says Slice 4 implements RC only; see `phase3_reality_check_slice4_ali…`.
+When `CRYPTO_ANALYZER_ENABLE_ROMANOWOLF=1`, the repo runs the Romano–Wolf maxT stepdown on the same joint null matrix used for RC. Adjusted p-values are monotone non-decreasing in stepdown order; see `_romano_wolf_stepdown` in `reality_check`. **Output contract:** `rw_adjusted_p_values` is absent when RW is disabled; when enabled and the full null matrix is available (not loaded from cache without it), it is a Series/dict hypothesis_id → adjusted p-value. When cache is used and the full matrix is not stored, `rw_adjusted_p_values` may be empty. `stats_overview.json` includes `rw_enabled` (bool).
 
 ---
 
-## F. "Methods & Limits" summary (what to claim safely)
+## F. Effective trials (Neff) and DSR default
 
-- **DSR** here is a screening statistic using an i.i.d.-style Sharpe variance approximation with skew/excess kurtosis and a leading-order extreme-value correction $\sqrt{2 \ln N}$ (see `multiple_testing`). It is not a full, formally calibrated multiple-testing p-value.
+When reportv2 is run with `--n-trials auto`, the repo builds the strategy return matrix $R$ (T×J) from `portfolio_pnls`, computes the correlation matrix, and uses `effective_trials_eigen` (eigenvalue participation ratio) as $N_{\mathrm{eff}}$; see `multiple_testing`. That value is passed into DSR as the trial count. Strategies with insufficient valid data are dropped before computing Neff; the number of columns used is recorded.
+
+**Artifact keys:** `n_trials_user` (null if auto), `n_trials_eff_eigen` (null if user-specified), `n_trials_used`, `n_trials_eff_inputs_total`, `n_trials_eff_inputs_used`.
+
+---
+
+## G. HAC mean inference (Newey–West)
+
+The repo implements `hac_mean_inference(x, L, min_obs=30)` in `statistics`: Newey–West long-run variance with Bartlett weights, then $t = \bar{x}\sqrt{n}/\sqrt{\Omega}$, $p = 2(1 - \Phi(|t|))$. When `L` is None, $L = \lfloor 4(n/100)^{2/9} \rfloor$ capped by $n/3$. When $n < 30$, the function returns null t/p and `hac_skipped_reason: "n < 30"`. Non-finite HAC variance also sets a skip reason. This is inference on the **mean** (e.g. mean return or mean IC), not full finite-sample Sharpe.
+
+**Artifact keys:** `hac_lags_used`, `t_hac_mean_return`, `p_hac_mean_return`, `hac_skipped_reason`.
+
+---
+
+## H. CSCV PBO (canonical)
+
+The repo implements `pbo_cscv(R, S, seed, max_splits, metric)` in `multiple_testing`. Data (matrix $R$ T×J) is split into $S$ equal blocks; $S$ must be even. Splits are combinations of $S/2$ blocks for train; the other half for test. If $\binom{S}{S/2} > \mathrm{max\_splits}$, splits are random-sampled with the given seed. For each split: rank strategies by in-sample metric, take the winner’s OOS rank, $\lambda = \mathrm{logit}(\mathrm{rank}/J)$; PBO = fraction of splits with $\lambda < 0$. Midrank used for ties. **Skip:** When $T < S \times 4$, or $J < 2$, or $S$ odd, the function returns a dict with `pbo_cscv_skipped_reason` and no `pbo_cscv` value.
+
+**Artifact keys:** `pbo_cscv`, `pbo_cscv_blocks` (n_blocks), `pbo_cscv_total_splits`, `pbo_cscv_splits_used` (n_splits), `pbo_metric`; when skipped: `pbo_cscv_skipped_reason`.
+
+---
+
+## I. Structural break diagnostics
+
+The repo implements CUSUM mean-shift (HAC-calibrated) and sup-Chow single-break scan in `structural_breaks`. **CUSUM:** `calibration_method`: "HAC"; min obs configurable (e.g. 20). **Sup-Chow:** `calibration_method`: "asymptotic"; min obs 100. Each test returns `stat`, `p_value`, `break_suspected`, `estimated_break_index`, `estimated_break_date` (index converted to date via series index, UTC→naive, format `%Y-%m-%dT%H:%M:%S`). When skipped (e.g. n too small, non-finite variance): `skipped_reason` set, `break_suspected` false, stat/p/date null. `run_break_diagnostics` writes a structure `{"series": { name: [cusum_entry, scan_entry], ... }}` to `break_diagnostics.json`. `stats_overview`: `break_diagnostics_written`, `break_diagnostics_skipped_reason`.
+
+---
+
+## J. Capacity curve (participation-based impact)
+
+The repo implements `capacity_curve()` in `execution_cost`. **Impact:** When `use_participation_impact=True`, participation proxy = $\min(\mathrm{max\_pct},\; m \cdot \overline{\mathrm{turnover}} \times 100)$; impact_bps = linear in participation (via `impact_bps_from_participation`), capped. When False, impact_bps = $\mathrm{impact\_k} \cdot m^{\mathrm{impact\_alpha}}$. Net returns = gross − (fee + slippage + spread + impact) applied to turnover; then Sharpe and optional columns per multiplier. **CSV contract:** First two columns `notional_multiplier`, `sharpe_annual` (required, order fixed); extra columns additive only (`mean_ret_annual`, `vol_annual`, `avg_turnover`, `est_cost_bps`, `impact_bps`, `spread_bps`). Non-monotone behavior is not forced: `capacity_curve_is_non_monotone()` detects strict increase in `sharpe_annual` on consecutive rows; reportv2 sets `non_monotone_capacity_curve_observed` in stats_overview. `execution_evidence.json` cost_config must match the model used (participation params when participation-based).
+
+**Artifact keys:** `capacity_curve_written`, `non_monotone_capacity_curve_observed`; capacity curve CSV; execution_evidence JSON with `cost_config`, `capacity_curve_path`.
+
+---
+
+## K. "Methods & Limits" summary (what to claim safely)
+
+- **DSR** here is a screening statistic using an i.i.d.-style Sharpe variance approximation with skew/excess kurtosis and a leading-order extreme-value correction $\sqrt{2 \ln N}$ (see `multiple_testing`). When `--n-trials auto`, $N$ is set from effective trials (eigenvalue ratio). It is not a full, formally calibrated multiple-testing p-value.
 - **BH/BY** are standard FDR adjustments; BY's harmonic inflation $c_m$ makes it valid under arbitrary dependence and asymptotically costs a $\ln m$ factor (see `multiple_testing_adjuster`).
-- **PBO proxy** is a heuristic "median underperformance rate" across walk-forward splits, not CSCV PBO (see `multiple_testing`).
+- **PBO proxy** is a heuristic "median underperformance rate" across walk-forward splits (see `multiple_testing`). **CSCV PBO** is implemented separately: canonical PBO = P($\lambda < 0$) with split sampling when combinations exceed max_splits; skipped when T &lt; S×4 or J &lt; 2 with reason in artifacts.
 - **Bootstrap** uses fixed or stationary blocks; stationary bootstrap uses geometric block lengths with mean $\ell$ and wrap-around (see `statistics`).
-- **Reality Check** is implemented as a max-statistic bootstrap test with dependence preserved by sharing resampling indices across hypotheses, and p-value $(1 + \bigl\lvert \lbrace T^* \geq T \rbrace \bigr\rvert) / (B + 1)$; see `reality_check`.
+- **Reality Check** is implemented as a max-statistic bootstrap test with dependence preserved by sharing resampling indices across hypotheses, and p-value $(1 + \bigl\lvert \lbrace T^* \geq T \rbrace \bigr\rvert) / (B + 1)$; see `reality_check`. **Romano–Wolf** stepdown is implemented (opt-in env flag); outputs `rw_adjusted_p_values` when enabled.
+- **HAC mean inference** is Newey–West LRV for the mean; skipped when n &lt; 30 with `hac_skipped_reason`; see `statistics`.
+- **Break diagnostics:** CUSUM (HAC) and sup-Chow (asymptotic); skip reasons and `estimated_break_date` in `break_diagnostics.json`.
+- **Capacity curve:** Participation-based impact (or power-law fallback); required CSV columns; `non_monotone_capacity_curve_observed` flag; execution_evidence cost_config must match.

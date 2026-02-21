@@ -16,7 +16,7 @@ A local-first research platform for crypto markets: **ingest** from public CEX/D
 
 - **Single SQLite source of truth** — All data, bars, factor runs, and (when opted in) regime and promotion state live in one database. No cloud, no vendor lock-in.
 - **Versioned migrations** — Core and factor tables via `run_migrations`; Phase 3 (regimes, promotion) via `run_migrations_phase3` only when you enable it. Default behavior is unchanged.
-- **Statistical defenses** — Walk-forward splits, block bootstrap, deflated Sharpe, PBO proxy, multiple-testing correction (BH/BY), and optional Reality Check (max-statistic bootstrap). Romano–Wolf is a stub behind a flag.
+- **Statistical defenses** — Walk-forward splits; block bootstrap; deflated Sharpe with effective-trials (Neff) audit; PBO proxy and CSCV PBO; multiple-testing (BH/BY); optional Reality Check (max-statistic bootstrap) and Romano–Wolf stepdown; HAC mean inference; structural break diagnostics (CUSUM + sup-Chow); capacity curve with participation-based impact and execution evidence. Full stack and artifact keys: [Methods & Limits](docs/methods_and_limits.md) and [Stats stack acceptance](docs/spec/stats_stack_upgrade_acceptance.md).
 - **Governance and reproducibility** — Deterministic run IDs (`dataset_id`, `factor_run_id`, `regime_run_id`, `family_id`), artifact hashes, optional promotion workflow (exploratory → candidate → accepted) with audit log.
 
 ---
@@ -60,7 +60,7 @@ One-command demo (preflight + poll + materialize + report): `.\scripts\run.ps1 d
 
 - **Leakage controls** — Causal factor residuals (no future data); strict train/test separation in walk-forward; research-only boundary check in CI (no order/submit/broker or API keys in code).
 - **Reproducibility** — Stable IDs for dataset, factor run, regime run, and Reality Check family; fixed seeds for bootstrap and Reality Check; optional `CRYPTO_ANALYZER_DETERMINISTIC_TIME` so materialize and reportv2 produce identical outputs on rerun.
-- **Statistical defenses** — Walk-forward splits; block bootstrap (seeded, preserves serial correlation); deflated Sharpe; PBO proxy; multiple-testing correction (BH/BY); optional Reality Check (bootstrap-based null for data snooping, keyed by `family_id`). Romano–Wolf is a feature-flagged stub (NotImplementedError).
+- **Statistical defenses** — Walk-forward splits; block bootstrap (seeded, preserves serial correlation); deflated Sharpe with Neff (effective trials) when `--n-trials auto`; PBO proxy and CSCV PBO; multiple-testing (BH/BY); optional Reality Check (bootstrap-based null, keyed by `family_id`) and Romano–Wolf stepdown when enabled; HAC mean inference (with skip when n &lt; 30); structural break diagnostics (CUSUM + sup-Chow); capacity curve (participation-based impact) and execution evidence. See [Methods & Limits](docs/methods_and_limits.md) and [Stats stack acceptance](docs/spec/stats_stack_upgrade_acceptance.md).
 
 ### Methods & limits (formal)
 
@@ -71,9 +71,12 @@ The statistical controls in this repo are designed to reduce false discoveries a
 - **Walk-forward** train/test splits (OOS metrics only).
 - **Bootstrap under dependence** (fixed block + stationary bootstrap; seeded; preserves serial correlation) for uncertainty estimates and null generation.
 - **Deflated Sharpe (repo implementation):** Sharpe deflation using skew/excess-kurtosis-adjusted Sharpe variance and a leading-order extreme-value correction over an estimated trials count $N$.
-- **PBO proxy (repo implementation):** split-wise median underperformance rate for the "selected" strategy across walk-forward splits (screening heuristic, not full CSCV PBO).
+- **PBO:** Walk-forward PBO proxy (median underperformance rate) plus optional CSCV PBO (combinatorially symmetric cross-validation; skipped when T &lt; S×4 or J &lt; 2, with reason in artifacts).
 - **Multiple testing control:** BH/BY adjusted p-values for signal discovery.
-- **Reality Check (optional):** max-statistic bootstrap test for data-snooping control keyed by `family_id`. *(Romano–Wolf is feature-flagged but not implemented.)*
+- **Reality Check (optional):** max-statistic bootstrap test for data-snooping control keyed by `family_id`. **Romano–Wolf stepdown** (optional, env flag): maxT stepdown adjusted p-values; `rw_adjusted_p_values` present in RC summary when enabled.
+- **HAC mean inference:** Newey–West LRV for mean return/IC; t and p reported when n ≥ 30; otherwise `hac_skipped_reason` and null t/p.
+- **Structural break diagnostics:** CUSUM mean-shift (HAC-calibrated) and sup-Chow single-break scan; `break_diagnostics.json`; skip reasons and `estimated_break_date` (UTC→naive ISO).
+- **Capacity curve:** Participation-based impact (or power-law fallback), required columns `notional_multiplier`, `sharpe_annual`; additive audit columns; `non_monotone_capacity_curve_observed` flag when Sharpe increases with size.
 
 **Assumptions & known limits (read before citing results):**
 
@@ -83,9 +86,10 @@ The statistical controls in this repo are designed to reduce false discoveries a
 
 **Formal definitions + derivations:**
 
-- [Methods & Limits](docs/methods_and_limits.md) — philosophy, assumptions, implementation boundaries.
+- [Methods & Limits](docs/methods_and_limits.md) — philosophy, assumptions, implementation boundaries, and artifact keys (Neff, HAC, RC/RW, CSCV, breaks, capacity).
 - [Statistical Methods Appendix](docs/appendix/statistical_methods.md) — formal definitions and proof sketches (Appendices A & B).
-- [Methods & Limits — implementation-aligned](docs/appendix/methods_limits_implementation.md) — exact repo formulae for DSR, BH/BY, PBO proxy, bootstrap, Reality Check.
+- [Methods & Limits — implementation-aligned](docs/appendix/methods_limits_implementation.md) — exact repo formulae for DSR, BH/BY, PBO proxy and CSCV PBO, bootstrap, Reality Check, Romano–Wolf, HAC, break diagnostics, capacity curve.
+- [Stats stack upgrade acceptance](docs/spec/stats_stack_upgrade_acceptance.md) — definition of done per upgrade (#1–#6), artifact keys, and golden run command.
 
 - **Single source of truth** — One SQLite DB; versioned, idempotent migrations (`run_migrations` for core + v2; `run_migrations_phase3` opt-in only). Ingestion uses the ingest API (writes, migrations, provider chains); dashboard uses read-only `read_api`. No test performs live HTTP; all research tests use mocked HTTP and are deterministic where applicable.
 
@@ -381,9 +385,10 @@ python scripts/normalize_markdown_math.py --check
 
 | Document | Contents |
 |----------|----------|
-| [Methods & limits](docs/methods_and_limits.md) | Statistical methods, assumptions, implementation boundaries, and limitations (DSR, PBO, BH/BY, bootstrap, null suite). See: [Statistical Methods Appendix](docs/appendix/statistical_methods.md). |
-| [Statistical Methods Appendix](docs/appendix/statistical_methods.md) | Formal definitions, assumptions, derivations/proof sketches for DSR, PBO, BH/BY, bootstrap, Reality Check (Appendices A & B) |
-| [Methods & Limits — implementation-aligned](docs/appendix/methods_limits_implementation.md) | Exact repo formulae: DSR (repo), PBO proxy, BH/BY, stationary/fixed block bootstrap, Reality Check |
+| [Methods & limits](docs/methods_and_limits.md) | Statistical methods, assumptions, implementation boundaries, artifact keys, and limitations (DSR, PBO, BH/BY, RC, RW, HAC, breaks, capacity). See: [Statistical Methods Appendix](docs/appendix/statistical_methods.md). |
+| [Stats stack acceptance](docs/spec/stats_stack_upgrade_acceptance.md) | Definition of done for upgrades #1–#6; exact artifact keys; minimum data thresholds; golden run command. |
+| [Statistical Methods Appendix](docs/appendix/statistical_methods.md) | Formal definitions, assumptions, derivations/proof sketches for DSR, PBO, BH/BY, bootstrap, Reality Check, HAC (Appendices A & B) |
+| [Methods & Limits — implementation-aligned](docs/appendix/methods_limits_implementation.md) | Exact repo formulae: DSR (repo), Neff, PBO proxy + CSCV PBO, BH/BY, bootstrap, Reality Check, Romano–Wolf, HAC, break diagnostics, capacity curve |
 | [Research validation workflow](docs/research_validation_workflow.md) | Exploratory vs full-scale runs, run_id, snapshot semantics, validation readiness criteria |
 | [Spec index (canonical)](docs/spec/README.md) | Master spec, system overview, implementation ledger, component specs |
 | [System overview](docs/spec/system_overview.md) | Pipeline lifecycle, determinism, statistical stack, feature flags, promotion |
@@ -411,7 +416,7 @@ python scripts/normalize_markdown_math.py --check
 ## Limitations / future work
 
 - **Data scope:** Ingestion is public CEX/DEX only; no authenticated feeds or private data. Universe discovery is config- and provider-dependent (e.g. Solana DEX). No real-time execution or order routing.
-- **Statistical:** Romano–Wolf is a stub (feature-flagged). Deflated Sharpe and PBO are repo-specific approximations; Reality Check and dependence-respecting bootstrap are implemented and used. Full CSCV PBO and stepdown multiple-comparison procedures remain extension targets.
+- **Statistical:** Deflated Sharpe and PBO use repo-specific formulae; Reality Check and Romano–Wolf (optional env flag) are implemented. HAC mean inference, CSCV PBO, structural break diagnostics, and participation-based capacity curve are implemented; see [Methods & Limits](docs/methods_and_limits.md) and [Stats stack acceptance](docs/spec/stats_stack_upgrade_acceptance.md).
 - **Scale:** SQLite is the single store; suitable for research and moderate history. Large-scale or multi-process write workloads would need a documented migration path (e.g. Postgres for experiment registry already optional).
 - **Governance:** Promotion workflow and sweep registry are opt-in and evolving; thresholds and gating policy may be refined with use. Execution-evidence and capacity gates are in place; further realism checks are possible.
 
