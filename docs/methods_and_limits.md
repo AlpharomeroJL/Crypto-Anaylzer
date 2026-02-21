@@ -249,14 +249,37 @@ Multiple testing requires estimating the number of "independent" tests. Signals 
 
 ## 13. Artifacts / Audit (Stats Stack Keys)
 
-Single source of truth for JSON/CSV keys introduced by upgrades #1–#6:
+Single source of truth for JSON/CSV keys. All report paths and specs should reference this section.
 
-- **stats_overview.json:** `n_trials_user`, `n_trials_eff_eigen`, `n_trials_used`, `n_trials_eff_inputs_total`, `n_trials_eff_inputs_used`; `hac_lags_used`, `hac_skipped_reason`, `t_hac_mean_return`, `p_hac_mean_return`; `pbo_cscv`, `pbo_cscv_blocks`, `pbo_cscv_total_splits`, `pbo_cscv_splits_used`, `pbo_metric`, `pbo_cscv_skipped_reason`; `rw_enabled`; `break_diagnostics_written`, `break_diagnostics_skipped_reason`; `capacity_curve_written`, `non_monotone_capacity_curve_observed`.
-- **break_diagnostics.json:** `series` → { series_name → [ { test_name, stat, p_value, break_suspected, estimated_break_index, estimated_break_date, calibration_method, skipped_reason? } ] }.
-- **reality_check_summary_*.json:** `rw_adjusted_p_values` (when RW enabled), plus existing RC keys.
-- **execution_evidence_*.json:** `cost_config` (must match model used in capacity_curve), `capacity_curve_path`.
+### stats_overview.json
 
-Skip behavior: when a component is skipped, the corresponding reason key is set (e.g. `hac_skipped_reason`, `pbo_cscv_skipped_reason`); statistic keys are null or omitted. See [Stats stack acceptance](spec/stats_stack_upgrade_acceptance.md).
+- **Neff/DSR:** `n_trials_user` (null if auto), `n_trials_eff_eigen` (null if user-specified), `n_trials_used`, `n_trials_eff_inputs_total`, `n_trials_eff_inputs_used`.
+- **HAC:** `hac_lags_used`, `hac_skipped_reason` (when skipped), `t_hac_mean_return`, `p_hac_mean_return` (null when skipped).
+- **PBO/CSCV:** `pbo_cscv` (when present), `pbo_cscv_total_splits`, `pbo_cscv_splits_used`, `pbo_metric`; when skipped: `pbo_cscv_skipped_reason`; CSCV fields may be absent.
+- **RC/RW:** `rw_enabled` (bool). When RW disabled, `rw_adjusted_p_values` is absent in RC summary.
+- **Break diagnostics:** `break_diagnostics_written`, `break_diagnostics_skipped_reason` (when no series written).
+- **Capacity curve:** `capacity_curve_written`, `non_monotone_capacity_curve_observed`.
+
+### break_diagnostics.json
+
+- Top-level key `series`. Per-series entries: `series_name`, `test_name`, `stat`, `p_value`, `break_suspected`, `estimated_break_index`, `estimated_break_date`, `calibration_method`. When a test is skipped: `skipped_reason` present; `stat`/`p_value` null; `break_suspected` explicitly false.
+
+### reality_check_summary_*.json
+
+- `rw_adjusted_p_values`: absent when RW disabled; present/non-empty when enabled and computed (hypothesis_id → adjusted p-value). When cache is used and full null matrix not stored, may be empty.
+- Existing RC keys: `rc_p_value`, `observed_max`, `n_sim`, `hypothesis_ids`, `rc_metric`, `rc_method`, `rc_avg_block_length`, etc.
+
+### execution_evidence_*.json
+
+- `cost_config` (must match model used in capacity_curve), `capacity_curve_path`.
+
+### Skip semantics (consistent across components)
+
+- **Break tests:** `skipped_reason` present ⇒ stat/p_value null, `break_suspected` false.
+- **HAC:** `hac_skipped_reason` set ⇒ t/p null.
+- **CSCV:** `pbo_cscv_skipped_reason` set ⇒ CSCV fields may be absent.
+
+See [Stats stack acceptance](spec/stats_stack_upgrade_acceptance.md).
 
 ## 14. Null Suite (Placebo Tests)
 
@@ -321,3 +344,12 @@ All outputs are conditional on: data quality, model assumptions, market stabilit
 - Benjamini & Yekutieli (2001), FDR under dependence (Deep Research Review of Alpharo…).
 - Politis & Romano (1994), Stationary bootstrap (Deep Research Review of Alpharo…).
 - White (2000), Reality Check (Deep Research Review of Alpharo…).
+
+## Docs QA checklist (verified in docs-only polish)
+
+- [x] No claim that Romano–Wolf is stubbed or NotImplementedError; RW documented as implemented, opt-in.
+- [x] Capacity curve described as participation-based impact with power-law fallback (no "power-law only").
+- [x] PBO proxy and CSCV PBO both documented; when CSCV runs/skips and artifact keys aligned with implementation.
+- [x] Artifacts §13 is the single canonical list for stats_overview, break_diagnostics, reality_check_summary, execution_evidence keys and skip semantics.
+- [x] Math in this doc is GitHub-safe (no raw \$\$ or \$$\$$ in prose; inline/display conventions consistent).
+- [x] Cross-links to implementation appendix and stats_stack_upgrade_acceptance.md preserved.

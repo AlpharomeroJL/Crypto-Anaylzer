@@ -148,7 +148,7 @@ graph TD
 ### docs/spec/components/interfaces.md
 
 - Add **Required invariants** (or keep **Leakage hardening requirement** where it exists) for Residualizer, RegimeDetector, ExecutionCostModel; ensure Bootstrapper has **Determinism guarantees** (seed).
-- Add one line under MultipleTestingAdjuster: “Romano–Wolf: stub behind CRYPTO_ANALYZER_ENABLE_ROMANOWOLF=1 (NotImplementedError).” (align with drift I7.)
+- Add one line under MultipleTestingAdjuster: “Romano–Wolf: implemented, opt-in via CRYPTO_ANALYZER_ENABLE_ROMANOWOLF=1; outputs rw_adjusted_p_values when enabled (historical: this plan predates RW implementation; see methods_and_limits.md §9).” (align with drift I7.)
 - Add optional **Example** one-liner per component (pseudocode or call example).
 
 ### docs/spec/components/testing_acceptance.md
@@ -189,7 +189,7 @@ graph TD
 ### docs/spec/implementation_ledger.md
 
 - Update “Implementation status” for rows that are Done in code but still “Not started” (e.g. ExecutionCostModel, Bootstrapper, MultipleTestingAdjuster, integration tests, versioning, performance, risk audit) to “Done” with a short note and test reference where applicable (align with drift S1–S15).
-- Add row or note for Romano–Wolf stub: “Romano–Wolf stub (CRYPTO_ANALYZER_ENABLE_ROMANOWOLF=1): NotImplementedError; interfaces.md.” (align with drift I7.)
+- Romano–Wolf is now implemented (opt-in); ledger and interfaces updated. Historical note (drift I7): see methods_and_limits.md §9.
 - Ensure “Canonical spec” link is relative: `[master_architecture_spec.md](master_architecture_spec.md)` and component links `[components/foo.md](components/foo.md)`.
 
 ### docs/audit/architecture_integrity_audit.md

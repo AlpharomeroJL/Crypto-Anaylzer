@@ -24,8 +24,8 @@
 
 ## RW algorithm (Romano–Wolf stepdown)
 
-- **Slice 4:** Implement RC only; RW stepdown is stubbed with clear TODO and gated by CRYPTO_ANALYZER_ENABLE_ROMANOWOLF=1 (raises NotImplementedError or returns empty until implemented).
-- **Intended (deferred):** Order hypotheses by observed stat descending; stepdown adjusted p-value for hypothesis j = max over bootstrap of (indicator that max over remaining set >= observed_j); deterministic.
+- **Implemented (opt-in):** When CRYPTO_ANALYZER_ENABLE_ROMANOWOLF=1, the repo runs Romano–Wolf maxT stepdown on the same joint null matrix as RC. Adjusted p-values are monotone non-decreasing in stepdown order. Output: `rw_adjusted_p_values` absent when RW disabled; when enabled and computed, present (hypothesis_id → adjusted p-value). See [Methods & Limits](../methods_and_limits.md) and [implementation appendix](../appendix/methods_limits_implementation.md).
+- **Procedure:** Order hypotheses by observed stat descending; stepdown adjusted p-value for hypothesis j = max over bootstrap of (indicator that max over remaining set >= observed_j); deterministic.
 
 ## Null generation
 
@@ -36,7 +36,7 @@
 ## Persistence
 
 - **Registry metric keys:** `family_id`, `rc_p_value`, `rc_metric`, `rc_horizon`, `rc_n_sim`, `rc_seed`, `rc_method`, `rc_avg_block_length`, `rc_observed_max`. Optional later: `rw_min_adjusted_pvalue`, etc.
-- **Artifact filenames:** `reality_check_summary_{family_id}.json`, `reality_check_null_max_{family_id}.csv` (one column null_max per row = bootstrap draw). Optional: `romanowolf_adjusted_pvalues_{family_id}.csv` (stub).
+- **Artifact filenames:** `reality_check_summary_{family_id}.json`, `reality_check_null_max_{family_id}.csv` (one column null_max per row = bootstrap draw). When RW enabled, RC summary JSON includes `rw_adjusted_p_values`.
 - **Summary JSON schema:** family_id, rc_p_value, observed_max, metric, horizon, n_sim, seed, method, avg_block_length, hypothesis_ids (list), observed_stats (dict or list).
 
 ## Test plan and acceptance

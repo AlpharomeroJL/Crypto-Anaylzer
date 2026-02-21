@@ -147,7 +147,7 @@ Spec reference:
 - [ ] Cache manifest example (key + sha256)
 
 ## Deferred / out of scope (must remain out)
-- [ ] Full Romano–Wolf stepdown implementation (still stubbed)
+- [x] ~~Full Romano–Wolf stepdown implementation~~ — **Done:** RW implemented (opt-in via CRYPTO_ANALYZER_ENABLE_ROMANOWOLF=1). See methods_and_limits.md §9.
 - [ ] Full sweep registry UX redesign
 - [ ] Major performance refactors (vectorization of rolling OLS, etc.)
 - [ ] Tick-level execution modeling

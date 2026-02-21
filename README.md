@@ -66,6 +66,8 @@ One-command demo (preflight + poll + materialize + report): `.\scripts\run.ps1 d
 
 The statistical controls in this repo are designed to reduce false discoveries and make overfitting visible—*not* to guarantee profitability.
 
+**Statistical stack (canonical list):** Neff/DSR (effective trials + deflated Sharpe), BH/BY (FDR control), RC + Romano–Wolf (optional, data-snooping correction), HAC mean inference, PBO proxy + CSCV PBO, structural break diagnostics (CUSUM + sup-Chow), capacity curve (participation-based impact) and execution evidence. Full narrative and artifact keys: [Methods & Limits](docs/methods_and_limits.md), [implementation appendix](docs/appendix/methods_limits_implementation.md), [Stats stack acceptance](docs/spec/stats_stack_upgrade_acceptance.md).
+
 **Implemented controls (what we actually compute):**
 
 - **Walk-forward** train/test splits (OOS metrics only).

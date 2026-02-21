@@ -27,7 +27,7 @@ Spec mismatches, “spec incomplete,” and “implementation stronger than spec
 | I4 | **Caches** — factor_cache, regime_cache, rc_cache (stats/) are implemented; performance_scale describes caching plan but not these concrete modules. | Low | None. | [DOC ONLY] Add cache module names and keys to performance_scale.md. |
 | I5 | **Promotion workflow** — store_sqlite, service, gating, execution_evidence, CLI promotion list/create/evaluate, Streamlit Promotion page exist; phased_execution lists them but master spec “Reporting” does not detail promotion. | Low | None. | [DOC ONLY] Add “Promotion (candidate → accepted)” to Reporting section and dependency graph. |
 | I6 | **Null suite** — null_suite runner and CLI exist; testing_acceptance describes null baselines but does not reference crypto_analyzer/null_suite.py and scripts/run.ps1 null_suite. | Low | None. | [DOC ONLY] Reference null_suite in testing_acceptance.md. |
-| I7 | **Romano–Wolf** — Stub behind CRYPTO_ANALYZER_ENABLE_ROMANOWOLF=1 (NotImplementedError); interfaces and research_repo_mapping mention Reality Check but not RW stub. | Low | None. | [DOC ONLY] Add RW stub to implementation_ledger and interfaces. |
+| I7 | **Romano–Wolf** — Implemented (opt-in via CRYPTO_ANALYZER_ENABLE_ROMANOWOLF=1); outputs rw_adjusted_p_values when enabled. interfaces and implementation_ledger updated. | Low | None. | [DONE] implementation_ledger and interfaces.md now state RW implemented, opt-in; see methods_and_limits.md §9. |
 | I8 | **Determinism env** — CRYPTO_ANALYZER_DETERMINISTIC_TIME used in reportv2 deterministic rerun and factor materialize; not documented in versioning_release or governance. | Low | Reproducibility may be missed by users. | [DOC ONLY] Document in versioning_release or README. |
 
 ---

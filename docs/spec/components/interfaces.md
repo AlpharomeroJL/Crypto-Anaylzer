@@ -141,7 +141,7 @@ interface MultipleTestingAdjuster:
 - Same p_values and (method, q) → same adjusted p-values and discovery set. No RNG.
 
 **Note**
-- Romano–Wolf: stub behind CRYPTO_ANALYZER_ENABLE_ROMANOWOLF=1 (NotImplementedError). See implementation_ledger.
+- Romano–Wolf: implemented, opt-in via CRYPTO_ANALYZER_ENABLE_ROMANOWOLF=1; outputs `rw_adjusted_p_values` in RC summary when enabled. See [Methods & Limits](../../methods_and_limits.md) and implementation_ledger.
 
 **Example**
 - adjust(p_values, method="bh", q=0.05) → adjusted p-values and discoveries boolean flags.
