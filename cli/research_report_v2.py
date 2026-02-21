@@ -478,13 +478,12 @@ def main() -> int:
     if is_regimes_enabled() and regime_run_id_early:
         regime_rows = []
         try:
-            conn = sqlite3.connect(db)
-            cur = conn.execute(
-                "SELECT ts_utc, regime_label FROM regime_states WHERE regime_run_id = ? ORDER BY ts_utc",
-                (regime_run_id_early,),
-            )
-            regime_rows = cur.fetchall()
-            conn.close()
+            with sqlite3.connect(db) as conn:
+                cur = conn.execute(
+                    "SELECT ts_utc, regime_label FROM regime_states WHERE regime_run_id = ? ORDER BY ts_utc",
+                    (regime_run_id_early,),
+                )
+                regime_rows = cur.fetchall()
         except sqlite3.OperationalError:
             pass
         if regime_rows:
@@ -1347,8 +1346,7 @@ def main() -> int:
                             "regime_run_id": regime_run_id_early or None,
                         }
                     )
-                conn = sqlite3.connect(experiment_db_path)
-                try:
+                with sqlite3.connect(experiment_db_path) as conn:
                     if persist_sweep_family(
                         conn,
                         family_id=_rc_family_id,
@@ -1361,8 +1359,6 @@ def main() -> int:
                         hypotheses=hypotheses,
                     ):
                         print(f"Sweep registry: persisted family {_rc_family_id} with {len(hypotheses)} hypotheses")
-                finally:
-                    conn.close()
             except Exception as sweep_err:
                 print("Sweep registry skip:", sweep_err)
     except Exception as e:
