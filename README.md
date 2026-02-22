@@ -85,6 +85,11 @@ One-command demo (preflight + poll + materialize + report): `.\scripts\run.ps1 d
 
 **Why deterministic IDs?** So every run is traceable and repeatable: same inputs and config produce the same `dataset_id_v2`, `run_key`, and artifact hashes. That lets you compare runs, invalidate caches when data changes, and prove reproducibility in audits. **Why opt-in migrations?** Phase 3 (regimes, promotion, lineage) adds schema and behavior that not every user needs. **Why governance modeling?** Research that moves toward production needs a path from “exploratory” to “accepted” with clear gates (eligibility reports, fold attestation, RC/RW when enabled) and an append-only audit log.
 
+### Auditability and proof bundle
+
+- **[Golden acceptance run](docs/audit/golden_acceptance_run.md)** — Copy-paste PowerShell steps for a minimal and full proof: deterministic run, promotion to accepted, trigger check, and DB-only audit trace. One-command-ish proof of accepted promotion and provenance.
+- **[Methods & implementation alignment](docs/audit/methods_implementation_alignment.md)** — Mapping from method (dataset_id_v2, RC/RW, seed_root, schema versions, etc.) to code and artifact keys.
+
 ---
 
 ## Research rigor & overfitting defenses
