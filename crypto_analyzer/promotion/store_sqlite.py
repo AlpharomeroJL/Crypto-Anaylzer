@@ -248,7 +248,11 @@ def promote_to_candidate(
         ("candidate", eligibility_report_id, candidate_id),
     )
     conn.commit()
-    payload: Dict[str, Any] = {"new_status": "candidate", "eligibility_report_id": eligibility_report_id, "ts_utc": now_utc_iso()}
+    payload: Dict[str, Any] = {
+        "new_status": "candidate",
+        "eligibility_report_id": eligibility_report_id,
+        "ts_utc": now_utc_iso(),
+    }
     if reason:
         payload["reason"] = reason
     record_event(conn, candidate_id, "status_change", payload)
@@ -267,7 +271,11 @@ def promote_to_accepted(
         ("accepted", eligibility_report_id, candidate_id),
     )
     conn.commit()
-    payload: Dict[str, Any] = {"new_status": "accepted", "eligibility_report_id": eligibility_report_id, "ts_utc": now_utc_iso()}
+    payload: Dict[str, Any] = {
+        "new_status": "accepted",
+        "eligibility_report_id": eligibility_report_id,
+        "ts_utc": now_utc_iso(),
+    }
     if reason:
         payload["reason"] = reason
     record_event(conn, candidate_id, "status_change", payload)

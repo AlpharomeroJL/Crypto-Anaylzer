@@ -262,6 +262,140 @@ def _phase3_migration_010_eligibility_reports_immutability(conn: sqlite3.Connect
     conn.commit()
 
 
+def _phase3_migration_011_governance_events(conn: sqlite3.Connection) -> None:
+    """Phase 3 A3: Append-only governance event log (evaluate, promote, reject)."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS governance_events (
+            event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            action TEXT NOT NULL,
+            candidate_id TEXT,
+            eligibility_report_id TEXT,
+            run_key TEXT,
+            dataset_id_v2 TEXT,
+            artifact_refs_json TEXT
+        );
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_governance_events_candidate ON governance_events(candidate_id);")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_governance_events_timestamp ON governance_events(timestamp);")
+    conn.commit()
+    conn.execute("DROP TRIGGER IF EXISTS governance_events_prevent_update")
+    conn.execute(
+        """
+        CREATE TRIGGER governance_events_prevent_update
+        BEFORE UPDATE ON governance_events
+        FOR EACH ROW
+        BEGIN
+            SELECT RAISE(ABORT, 'governance_events is append-only; updates not allowed');
+        END
+        """
+    )
+    conn.execute("DROP TRIGGER IF EXISTS governance_events_prevent_delete")
+    conn.execute(
+        """
+        CREATE TRIGGER governance_events_prevent_delete
+        BEFORE DELETE ON governance_events
+        FOR EACH ROW
+        BEGIN
+            SELECT RAISE(ABORT, 'governance_events is append-only; deletes not allowed');
+        END
+        """
+    )
+    conn.commit()
+
+
+def _phase3_migration_012_artifact_lineage(conn: sqlite3.Connection) -> None:
+    """Phase 3 A4: Immutable artifact lineage (which inputs/configs/engine produced this artifact hash)."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS artifact_lineage (
+            artifact_id TEXT PRIMARY KEY,
+            run_instance_id TEXT,
+            run_key TEXT,
+            dataset_id_v2 TEXT,
+            artifact_type TEXT NOT NULL,
+            relative_path TEXT,
+            sha256 TEXT NOT NULL,
+            created_utc TEXT NOT NULL,
+            engine_version TEXT,
+            config_version TEXT,
+            schema_versions_json TEXT,
+            plugin_manifest_json TEXT
+        );
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_artifact_lineage_run_key ON artifact_lineage(run_key);")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_artifact_lineage_dataset ON artifact_lineage(dataset_id_v2);")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_artifact_lineage_created ON artifact_lineage(created_utc);")
+    conn.commit()
+    conn.execute("DROP TRIGGER IF EXISTS artifact_lineage_prevent_update_delete")
+    conn.execute(
+        """
+        CREATE TRIGGER artifact_lineage_prevent_update
+        BEFORE UPDATE ON artifact_lineage
+        FOR EACH ROW
+        BEGIN
+            SELECT RAISE(ABORT, 'artifact_lineage is append-only; updates not allowed');
+        END
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER artifact_lineage_prevent_delete
+        BEFORE DELETE ON artifact_lineage
+        FOR EACH ROW
+        BEGIN
+            SELECT RAISE(ABORT, 'artifact_lineage is append-only; deletes not allowed');
+        END
+        """
+    )
+    conn.commit()
+
+
+def _phase3_migration_013_artifact_edges(conn: sqlite3.Connection) -> None:
+    """Phase 3 A4: Edges between artifacts (derived_from, uses_null, uses_folds, uses_transforms, uses_config)."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS artifact_edges (
+            child_artifact_id TEXT NOT NULL,
+            parent_artifact_id TEXT NOT NULL,
+            relation TEXT NOT NULL,
+            PRIMARY KEY (child_artifact_id, parent_artifact_id, relation),
+            FOREIGN KEY (child_artifact_id) REFERENCES artifact_lineage(artifact_id),
+            FOREIGN KEY (parent_artifact_id) REFERENCES artifact_lineage(artifact_id)
+        );
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_artifact_edges_child ON artifact_edges(child_artifact_id);")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_artifact_edges_parent ON artifact_edges(parent_artifact_id);")
+    conn.commit()
+    conn.execute("DROP TRIGGER IF EXISTS artifact_edges_prevent_update_delete")
+    conn.execute(
+        """
+        CREATE TRIGGER artifact_edges_prevent_update
+        BEFORE UPDATE ON artifact_edges
+        FOR EACH ROW
+        BEGIN
+            SELECT RAISE(ABORT, 'artifact_edges is append-only; updates not allowed');
+        END
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER artifact_edges_prevent_delete
+        BEFORE DELETE ON artifact_edges
+        FOR EACH ROW
+        BEGIN
+            SELECT RAISE(ABORT, 'artifact_edges is append-only; deletes not allowed');
+        END
+        """
+    )
+    conn.commit()
+
+
 MIGRATIONS_PHASE3: List[Migration] = [
     (1, "2026_02_schema_migrations_phase3", _phase3_migration_001_schema_migrations_phase3),
     (2, "2026_02_regime_runs", _phase3_migration_002_regime_runs),
@@ -273,6 +407,9 @@ MIGRATIONS_PHASE3: List[Migration] = [
     (8, "2026_02_eligibility_reports", _phase3_migration_008_eligibility_reports),
     (9, "2026_02_promotion_eligibility_trigger", _phase3_migration_009_promotion_eligibility_trigger),
     (10, "2026_02_eligibility_reports_immutability", _phase3_migration_010_eligibility_reports_immutability),
+    (11, "2026_02_governance_events", _phase3_migration_011_governance_events),
+    (12, "2026_02_artifact_lineage", _phase3_migration_012_artifact_lineage),
+    (13, "2026_02_artifact_edges", _phase3_migration_013_artifact_edges),
 ]
 
 

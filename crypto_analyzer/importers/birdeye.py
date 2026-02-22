@@ -171,7 +171,7 @@ class BirdeyeClient:
                 logger.warning("Birdeye request error (attempt %s): %s", attempt + 1, e)
                 if attempt == self.max_retries:
                     raise
-                time.sleep(self.backoff_factor ** attempt)
+                time.sleep(self.backoff_factor**attempt)
                 continue
             if resp.status_code == 429:
                 retry_after = int(resp.headers.get("Retry-After", 60))
@@ -182,7 +182,7 @@ class BirdeyeClient:
                 logger.warning("Birdeye %s (attempt %s)", resp.status_code, attempt + 1)
                 if attempt == self.max_retries:
                     resp.raise_for_status()
-                time.sleep(self.backoff_factor ** attempt)
+                time.sleep(self.backoff_factor**attempt)
                 continue
             resp.raise_for_status()
             return resp.json()

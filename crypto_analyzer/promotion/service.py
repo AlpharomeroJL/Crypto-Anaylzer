@@ -270,7 +270,9 @@ def evaluate_and_record(
                 warnings=report.warnings,
             )
         computed_at_utc = now_utc_iso()
-        eligibility_report_id = f"elig_{hashlib.sha256((candidate_id + target_status + computed_at_utc).encode()).hexdigest()[:16]}"
+        eligibility_report_id = (
+            f"elig_{hashlib.sha256((candidate_id + target_status + computed_at_utc).encode()).hexdigest()[:16]}"
+        )
         insert_eligibility_report(
             conn,
             eligibility_report_id,
@@ -287,13 +289,25 @@ def evaluate_and_record(
             config_version=report.config_version or None,
         )
         if target_status == "candidate":
-            promote_to_candidate(conn, candidate_id, eligibility_report_id, reason="; ".join(decision.reasons) if decision.reasons else None)
+            promote_to_candidate(
+                conn,
+                candidate_id,
+                eligibility_report_id,
+                reason="; ".join(decision.reasons) if decision.reasons else None,
+            )
         else:
-            promote_to_accepted(conn, candidate_id, eligibility_report_id, reason="; ".join(decision.reasons) if decision.reasons else None)
+            promote_to_accepted(
+                conn,
+                candidate_id,
+                eligibility_report_id,
+                reason="; ".join(decision.reasons) if decision.reasons else None,
+            )
     else:
         # Only exploratory/rejected can be written via update_status; do not write candidate/accepted without eligibility
         status_to_write = decision.status if decision.status in ("exploratory", "rejected") else "exploratory"
-        update_status(conn, candidate_id, status_to_write, reason="; ".join(decision.reasons) if decision.reasons else None)
+        update_status(
+            conn, candidate_id, status_to_write, reason="; ".join(decision.reasons) if decision.reasons else None
+        )
 
     payload: Dict[str, Any] = {
         "status": decision.status,

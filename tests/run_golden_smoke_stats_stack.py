@@ -41,17 +41,26 @@ def _run_report(out_dir: Path, rw_enabled: bool) -> None:
     (out_dir / "health").mkdir(exist_ok=True)
     argv = [
         "research_report_v2",
-        "--freq", "1h",
-        "--signals", "clean_momentum,value_vs_beta",
-        "--portfolio", "simple",
-        "--out-dir", str(out_dir),
-        "--db", ":memory:",
+        "--freq",
+        "1h",
+        "--signals",
+        "clean_momentum,value_vs_beta",
+        "--portfolio",
+        "simple",
+        "--out-dir",
+        str(out_dir),
+        "--db",
+        ":memory:",
         "--reality-check",
         "--execution-evidence",
-        "--rc-n-sim", "25",
-        "--rc-seed", "42",
-        "--top-k", "2",
-        "--bottom-k", "2",
+        "--rc-n-sim",
+        "25",
+        "--rc-seed",
+        "42",
+        "--top-k",
+        "2",
+        "--bottom-k",
+        "2",
     ]
     env = {"CRYPTO_ANALYZER_ENABLE_ROMANOWOLF": "1" if rw_enabled else "0"}
     with patch.dict(os.environ, env, clear=False):
@@ -63,6 +72,7 @@ def _run_report(out_dir: Path, rw_enabled: bool) -> None:
         ):
             sys.argv = argv
             from cli import research_report_v2
+
             research_report_v2.main()
 
 
@@ -91,7 +101,9 @@ def main():
             s_off = json.loads(rc_off[0].read_text(encoding="utf-8"))
             rw_adj_off = s_off.get("rw_adjusted_p_values")
             results["rw_off"]["rw_present"] = "rw_adjusted_p_values" in s_off
-            results["rw_off"]["rw_empty_or_absent"] = rw_adj_off is None or (isinstance(rw_adj_off, dict) and len(rw_adj_off) == 0)
+            results["rw_off"]["rw_empty_or_absent"] = rw_adj_off is None or (
+                isinstance(rw_adj_off, dict) and len(rw_adj_off) == 0
+            )
         else:
             results["rw_off"]["no_rc_file"] = True
 
@@ -120,7 +132,9 @@ def main():
             total_splits = stats.get("pbo_cscv_total_splits")
             splits_used = stats.get("pbo_cscv_splits_used")
             if total_splits is not None and splits_used is not None:
-                results["checks"].append(f"pbo_cscv splits: {total_splits} >= {splits_used} -> {total_splits >= splits_used}")
+                results["checks"].append(
+                    f"pbo_cscv splits: {total_splits} >= {splits_used} -> {total_splits >= splits_used}"
+                )
             else:
                 results["checks"].append("pbo_cscv splits: (absent when CSCV skipped, e.g. T < S*4)")
             if stats.get("hac_skipped_reason"):
@@ -151,6 +165,7 @@ def main():
             print(json.dumps(redacted, indent=2, sort_keys=True))
     finally:
         import shutil
+
         shutil.rmtree(tmp, ignore_errors=True)
 
 

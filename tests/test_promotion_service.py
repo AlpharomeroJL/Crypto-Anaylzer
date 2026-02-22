@@ -9,6 +9,10 @@ from pathlib import Path
 
 import pytest
 
+from crypto_analyzer.contracts.schema_versions import (
+    RC_SUMMARY_SCHEMA_VERSION,
+    VALIDATION_BUNDLE_SCHEMA_VERSION,
+)
 from crypto_analyzer.db.migrations import run_migrations
 from crypto_analyzer.db.migrations_phase3 import run_migrations_phase3
 from crypto_analyzer.promotion.gating import ThresholdConfig
@@ -25,6 +29,7 @@ def _minimal_bundle(
     meta = {}
     if with_eligibility_meta:
         meta = {
+            "validation_bundle_schema_version": VALIDATION_BUNDLE_SCHEMA_VERSION,
             "dataset_id_v2": "ds2v2",
             "dataset_hash_algo": "sqlite_logical_v2",
             "dataset_hash_mode": "STRICT",
@@ -110,6 +115,7 @@ def test_e2e_promotion_with_rw_strict_eligibility_persisted_and_direct_update_bl
     )
     thresholds = ThresholdConfig(ic_mean_min=0.02, tstat_min=2.0, require_reality_check=False)
     meta = {
+        "validation_bundle_schema_version": VALIDATION_BUNDLE_SCHEMA_VERSION,
         "dataset_id_v2": "ds2v2",
         "dataset_hash_algo": "sqlite_logical_v2",
         "dataset_hash_mode": "STRICT",
@@ -121,6 +127,7 @@ def test_e2e_promotion_with_rw_strict_eligibility_persisted_and_direct_update_bl
         "rw_adjusted_p_values": {"sig_a|1": 0.03},
     }
     rc_summary = {
+        "rc_summary_schema_version": RC_SUMMARY_SCHEMA_VERSION,
         "rw_enabled": True,
         "rw_adjusted_p_values": {"sig_a|1": 0.03},
         "hypothesis_ids": ["sig_a|1"],
@@ -151,12 +158,17 @@ def test_e2e_promotion_with_rw_strict_eligibility_persisted_and_direct_update_bl
     assert row["status"] == "accepted"
     eligibility_report_id = row.get("eligibility_report_id")
     assert eligibility_report_id, "eligibility_report_id must be set when status=accepted"
-    cur = conn.execute("SELECT eligibility_report_id, candidate_id, level, passed FROM eligibility_reports WHERE candidate_id = ?", (cid,))
+    cur = conn.execute(
+        "SELECT eligibility_report_id, candidate_id, level, passed FROM eligibility_reports WHERE candidate_id = ?",
+        (cid,),
+    )
     report_row = cur.fetchone()
     assert report_row is not None, "eligibility report must be persisted"
     assert report_row[2] == "accepted" and report_row[3] == 1
     # Direct SQL update to candidate without eligibility_report_id must fail (trigger)
-    cid2 = create_candidate(conn, dataset_id="ds1", run_id="run2", signal_name="sig_b", horizon=1, config_hash="x", git_commit="y")
+    cid2 = create_candidate(
+        conn, dataset_id="ds1", run_id="run2", signal_name="sig_b", horizon=1, config_hash="x", git_commit="y"
+    )
     conn.commit()
     try:
         conn.execute("UPDATE promotion_candidates SET status = ? WHERE candidate_id = ?", ("candidate", cid2))
@@ -234,7 +246,7 @@ def test_sweep_candidate_accepted_when_rc_passes(conn_with_promotion):
     )
     thresholds = ThresholdConfig(ic_mean_min=0.02, tstat_min=2.0, require_reality_check=False, max_rc_p_value=0.05)
     bundle = _minimal_bundle(mean_ic=0.03, t_stat=3.0, with_eligibility_meta=True)
-    rc_summary = {"rc_p_value": 0.03}
+    rc_summary = {"rc_summary_schema_version": RC_SUMMARY_SCHEMA_VERSION, "rc_p_value": 0.03}
     decision = evaluate_and_record(
         conn,
         cid,

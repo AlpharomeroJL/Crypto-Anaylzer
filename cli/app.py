@@ -1703,9 +1703,13 @@ def main():
                                 if st.button("Update status", key="prom_upd"):
                                     if new_status in ("candidate", "accepted"):
                                         evidence = json.loads(row["evidence_json"]) if row.get("evidence_json") else {}
-                                        bundle_path = evidence.get("bundle_path") or evidence.get("validation_bundle_path")
+                                        bundle_path = evidence.get("bundle_path") or evidence.get(
+                                            "validation_bundle_path"
+                                        )
                                         if not bundle_path:
-                                            st.error("Candidate/accepted requires a bundle path in evidence. Use Evaluate candidate instead.")
+                                            st.error(
+                                                "Candidate/accepted requires a bundle path in evidence. Use Evaluate candidate instead."
+                                            )
                                         else:
                                             base = Path(bundle_path).parent if bundle_path else None
                                             thresh = ThresholdConfig(
@@ -1729,9 +1733,13 @@ def main():
                                             finally:
                                                 conn3.close()
                                             if dec.status == "accepted":
-                                                st.success(f"Promoted to {new_status}. Reasons: {dec.reasons or 'none'}")
+                                                st.success(
+                                                    f"Promoted to {new_status}. Reasons: {dec.reasons or 'none'}"
+                                                )
                                             else:
-                                                st.error(f"Cannot promote: {dec.status}. Reasons: {'; '.join(dec.reasons) if dec.reasons else 'none'}")
+                                                st.error(
+                                                    f"Cannot promote: {dec.status}. Reasons: {'; '.join(dec.reasons) if dec.reasons else 'none'}"
+                                                )
                                             st.rerun()
                                     else:
                                         conn3 = sqlite3.connect(prom_db)

@@ -41,7 +41,6 @@ from crypto_analyzer.artifacts import (
     write_json,
     write_json_sorted,
 )
-from crypto_analyzer.config import db_path
 from crypto_analyzer.data import get_factor_returns, load_bars, load_factor_run
 from crypto_analyzer.dataset import compute_dataset_fingerprint, dataset_id_from_fingerprint, fingerprint_to_json
 from crypto_analyzer.dataset_v2 import get_dataset_id_v2
@@ -133,7 +132,9 @@ def main() -> int:
         dest="hac_lags",
         help="HAC (Newey-West) lag: 'auto' (default) or integer. Used for mean-return inference.",
     )
-    ap.add_argument("--pbo-cscv-blocks", type=int, default=16, dest="pbo_cscv_blocks", help="CSCV number of blocks S (default 16).")
+    ap.add_argument(
+        "--pbo-cscv-blocks", type=int, default=16, dest="pbo_cscv_blocks", help="CSCV number of blocks S (default 16)."
+    )
     ap.add_argument(
         "--pbo-cscv-max-splits",
         type=int,
@@ -159,6 +160,12 @@ def main() -> int:
     ap.add_argument("--fee-bps", type=float, default=30)
     ap.add_argument("--slippage-bps", type=float, default=10)
     ap.add_argument("--db", default=None)
+    ap.add_argument(
+        "--backend",
+        choices=["sqlite", "duckdb"],
+        default="sqlite",
+        help="Backend for analytics read (governance and lineage always use SQLite). Default: sqlite.",
+    )
     ap.add_argument(
         "--strict-integrity",
         dest="strict_integrity",
@@ -219,6 +226,12 @@ def main() -> int:
     ap.add_argument("--rc-method", dest="rc_method", choices=["stationary", "block_fixed"], default="stationary")
     ap.add_argument("--rc-avg-block-length", dest="rc_avg_block_length", type=int, default=12)
     ap.add_argument(
+        "--walk-forward-strict",
+        dest="walk_forward_strict",
+        action="store_true",
+        help="Run fold-causality walk-forward; produce attestation (required for candidate/accepted when used).",
+    )
+    ap.add_argument(
         "--case-study",
         dest="case_study",
         choices=["liqshock"],
@@ -246,6 +259,16 @@ def main() -> int:
         help="Top 10 eligibility: p10(liquidity_usd) >= this (USD). Default 250000.",
     )
     args = ap.parse_args()
+
+    if getattr(args, "backend", "sqlite") == "duckdb":
+        try:
+            from crypto_analyzer.store import set_backend
+            from crypto_analyzer.store.duckdb_backend import DuckDBBackend
+
+            db_path = getattr(args, "db", None) or os.environ.get("CRYPTO_ANALYZER_DB_PATH")
+            set_backend(DuckDBBackend(duckdb_path=db_path))
+        except Exception:
+            pass
 
     # Normalize --n-trials: "auto" (default) vs explicit int; do not infer intent from value
     _n_trials_raw = getattr(args, "n_trials", "auto")
@@ -534,6 +557,21 @@ def main() -> int:
     }
     _run_key_early = compute_run_key(_semantic_payload_early) if _dataset_id_v2_early else ""
     deterministic_time_used = bool(os.environ.get("CRYPTO_ANALYZER_DETERMINISTIC_TIME", "").strip())
+    # Seed lineage (additive): deterministic seeds from run_key for RC/CSCV/bootstrap
+    _seed_root: int | None = None
+    _seed_lineage: dict | None = None
+    if _run_key_early:
+        try:
+            from crypto_analyzer.governance_seeding import seed_for
+
+            _seed_root = seed_for("reportv2", _run_key_early, "")
+            _seed_lineage = {
+                "rc": seed_for("reality_check", _run_key_early, ""),
+                "bootstrap": seed_for("bootstrap", _run_key_early, ""),
+                "pbo_cscv": seed_for("pbo_cscv", _run_key_early, ""),
+            }
+        except Exception:
+            pass
 
     portfolio_pnls = {}
     walk_forward_rows = []
@@ -546,6 +584,61 @@ def main() -> int:
     _rc_result: dict | None = None
     _rc_observed_stats: pd.Series | None = None  # for sweep registry persistence
     _rc_family_payload: dict | None = None  # canonical family payload for sweep_families.sweep_payload_json
+    _walk_forward_used = False
+    _fold_causality_attestation: dict | None = None
+    _fold_causality_attestation_path: str | None = None
+
+    # Phase 2B: strict walk-forward with fold causality (fit on train only, attestation for promotion)
+    if getattr(args, "walk_forward_strict", False) and not returns_df.empty:
+        try:
+            from crypto_analyzer.fold_causality.folds import (
+                SplitPlanConfig,
+                make_walk_forward_splits,
+            )
+            from crypto_analyzer.fold_causality.runner import (
+                RunnerConfig,
+                run_walk_forward_with_causality,
+            )
+
+            cfg_split = SplitPlanConfig(
+                train_bars=min(504, len(returns_df) // 3),
+                test_bars=min(168, len(returns_df) // 6),
+                step_bars=168,
+                purge_gap_bars=0,
+                embargo_bars=0,
+                asof_lag_bars=0,
+                expanding=True,
+            )
+            split_plan = make_walk_forward_splits(returns_df.index, cfg_split)
+            if split_plan.folds:
+                data_wf = returns_df.copy()
+                data_wf["ts_utc"] = data_wf.index
+                data_wf["ret"] = data_wf.mean(axis=1) if data_wf.shape[1] else 0.0
+
+                def _wf_scorer(df):
+                    r = df["ret"].dropna()
+                    n = len(r)
+                    sharpe = float(r.mean() / r.std()) if n and r.std() and r.std() > 0 else 0.0
+                    return {"n": n, "sharpe": sharpe}
+
+                runner_cfg = RunnerConfig(
+                    ts_column="ts_utc",
+                    run_key=_run_key_early or "",
+                    dataset_id_v2=_dataset_id_v2_early or "",
+                    engine_version=_engine_version_early or "",
+                    config_version=config_hash_early or "",
+                )
+                _per_fold, _fold_causality_attestation = run_walk_forward_with_causality(
+                    data_wf, split_plan, [], _wf_scorer, runner_cfg
+                )
+                ensure_dir(out_dir)
+                _attestation_path = out_dir / "fold_causality_attestation.json"
+                write_json_sorted(_fold_causality_attestation, _attestation_path)
+                _fold_causality_attestation_path = "fold_causality_attestation.json"
+                _walk_forward_used = True
+                bundle_output_paths.append(str(_attestation_path))
+        except Exception as e:
+            print("Walk-forward strict skip:", e)
 
     for name, sig_df in (orth_dict or signals_dict).items():
         if sig_df is None or sig_df.empty:
@@ -624,7 +717,10 @@ def main() -> int:
             path_turnover = csv_dir / f"turnover_{name}_{run_id_early}.csv"
             write_df_csv_stable(turnover_ser.to_frame(name="turnover"), path_turnover)
             bundle_output_paths.append(str(path_turnover))
+            from crypto_analyzer.contracts.schema_versions import VALIDATION_BUNDLE_SCHEMA_VERSION
+
             meta = {
+                "validation_bundle_schema_version": VALIDATION_BUNDLE_SCHEMA_VERSION,
                 "config_hash": config_hash_early,
                 "git_commit": get_git_commit(),
                 "engine_version": _engine_version_early,
@@ -638,6 +734,17 @@ def main() -> int:
                 "config_version": config_hash_early,
                 "research_spec_version": _RESEARCH_SPEC_VERSION,
             }
+            if _seed_root is not None:
+                meta["seed_root"] = _seed_root
+            if _seed_lineage is not None:
+                meta["seed_lineage"] = _seed_lineage
+            if _walk_forward_used and _fold_causality_attestation is not None and _fold_causality_attestation_path:
+                meta["walk_forward_used"] = True
+                meta["fold_causality_attestation_path"] = _fold_causality_attestation_path
+                meta["fold_causality_attestation_schema_version"] = _fold_causality_attestation.get(
+                    "fold_causality_attestation_schema_version"
+                )
+                meta["fold_causality_attestation"] = _fold_causality_attestation
             ic_summary_by_regime_path_rel: str | None = None
             ic_decay_by_regime_path_rel: str | None = None
             regime_coverage_path_rel: str | None = None
@@ -812,6 +919,7 @@ def main() -> int:
                 method=getattr(args, "rc_method", "stationary"),
                 avg_block_length=getattr(args, "rc_avg_block_length", 12),
                 block_size=getattr(args, "rc_avg_block_length", 12),
+                run_key=_run_key_early or None,
             )
             cache_dir = out_dir / "rc_cache"
             use_cache = not is_cache_disabled(no_cache_flag=getattr(args, "no_rc_cache", False))
@@ -953,6 +1061,12 @@ def main() -> int:
         "p_hac_mean_return": p_hac_mean_return,
         "rw_enabled": rw_enabled,
     }
+    if _seed_root is not None:
+        stats_overview["seed_root"] = _seed_root
+    if _seed_lineage is not None:
+        stats_overview["seed_lineage"] = _seed_lineage
+    stats_overview["walk_forward_used"] = _walk_forward_used
+    stats_overview["fold_causality_attestation"] = _fold_causality_attestation  # Phase 2B: dict or None
     if pbo_cscv_result and "pbo_cscv_skipped_reason" not in pbo_cscv_result:
         stats_overview["pbo_cscv"] = pbo_cscv_result.get("pbo_cscv")
         stats_overview["pbo_cscv_blocks"] = pbo_cscv_result.get("n_blocks")

@@ -1,6 +1,6 @@
 """
 Reproducible run registry: manifests with git, env fingerprint, data window, outputs, metrics.
-Research-only; no execution.
+Research-only; no execution. Phase 3: lives in core (run identity only).
 """
 
 from __future__ import annotations
@@ -16,9 +16,9 @@ from typing import Any, Dict
 
 import pandas as pd
 
-from .artifacts import ensure_dir, write_json_sorted
-from .spec import spec_summary
-from .timeutils import now_utc_iso
+from crypto_analyzer.artifacts import ensure_dir, write_json_sorted
+from crypto_analyzer.spec import spec_summary
+from crypto_analyzer.timeutils import now_utc_iso
 
 # Keys to exclude from run_key (semantic identity must not depend on these)
 _RUN_KEY_EXCLUDE_KEYS = frozenset({"ts_utc", "created_utc", "timestamp", "out_dir", "output_dir", "path", "paths"})
@@ -40,7 +40,7 @@ class RunIdentity:
 def get_git_commit() -> str:
     """Return short git commit hash or 'unknown' if git not available."""
     try:
-        root = Path(__file__).resolve().parent.parent
+        root = Path(__file__).resolve().parent.parent.parent
         r = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
             capture_output=True,

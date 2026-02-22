@@ -37,6 +37,8 @@ def _deterministic_returns_and_meta():
 
 def test_deterministic_rerun_identical_bundle_and_manifest():
     """Run reportv2 twice with CRYPTO_ANALYZER_DETERMINISTIC_TIME; assert byte-identical outputs."""
+    import tempfile
+
     env_val = "2026-01-01T00:00:00Z"
     with patch.dict(os.environ, {"CRYPTO_ANALYZER_DETERMINISTIC_TIME": env_val}, clear=False):
         returns_df, meta_df = _deterministic_returns_and_meta()
@@ -44,44 +46,51 @@ def test_deterministic_rerun_identical_bundle_and_manifest():
         out_dir_2 = Path(__file__).resolve().parent.parent / "tmp_rerun_2"
         for d in (out_dir_1, out_dir_2):
             d.mkdir(parents=True, exist_ok=True)
-        argv_1 = [
-            "research_report_v2",
-            "--freq",
-            "1h",
-            "--signals",
-            "momentum_24h",
-            "--portfolio",
-            "simple",
-            "--out-dir",
-            str(out_dir_1),
-            "--db",
-            ":memory:",
-            "--top-k",
-            "2",
-            "--bottom-k",
-            "2",
-        ]
-        argv_2 = [x.replace(str(out_dir_1), str(out_dir_2)) for x in argv_1]
+        with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as f:
+            db_path = f.name
+        try:
+            argv_1 = [
+                "research_report_v2",
+                "--freq",
+                "1h",
+                "--signals",
+                "momentum_24h",
+                "--portfolio",
+                "simple",
+                "--out-dir",
+                str(out_dir_1),
+                "--db",
+                db_path,
+                "--top-k",
+                "2",
+                "--bottom-k",
+                "2",
+            ]
+            argv_2 = [x.replace(str(out_dir_1), str(out_dir_2)) for x in argv_1]
 
-        def _fake_get_research_assets(db_path: str, freq: str, include_spot: bool = True, **kwargs):
-            return _deterministic_returns_and_meta()
+            def _fake_get_research_assets(db_path: str, freq: str, include_spot: bool = True, **kwargs):
+                return _deterministic_returns_and_meta()
 
-        def _fake_get_factor_returns(*args, **kwargs):
-            return None
+            def _fake_get_factor_returns(*args, **kwargs):
+                return None
 
-        with (
-            patch("crypto_analyzer.research_universe.get_research_assets", side_effect=_fake_get_research_assets),
-            patch("cli.research_report_v2.get_factor_returns", side_effect=_fake_get_factor_returns),
-        ):
-            # Run 1
-            sys.argv = argv_1
-            from cli import research_report_v2
+            with (
+                patch("crypto_analyzer.research_universe.get_research_assets", side_effect=_fake_get_research_assets),
+                patch("cli.research_report_v2.get_factor_returns", side_effect=_fake_get_factor_returns),
+            ):
+                # Run 1
+                sys.argv = argv_1
+                from cli import research_report_v2
 
-            research_report_v2.main()
-            # Run 2
-            sys.argv = argv_2
-            research_report_v2.main()
-
+                research_report_v2.main()
+                # Run 2 (same DB so run_key/dataset_id_v2 identical => same seed_root/RC)
+                sys.argv = argv_2
+                research_report_v2.main()
+        finally:
+            try:
+                Path(db_path).unlink(missing_ok=True)
+            except PermissionError:
+                pass
         manifests_1 = list((out_dir_1 / "manifests").glob("*.json"))
         manifests_2 = list((out_dir_2 / "manifests").glob("*.json"))
         assert len(manifests_1) >= 1, "Run 1 should produce at least one manifest"

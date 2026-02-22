@@ -46,14 +46,18 @@ def test_backfill_populates_dataset_metadata_and_experiments(tmp_path):
     assert got_meta.get("dataset_hash_mode") == "STRICT"
 
     with sqlite3.connect(db) as conn:
-        cur = conn.execute("SELECT key, value FROM dataset_metadata WHERE key IN ('dataset_id_v2','dataset_hash_algo','dataset_hash_mode')")
+        cur = conn.execute(
+            "SELECT key, value FROM dataset_metadata WHERE key IN ('dataset_id_v2','dataset_hash_algo','dataset_hash_mode')"
+        )
         rows = {r[0]: r[1] for r in cur.fetchall()}
     assert rows.get("dataset_id_v2") == expected_id
     assert rows.get("dataset_hash_algo") == "sqlite_logical_v2"
     assert rows.get("dataset_hash_mode") == "STRICT"
 
     with sqlite3.connect(db) as conn:
-        cur = conn.execute("SELECT dataset_id_v2, dataset_hash_algo, dataset_hash_mode FROM experiments WHERE run_id = ?", ("run_old",))
+        cur = conn.execute(
+            "SELECT dataset_id_v2, dataset_hash_algo, dataset_hash_mode FROM experiments WHERE run_id = ?", ("run_old",)
+        )
         row = cur.fetchone()
     assert row is not None
     assert row[0] == expected_id

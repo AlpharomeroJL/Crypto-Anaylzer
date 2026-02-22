@@ -169,9 +169,7 @@ def render_case_study_liqshock(
     )
     lines.append("- No forward-looking liquidity measures used.")
     lines.append("- Validation readiness depends on cross-sectional breadth and history length.")
-    lines.append(
-        "- **Recommended validation scale:** ≥25 assets and ≥1000 1h bars per asset for stable IC estimation."
-    )
+    lines.append("- **Recommended validation scale:** ≥25 assets and ≥1000 1h bars per asset for stable IC estimation.")
     lines.append(
         "- Walk-forward splitting is supported; this run uses the full evaluation window (walk-forward mode not enabled)."
     )

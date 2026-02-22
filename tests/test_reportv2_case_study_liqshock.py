@@ -141,4 +141,7 @@ def test_case_study_liqshock_arg_triggers_renderer():
         assert "False Discoveries Rejected" in content
         assert "Top 10 most valuable pairs" in content
     finally:
-        Path(db_path).unlink(missing_ok=True)
+        try:
+            Path(db_path).unlink(missing_ok=True)
+        except PermissionError:
+            pass

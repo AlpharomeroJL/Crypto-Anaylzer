@@ -12,10 +12,10 @@ from crypto_analyzer.governance import (
     get_git_commit,
     load_manifests,
     make_run_manifest,
-    now_utc_iso,
     save_manifest,
     stable_run_id,
 )
+from crypto_analyzer.timeutils import now_utc_iso
 
 
 def test_get_git_commit_returns_string():

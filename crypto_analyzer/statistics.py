@@ -11,28 +11,31 @@ import numpy as np
 import pandas as pd
 
 from .features import bars_per_year
+from .rng import rng_from_seed
 
 
 def _stationary_bootstrap_indices(
     length: int,
     avg_block_length: float,
     seed: Optional[int],
+    rng: Optional[np.random.Generator] = None,
 ) -> np.ndarray:
     """
     Politis-Romano stationary bootstrap: geometric block lengths with mean avg_block_length.
     p = 1 / avg_block_length. Returns indices of length `length` (wraps around).
+    If rng is provided use it; else use rng_from_seed(seed) from central RNG module.
     """
     if length < 1 or avg_block_length < 1:
         return np.array([], dtype=int)
-    if seed is not None:
-        np.random.seed(seed)
+    if rng is None:
+        rng = rng_from_seed(seed)
     p = 1.0 / avg_block_length
     indices = []
     while len(indices) < length:
-        block_len = np.random.geometric(p)
+        block_len = int(rng.geometric(p))
         if block_len < 1:
             block_len = 1
-        start = np.random.randint(0, length)
+        start = int(rng.integers(0, length))
         for _ in range(block_len):
             indices.append(start % length)
             start += 1
@@ -46,24 +49,28 @@ def block_bootstrap_pnl(
     block_size: int,
     n: int = 1000,
     seed: Optional[int] = 42,
+    rng: Optional[np.random.Generator] = None,
     method: Literal["block_fixed", "stationary"] = "block_fixed",
     avg_block_length: Optional[float] = None,
 ) -> np.ndarray:
     """
     Block bootstrap of PnL: resample blocks with replacement, compute total return per resample.
     method: "block_fixed" = fixed block size; "stationary" = Politis-Romano (geometric block lengths).
-    For stationary, avg_block_length is used (default = block_size). seed required for determinism.
+    For stationary, avg_block_length is used (default = block_size). seed/rng for determinism.
+    If rng is provided use it; else use rng_from_seed(seed). No global RNG mutation.
     Returns distribution of total simple return (1 + r).cumprod()[-1] - 1.
     """
     r = pnl_series.dropna()
     L = len(r)
+    if rng is None:
+        rng = rng_from_seed(seed)
     if method == "stationary":
         avg = avg_block_length if avg_block_length is not None else float(block_size)
         if L < 2 or avg < 1 or n < 1:
             return np.array([])
         dist = []
         for _ in range(n):
-            idx = _stationary_bootstrap_indices(L, avg, seed)
+            idx = _stationary_bootstrap_indices(L, avg, seed=None, rng=rng)
             if len(idx) < 2:
                 continue
             resampled = r.iloc[idx].values
@@ -73,14 +80,12 @@ def block_bootstrap_pnl(
         return np.array(dist)
     if L < block_size or block_size < 1 or n < 1:
         return np.array([])
-    if seed is not None:
-        np.random.seed(seed)
     max_start = max(0, L - block_size)
     dist = []
     for _ in range(n):
         indices = []
         while len(indices) < L:
-            start = np.random.randint(0, max_start + 1) if max_start >= 0 else 0
+            start = int(rng.integers(0, max_start + 1)) if max_start >= 0 else 0
             end = min(start + block_size, L)
             indices.extend(range(start, end))
         indices = indices[:L]
@@ -99,13 +104,14 @@ def sharpe_ci(
     block_size: int,
     n: int = 1000,
     seed: Optional[int] = 42,
+    rng: Optional[np.random.Generator] = None,
     ci_pct: float = 95.0,
     method: Literal["block_fixed", "stationary"] = "block_fixed",
     avg_block_length: Optional[float] = None,
 ) -> Tuple[float, float, float]:
     """
     Block-bootstrap confidence interval for annualized Sharpe ratio.
-    method: "block_fixed" or "stationary". seed required for determinism.
+    method: "block_fixed" or "stationary". If rng provided use it; else default_rng(seed). No global RNG.
     Returns (lo, mid, hi). mid = point estimate Sharpe; lo/hi from bootstrap percentiles.
     """
     r = pnl_series.dropna()
@@ -116,13 +122,15 @@ def sharpe_ci(
         if L >= 2 and r.std(ddof=1) and r.std(ddof=1) != 0
         else np.nan
     )
+    if rng is None:
+        rng = rng_from_seed(seed)
     if method == "stationary":
         avg = avg_block_length if avg_block_length is not None else float(block_size)
         if L < 2 or avg < 1:
             return (mid, mid, mid)
         sharpes = []
         for _ in range(n):
-            idx = _stationary_bootstrap_indices(L, avg, seed)
+            idx = _stationary_bootstrap_indices(L, avg, seed=None, rng=rng)
             resampled = r.iloc[idx]
             if resampled.std(ddof=1) and resampled.std(ddof=1) != 0:
                 sh = float(resampled.mean() / resampled.std(ddof=1) * np.sqrt(bars_yr))
@@ -130,14 +138,12 @@ def sharpe_ci(
     else:
         if L < block_size or block_size < 1:
             return (mid, mid, mid)
-        if seed is not None:
-            np.random.seed(seed)
         max_start = max(0, L - block_size)
         sharpes = []
         for _ in range(n):
             indices = []
             while len(indices) < L:
-                start = np.random.randint(0, max_start + 1) if max_start >= 0 else 0
+                start = int(rng.integers(0, max_start + 1)) if max_start >= 0 else 0
                 end = min(start + block_size, L)
                 indices.extend(range(start, end))
             indices = indices[:L]
@@ -171,13 +177,14 @@ def significance_summary(
     block_size: Optional[int] = None,
     n_bootstrap: int = 1000,
     seed: Optional[int] = 42,
+    rng: Optional[np.random.Generator] = None,
     method: Literal["block_fixed", "stationary"] = "block_fixed",
     avg_block_length: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
     Summary: annualized Sharpe, approximate t-stat, and bootstrap 95% CI for Sharpe.
     block_size default: sqrt(n_obs) or 20 (for block_fixed). method/seed/block_length
-    in output for artifact metadata.
+    in output for artifact metadata. If rng provided use it; else default_rng(seed). No global RNG.
     """
     r = pnl_series.dropna()
     n = len(r)
@@ -203,6 +210,7 @@ def significance_summary(
         block_size=blk,
         n=n_bootstrap,
         seed=seed,
+        rng=rng,
         method=method,
         avg_block_length=avg_blk if method == "stationary" else None,
     )
@@ -215,6 +223,67 @@ def significance_summary(
         "bootstrap_seed": seed,
         "block_length": blk if method == "block_fixed" else avg_blk,
     }
+
+
+def newey_west_lrv(z: np.ndarray, L: int) -> float:
+    """
+    Newey-West HAC long-run variance (scalar) for 1d series z and lag truncation L.
+    omega = gamma_0 + 2 * sum_{tau=1}^{L} (1 - tau/(L+1)) * gamma_tau.
+    """
+    z = np.asarray(z, dtype=float).ravel()
+    n = len(z)
+    if n < 2 or L < 0:
+        return float(np.nanvar(z)) if n >= 1 else 0.0
+    z = z - np.nanmean(z)
+    gamma_0 = float(np.nanmean(z * z))
+    omega = gamma_0
+    for tau in range(1, min(L + 1, n)):
+        w = 1.0 - tau / (L + 1.0)
+        gamma_tau = float(np.nanmean(z[tau:] * z[: n - tau]))
+        omega += 2.0 * w * gamma_tau
+    return max(0.0, float(omega))
+
+
+def hac_mean_inference(
+    x: np.ndarray,
+    L: Optional[int] = None,
+    min_obs: int = 30,
+) -> Dict[str, Any]:
+    """
+    HAC inference on the mean: Newey-West long-run variance, then t = xbar*sqrt(n)/sqrt(omega), p = 2(1-Phi(|t|)).
+    When L is None, L = floor(4*(n/100)^(2/9)) capped by n/3. When n < min_obs, returns null t/p and hac_skipped_reason.
+    """
+    x = np.asarray(x, dtype=float).ravel()
+    n = int(np.sum(np.isfinite(x)))
+    out: Dict[str, Any] = {
+        "t_hac": None,
+        "p_hac": None,
+        "hac_lags_used": None,
+        "hac_skipped_reason": None,
+    }
+    if n < min_obs:
+        out["hac_skipped_reason"] = f"n < {min_obs}"
+        return out
+    xbar = float(np.nanmean(x))
+    z = np.asarray(x, dtype=float).ravel() - xbar
+    if L is None:
+        L = max(0, min(n // 3, int(np.floor(4.0 * (n / 100.0) ** (2.0 / 9.0)))))
+    out["hac_lags_used"] = L
+    omega = newey_west_lrv(z, L)
+    if omega <= 0 or not np.isfinite(omega):
+        out["hac_skipped_reason"] = "non-finite HAC variance"
+        return out
+    scale = np.sqrt(omega * n)
+    if scale < 1e-12:
+        out["hac_skipped_reason"] = "zero HAC scale"
+        return out
+    t = xbar * np.sqrt(n) / scale
+    from scipy.stats import norm
+
+    p = 2.0 * (1.0 - norm.cdf(np.abs(t)))
+    out["t_hac"] = float(t)
+    out["p_hac"] = float(min(1.0, max(0.0, p)))
+    return out
 
 
 def safe_nanmean(values) -> Optional[float]:

@@ -80,8 +80,8 @@ def test_run_break_diagnostics_output_structure():
         assert t["test_name"] in ("cusum", "sup_chow")
         assert "calibration_method" in t
         assert "estimated_break_index" in t  # key present; value int or None
-        assert "estimated_break_date" in t   # key present; value ISO str or None
-        assert "p_value" in t               # key present; value float or None
+        assert "estimated_break_date" in t  # key present; value ISO str or None
+        assert "p_value" in t  # key present; value float or None
         if t.get("skipped_reason"):
             assert t.get("stat") is None
             assert t.get("break_suspected") is not True  # or omitted

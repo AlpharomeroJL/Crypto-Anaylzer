@@ -137,7 +137,9 @@ def test_trigger_blocks_direct_update_to_candidate_without_eligibility_report():
         except (sqlite3.IntegrityError, sqlite3.OperationalError) as e:
             assert "eligibility" in str(e).lower() or "abort" in str(e).lower()
             return
-        assert False, "Expected IntegrityError/OperationalError from trigger when setting status=candidate without eligibility_report_id"
+        assert False, (
+            "Expected IntegrityError/OperationalError from trigger when setting status=candidate without eligibility_report_id"
+        )
     finally:
         conn.close()
         Path(path).unlink(missing_ok=True)

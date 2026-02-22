@@ -200,7 +200,7 @@ def capacity_curve(
             )
         else:
             # Fallback: power-law in multiplier (no participation proxy)
-            impact_bps = float(impact_k * (mult ** impact_alpha)) if impact_k else 0.0
+            impact_bps = float(impact_k * (mult**impact_alpha)) if impact_k else 0.0
         effective_slippage = slippage_bps + impact_bps + spread_bps
         net_ret, cost_series = apply_costs(
             gross_returns, scaled_turnover, fee_bps=fee_bps, slippage_bps=effective_slippage
@@ -213,16 +213,18 @@ def capacity_curve(
         mean_ret_annual = float(n.mean() * bars_yr) if len(n) else float("nan")
         vol_annual = float(n.std(ddof=1) * (bars_yr**0.5)) if len(n) >= 2 else float("nan")
         est_cost_bps = fee_bps + slippage_bps + impact_bps + spread_bps
-        rows.append({
-            "notional_multiplier": mult,
-            "sharpe_annual": sharpe,
-            "mean_ret_annual": mean_ret_annual,
-            "vol_annual": vol_annual,
-            "avg_turnover": avg_turnover,
-            "est_cost_bps": est_cost_bps,
-            "impact_bps": impact_bps,
-            "spread_bps": spread_bps,
-        })
+        rows.append(
+            {
+                "notional_multiplier": mult,
+                "sharpe_annual": sharpe,
+                "mean_ret_annual": mean_ret_annual,
+                "vol_annual": vol_annual,
+                "avg_turnover": avg_turnover,
+                "est_cost_bps": est_cost_bps,
+                "impact_bps": impact_bps,
+                "spread_bps": spread_bps,
+            }
+        )
     # Enforce column order: required first, then extra (additive only)
     col_order = CAPACITY_CURVE_REQUIRED_COLUMNS + CAPACITY_CURVE_EXTRA_COLUMNS
     return pd.DataFrame(rows, columns=col_order)

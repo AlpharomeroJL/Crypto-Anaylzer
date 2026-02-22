@@ -64,8 +64,18 @@ def test_run_key_changes_with_engine_version():
 
 def test_run_key_changes_with_factor_param():
     """Change a factor/config parameter -> run_key changes."""
-    base = {"dataset_id_v2": "d1", "config": {"signal": "s", "horizon": 1}, "engine_version": "v1", "config_version": "c1"}
+    base = {
+        "dataset_id_v2": "d1",
+        "config": {"signal": "s", "horizon": 1},
+        "engine_version": "v1",
+        "config_version": "c1",
+    }
     k1 = compute_run_key(base)
-    base2 = {"dataset_id_v2": "d1", "config": {"signal": "s", "horizon": 4}, "engine_version": "v1", "config_version": "c1"}
+    base2 = {
+        "dataset_id_v2": "d1",
+        "config": {"signal": "s", "horizon": 4},
+        "engine_version": "v1",
+        "config_version": "c1",
+    }
     k2 = compute_run_key(base2)
     assert k1 != k2

@@ -18,7 +18,6 @@ import re
 from pathlib import Path
 from typing import Iterable
 
-
 MATH_INLINE_RE = re.compile(r"\\\((.+?)\\\)", re.DOTALL)
 # Do not match \[ when part of link label [\[1\]](url)
 MATH_DISPLAY_RE = re.compile(r"(?<!\[)\\\[(.+?)\\\]", re.DOTALL)

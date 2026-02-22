@@ -23,7 +23,18 @@ DATASET_HASH_SCOPE_V2 = [
     "universe_allowlist",
 ]
 
-DATASET_HASH_EXCLUDES = ["experiments", "promotion_candidates", "promotion_events", "regime_runs", "regime_states", "sweep_families", "sweep_hypotheses", "schema_migrations", "schema_migrations_phase3", "schema_migrations_v2"]
+DATASET_HASH_EXCLUDES = [
+    "experiments",
+    "promotion_candidates",
+    "promotion_events",
+    "regime_runs",
+    "regime_states",
+    "sweep_families",
+    "sweep_hypotheses",
+    "schema_migrations",
+    "schema_migrations_phase3",
+    "schema_migrations_v2",
+]
 
 # Optional: tables without PK can use this for deterministic ordering (table -> list of column names)
 TABLE_DETERMINISTIC_KEYS: Dict[str, List[str]] = {}
@@ -269,7 +280,11 @@ def backfill_dataset_id_v2(db_path: str) -> Tuple[str, Dict[str, Any]]:
                 conn.execute(
                     """UPDATE experiments SET dataset_id_v2 = ?, dataset_hash_algo = ?, dataset_hash_mode = ?
                        WHERE dataset_id_v2 IS NULL OR dataset_id_v2 = ''""",
-                    (dataset_id_v2, metadata.get("dataset_hash_algo", "sqlite_logical_v2"), metadata.get("dataset_hash_mode", "STRICT")),
+                    (
+                        dataset_id_v2,
+                        metadata.get("dataset_hash_algo", "sqlite_logical_v2"),
+                        metadata.get("dataset_hash_mode", "STRICT"),
+                    ),
                 )
                 conn.commit()
         except sqlite3.OperationalError:

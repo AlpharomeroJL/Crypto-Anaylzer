@@ -95,6 +95,13 @@ def evaluate_eligibility(
             warnings.append("dataset_id_v2 missing (required for candidate/accepted)")
         if not run_key:
             warnings.append("run_key missing (required for candidate/accepted)")
+        try:
+            from crypto_analyzer.contracts.validation_bundle_contract import validate_bundle_for_level
+
+            _ok, _reasons, contract_warnings = validate_bundle_for_level(meta, level)
+            warnings.extend(contract_warnings)
+        except Exception:
+            pass
         return EligibilityReport(
             passed=True,
             level=level,
@@ -108,6 +115,35 @@ def evaluate_eligibility(
         )
 
     # Candidate/Accepted: fail-closed
+    # Fold-causality: when walk-forward was used, require valid attestation (Phase 2B)
+    walk_forward_used = meta.get("walk_forward_used") or meta.get("fold_causality_attestation_path")
+    if walk_forward_used and level in ("candidate", "accepted"):
+        from crypto_analyzer.fold_causality.attestation import (
+            FOLD_CAUSALITY_ATTESTATION_SCHEMA_VERSION,
+            validate_attestation,
+        )
+
+        att_ver = meta.get("fold_causality_attestation_schema_version")
+        if att_ver != FOLD_CAUSALITY_ATTESTATION_SCHEMA_VERSION:
+            blockers.append(
+                f"fold_causality_attestation_schema_version must be {FOLD_CAUSALITY_ATTESTATION_SCHEMA_VERSION} (got {att_ver!r})"
+            )
+        att = meta.get("fold_causality_attestation")
+        if not isinstance(att, dict):
+            blockers.append("fold_causality_attestation missing or not a dict (required when walk-forward used)")
+        else:
+            att_ok, att_blockers = validate_attestation(att)
+            if not att_ok:
+                blockers.extend(att_blockers)
+
+    # RC summary schema version required when rc_summary is used (non-empty)
+    if rc_summary and level in ("candidate", "accepted"):
+        from crypto_analyzer.contracts.schema_versions import RC_SUMMARY_SCHEMA_VERSION
+
+        rc_ver = rc_summary.get("rc_summary_schema_version")
+        if rc_ver != RC_SUMMARY_SCHEMA_VERSION:
+            blockers.append(f"rc_summary_schema_version must be {RC_SUMMARY_SCHEMA_VERSION} (got {rc_ver!r})")
+
     if not (dataset_id_v2 and str(dataset_id_v2).strip()):
         blockers.append("dataset_id_v2 missing")
     if dataset_hash_algo != "sqlite_logical_v2":
@@ -139,7 +175,12 @@ def evaluate_eligibility(
     if requested_n_sim is not None and isinstance(requested_n_sim, (int, float)):
         requested_n_sim = int(requested_n_sim)
     # Optional polish: for candidate/accepted, do not tolerate large null shortfall (regression guard)
-    if level in ("candidate", "accepted") and requested_n_sim is not None and requested_n_sim > 0 and actual_n_sim is not None:
+    if (
+        level in ("candidate", "accepted")
+        and requested_n_sim is not None
+        and requested_n_sim > 0
+        and actual_n_sim is not None
+    ):
         if actual_n_sim < requested_n_sim * 0.95:
             blockers.append(
                 f"actual_n_sim ({actual_n_sim}) < 95% of requested_n_sim ({requested_n_sim}); promotion requires sufficient null simulations"
@@ -174,6 +215,17 @@ def evaluate_eligibility(
                         if v is None or (isinstance(v, float) and (v < 0 or v > 1 or v != v)):
                             blockers.append("rw_adjusted_p_values must be in [0,1] and finite")
                             break
+
+    # Bundle contract validator (additive): candidate/accepted fail if schema/provenance missing
+    try:
+        from crypto_analyzer.contracts.validation_bundle_contract import validate_bundle_for_level
+
+        contract_ok, contract_reasons, contract_warnings = validate_bundle_for_level(meta, level)
+        if not contract_ok:
+            blockers.extend(contract_reasons)
+        warnings.extend(contract_warnings)
+    except Exception:
+        pass
 
     passed = len(blockers) == 0
     return EligibilityReport(

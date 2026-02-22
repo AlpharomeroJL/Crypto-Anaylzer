@@ -6,10 +6,99 @@ Research-only. See docs for disclaimers.
 from __future__ import annotations
 
 import math
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import numpy as np
 import pandas as pd
+
+from crypto_analyzer.rng import rng_from_seed
+
+
+def effective_trials_eigen(C: np.ndarray) -> float:
+    """
+    Effective number of trials from correlation matrix (eigenvalue participation ratio).
+    Returns Neff >= 1. Stub/skeleton for n_trials_used when full implementation is added.
+    """
+    if C.size == 0:
+        return 1.0
+    C = np.asarray(C, dtype=float)
+    if C.ndim != 2 or C.shape[0] != C.shape[1]:
+        return 1.0
+    ev = np.linalg.eigvalsh(C)
+    ev = np.maximum(ev, 0.0)
+    s = ev.sum()
+    if s <= 0:
+        return 1.0
+    neff = (s * s) / (ev * ev).sum() if np.any(ev > 0) else 1.0
+    return float(max(1.0, neff))
+
+
+def pbo_cscv(
+    R: np.ndarray,
+    S: int,
+    seed: Optional[int] = None,
+    max_splits: int = 20000,
+    metric: str = "mean",
+    rng: Optional[np.random.Generator] = None,
+) -> Dict[str, Any]:
+    """
+    PBO via CSCV (Combinatorial Symmetric Cross-Validation). S must be even.
+    If choose(S, S/2) > max_splits, sample splits with rng or default_rng(seed).
+    Returns dict with pbo_cscv, pbo_cscv_blocks, pbo_cscv_total_splits, pbo_cscv_splits_used,
+    pbo_metric; or pbo_cscv_skipped_reason when T < S*4, J < 2, or S odd.
+    """
+    R = np.asarray(R, dtype=float)
+    T, J = R.shape if R.ndim == 2 else (0, 0)
+    if S % 2 != 0:
+        return {
+            "pbo_cscv": np.nan,
+            "pbo_cscv_skipped_reason": "S must be even",
+            "n_blocks": S,
+            "pbo_cscv_total_splits": 0,
+            "n_splits": 0,
+            "pbo_metric": metric,
+        }
+    if T < S * 4 or J < 2:
+        return {
+            "pbo_cscv": np.nan,
+            "pbo_cscv_skipped_reason": f"T < S*4 or J < 2 (T={T}, S={S}, J={J})",
+            "n_blocks": S,
+            "pbo_cscv_total_splits": 0,
+            "n_splits": 0,
+            "pbo_metric": metric,
+        }
+    if rng is None:
+        if seed is None:
+            raise ValueError(
+                "pbo_cscv requires seed or rng for reproducibility; use rng_for(run_key, salt) or pass explicit seed"
+            )
+        rng = rng_from_seed(seed)
+    block_size = T // S
+    n_blocks = S
+    total_comb = math.comb(S, S // 2)
+    n_splits = min(total_comb, max_splits)
+    lambdas: list[float] = []
+    for _ in range(n_splits):
+        perm = rng.permutation(S)
+        train_blocks = perm[: S // 2]
+        test_blocks = perm[S // 2 :]
+        train_idx = np.concatenate([np.arange(b * block_size, (b + 1) * block_size) for b in train_blocks])
+        test_idx = np.concatenate([np.arange(b * block_size, (b + 1) * block_size) for b in test_blocks])
+        train_means = np.nanmean(R[train_idx, :], axis=0)
+        winner = int(np.argmax(train_means))
+        test_rank = np.argsort(np.argsort(-np.nanmean(R[test_idx, :], axis=0)))[winner]
+        rk = (test_rank + 0.5) / J
+        lam = math.log(rk / (1 - rk)) if 0 < rk < 1 else 0.0
+        lambdas.append(lam)
+    pbo = float(np.mean(np.array(lambdas) < 0))
+    return {
+        "pbo_cscv": pbo,
+        "n_blocks": n_blocks,
+        "pbo_cscv_total_splits": total_comb,
+        "pbo_cscv_splits_used": n_splits,
+        "n_splits": n_splits,
+        "pbo_metric": metric,
+    }
 
 
 def deflated_sharpe_ratio(

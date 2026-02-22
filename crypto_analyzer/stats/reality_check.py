@@ -15,6 +15,13 @@ import pandas as pd
 
 from crypto_analyzer.statistics import _stationary_bootstrap_indices
 
+try:
+    from crypto_analyzer.rng import SALT_RC_NULL
+    from crypto_analyzer.rng import rng_for as _rng_for_central
+except ImportError:
+    _rng_for_central = None  # type: ignore[misc, assignment]
+    SALT_RC_NULL = "rc_null"  # fallback only if rng not importable
+
 
 @dataclass
 class RealityCheckConfig:
@@ -27,6 +34,10 @@ class RealityCheckConfig:
     avg_block_length: int = 12
     block_size: int = 12
     seed: int = 42
+    # Deterministic run_key-derived RNG (runtime-only; not serialized)
+    run_key: Optional[str] = None
+    seed_root: Optional[int] = None
+    rng: Optional[np.random.Generator] = None
 
 
 def compute_sweep_statistic(
@@ -164,9 +175,8 @@ def run_reality_check(
         null_stats_matrix = np.array(null_rows, dtype=float) if null_rows else np.zeros((0, len(hypothesis_ids)))
         actual_n_sim = null_stats_matrix.shape[0]
         if actual_n_sim < requested_n_sim:
-            n_sim_shortfall_warning = (
-                f"actual_n_sim={actual_n_sim} < requested_n_sim={requested_n_sim}"
-                + (f" ({dropped} null rows dropped due to length mismatch)" if dropped else "")
+            n_sim_shortfall_warning = f"actual_n_sim={actual_n_sim} < requested_n_sim={requested_n_sim}" + (
+                f" ({dropped} null rows dropped due to length mismatch)" if dropped else ""
             )
         if null_stats_matrix.shape[0] == 0:
             rc_p_value = 1.0
@@ -175,7 +185,29 @@ def run_reality_check(
         null_max_dist = np.nanmax(null_stats_matrix, axis=1) if null_stats_matrix.size else np.array([])
     observed_max = float(obs_reindexed.max())
 
+    from crypto_analyzer.contracts.schema_versions import RC_SUMMARY_SCHEMA_VERSION
+    from crypto_analyzer.rng import SALT_RC_NULL, SEED_ROOT_VERSION
+    from crypto_analyzer.rng import seed_root as _seed_root
+
+    # Seed derivation provenance: required for governance/audit; seed_version prevents "same run_key, different nulls" without explanation
+    seed_root_val: Optional[int] = cfg.seed_root
+    component_salt: Optional[str] = None
+    seed_derivation: str = "explicit"
+    seed_version: int = SEED_ROOT_VERSION
+    if cfg.run_key:
+        component_salt = SALT_RC_NULL
+        seed_root_val = _seed_root(cfg.run_key, salt=component_salt, version=seed_version)
+        seed_derivation = "run_key"
+    null_construction_spec = {
+        "method": cfg.method,
+        "avg_block_length": cfg.avg_block_length,
+        "block_size": cfg.block_size,
+        "seed_derivation": seed_derivation,
+        "seed_version": seed_version,
+    }
+
     out: Dict = {
+        "rc_summary_schema_version": RC_SUMMARY_SCHEMA_VERSION,
         "rc_p_value": float(rc_p_value),
         "observed_max": observed_max,
         "null_max_distribution": null_max_dist,
@@ -188,6 +220,10 @@ def run_reality_check(
         "rc_seed": cfg.seed,
         "rc_method": cfg.method,
         "rc_avg_block_length": cfg.avg_block_length,
+        "seed_root": seed_root_val,
+        "seed_version": seed_version,
+        "component_salt": component_salt,
+        "null_construction_spec": null_construction_spec,
     }
     if n_sim_shortfall_warning:
         out["n_sim_shortfall_warning"] = n_sim_shortfall_warning
@@ -211,6 +247,10 @@ def run_reality_check(
                 "rc_avg_block_length": cfg.avg_block_length,
                 "requested_n_sim": requested_n_sim,
                 "actual_n_sim": actual_n_sim,
+                "seed_root": seed_root_val,
+                "seed_version": seed_version,
+                "component_salt": component_salt,
+                "null_construction_spec": null_construction_spec,
             }
     else:
         out["rw_adjusted_p_values"] = pd.Series(dtype=float)
@@ -220,16 +260,23 @@ def run_reality_check(
     return out
 
 
-def _block_fixed_bootstrap_indices(length: int, block_size: int, seed: Optional[int]) -> np.ndarray:
-    """Fixed-size block bootstrap indices; same length as input."""
+def _block_fixed_bootstrap_indices(
+    length: int,
+    block_size: int,
+    seed: Optional[int],
+    rng: Optional[np.random.Generator] = None,
+) -> np.ndarray:
+    """Fixed-size block bootstrap indices; same length as input. No global RNG mutation."""
     if length < 1 or block_size < 1:
         return np.array([], dtype=int)
-    if seed is not None:
-        np.random.seed(seed)
+    if rng is None and seed is not None:
+        rng = np.random.default_rng(seed)
+    if rng is None:
+        rng = np.random.default_rng()
     max_start = max(0, length - block_size)
     indices = []
     while len(indices) < length:
-        start = int(np.random.randint(0, max_start + 1)) if max_start >= 0 else 0
+        start = int(rng.integers(0, max_start + 1)) if max_start >= 0 else 0
         end = min(start + block_size, length)
         indices.extend(range(start, end))
     return np.array(indices[:length], dtype=int)
@@ -263,12 +310,27 @@ def make_null_generator_stationary(
         return _null
     arrs = {h: np.asarray(series_by_hypothesis[h].reindex(common_idx).values, dtype=float) for h in hyps}
 
+    # Deterministic RNG: run_key -> rng_base (canonical SALT_RC_NULL; fold_id=horizon for substreams)
+    rng_base: Optional[np.random.Generator] = None
+    if cfg.rng is not None:
+        rng_base = cfg.rng
+    elif cfg.run_key and _rng_for_central is not None:
+        rng_base = _rng_for_central(cfg.run_key, SALT_RC_NULL, fold_id=cfg.horizon)
+
     def _null(b: int) -> np.ndarray:
-        seed_b = cfg.seed + b
-        if cfg.method == "stationary":
-            idx = _stationary_bootstrap_indices(length, float(cfg.avg_block_length), seed_b)
+        if rng_base is not None:
+            per_b_seed = int(rng_base.integers(0, 2**63 - 1))
+            rng_b = np.random.default_rng(per_b_seed)
+            if cfg.method == "stationary":
+                idx = _stationary_bootstrap_indices(length, float(cfg.avg_block_length), seed=None, rng=rng_b)
+            else:
+                idx = _block_fixed_bootstrap_indices(length, cfg.block_size, seed=None, rng=rng_b)
         else:
-            idx = _block_fixed_bootstrap_indices(length, cfg.block_size, seed_b)
+            seed_b = cfg.seed + b
+            if cfg.method == "stationary":
+                idx = _stationary_bootstrap_indices(length, float(cfg.avg_block_length), seed_b, rng=None)
+            else:
+                idx = _block_fixed_bootstrap_indices(length, cfg.block_size, seed_b, rng=None)
         if len(idx) < 2:
             return np.full(len(hyps), np.nan)
         stats = []

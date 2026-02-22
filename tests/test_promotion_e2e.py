@@ -7,6 +7,10 @@ import sqlite3
 import tempfile
 from pathlib import Path
 
+from crypto_analyzer.contracts.schema_versions import (
+    RC_SUMMARY_SCHEMA_VERSION,
+    VALIDATION_BUNDLE_SCHEMA_VERSION,
+)
 from crypto_analyzer.db.migrations import run_migrations
 from crypto_analyzer.db.migrations_phase3 import run_migrations_phase3
 from crypto_analyzer.promotion.gating import ThresholdConfig
@@ -16,6 +20,17 @@ from crypto_analyzer.validation_bundle import ValidationBundle
 
 
 def _write_bundle(path: Path, mean_ic: float = 0.03, t_stat: float = 3.0) -> None:
+    meta = {
+        "validation_bundle_schema_version": VALIDATION_BUNDLE_SCHEMA_VERSION,
+        "config_hash": "xyz",
+        "git_commit": "abc",
+        "dataset_id_v2": "ds_e2e_v2",
+        "dataset_hash_algo": "sqlite_logical_v2",
+        "dataset_hash_mode": "STRICT",
+        "run_key": "rk_e2e",
+        "engine_version": "abc",
+        "config_version": "xyz",
+    }
     bundle = ValidationBundle(
         run_id="run_e2e",
         dataset_id="ds_e2e",
@@ -24,7 +39,7 @@ def _write_bundle(path: Path, mean_ic: float = 0.03, t_stat: float = 3.0) -> Non
         horizons=[1],
         ic_summary_by_horizon={1: {"mean_ic": mean_ic, "t_stat": t_stat, "n_obs": 300}},
         ic_decay_table=[],
-        meta={"config_hash": "xyz", "git_commit": "abc"},
+        meta=meta,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
@@ -53,7 +68,7 @@ def test_e2e_create_evaluate_with_rc_summary():
         conn.close()
 
         thresholds = ThresholdConfig(require_reality_check=True, max_rc_p_value=0.05)
-        rc_summary = {"rc_p_value": 0.02}
+        rc_summary = {"rc_summary_schema_version": RC_SUMMARY_SCHEMA_VERSION, "rc_p_value": 0.02}
         conn2 = sqlite3.connect(db_path)
         decision = evaluate_and_record(
             conn2,
@@ -62,6 +77,8 @@ def test_e2e_create_evaluate_with_rc_summary():
             str(bundle_path),
             rc_summary=rc_summary,
             evidence_base_path=bundle_path.parent,
+            target_status="accepted",
+            allow_missing_execution_evidence=True,
         )
         conn2.close()
         assert decision.status == "accepted"
@@ -159,9 +176,19 @@ def test_e2e_execution_evidence_required_reject_when_missing():
             git_commit="abc",
             evidence=evidence,
         )
-        conn.execute("UPDATE promotion_candidates SET status = ? WHERE candidate_id = ?", ("candidate", cid))
-        conn.commit()
         conn.close()
+        # Promote to candidate via proper path (eligibility report required by Phase 3 trigger)
+        thresholds_candidate = ThresholdConfig(ic_mean_min=0.02, tstat_min=2.0)
+        conn_prom = sqlite3.connect(db_path)
+        evaluate_and_record(
+            conn_prom,
+            cid,
+            thresholds_candidate,
+            str(bundle_path),
+            evidence_base_path=bundle_path.parent,
+            target_status="candidate",
+        )
+        conn_prom.close()
         thresholds = ThresholdConfig(
             ic_mean_min=0.02,
             tstat_min=2.0,
