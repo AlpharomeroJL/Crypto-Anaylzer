@@ -1,6 +1,6 @@
 # Appendix A — Statistical Methods, Formal Definitions, and Assumptions
 
-This appendix provides formal definitions of the statistical procedures used in Crypto-Analyzer's research validation framework. The objective is to rigorously control selection bias, overfitting, and false discoveries in systematic signal research under temporal and cross-sectional dependence.
+This appendix provides formal definitions of the statistical procedures used in Crypto-Anaylzer's research validation framework. The objective is to rigorously control selection bias, overfitting, and false discoveries in systematic signal research under temporal and cross-sectional dependence.
 
 ## A.1 Notation and Setup
 
@@ -347,11 +347,11 @@ $$\sqrt{T} \, (SR - \mu/\sigma) \xrightarrow{d} N\left( 0, \; \nabla g^\top \Sig
 
 Carrying out the multiplication (and expressing moments via standardized skewness and kurtosis) yields the widely used approximation (as in Bailey & López de Prado's development of Sharpe uncertainty corrections; see Deep Research Review of Alpharo…):
 
-Let $\gamma_3 = \mu_3 / \sigma^3$, $\gamma_4 = \mu_4 / \sigma^4$. Then an approximate large-$T$ variance for the sample Sharpe is:
+Let $\gamma_3 = \mu_3 / \sigma^3$, $\gamma_4 = \mu_4 / \sigma^4$, and excess kurtosis $\kappa = \gamma_4 - 3$. Then an approximate large-$T$ variance for the sample Sharpe is:
 
-$$\text{Var}(SR) \approx \frac{1}{T} \left( 1 - \gamma_3 SR + \frac{\gamma_4 - 1}{4} SR^2 \right).$$
+$$\text{Var}(SR) \approx \frac{1}{T} \left( 1 + \frac{1}{2} SR^2 - \gamma_3 SR + \frac{\kappa}{4} SR^2 \right).$$
 
-Many texts present close variants depending on (i) population vs sample variance, (ii) whether you keep $O(T^{-1})$ terms from $(\hat{\mu} - \mu)^2$, and (iii) whether kurtosis is excess kurtosis $\kappa = \gamma_4 - 3$. The key point: nonzero skewness and excess kurtosis increase Sharpe estimator variance, which feeds DSR-style corrections. □
+**Implementation note:** This repo uses this form with sample skewness and pandas excess kurtosis (`kurtosis()`) in `crypto_analyzer/multiple_testing.py`::`deflated_sharpe_ratio` (line 145). Many texts use $\gamma_4 - 1$ or $\gamma_4 - 3$ depending on definition of kurtosis; the code uses $\kappa = \gamma_4 - 3$ consistently. □
 
 *Practical guidance.* In code, compute $\gamma_3, \gamma_4$ on OOS returns. Under serial dependence, treat this as optimistic unless you use block/bootstrap/HAC adjustments.
 

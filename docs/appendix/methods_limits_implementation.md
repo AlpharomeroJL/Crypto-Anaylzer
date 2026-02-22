@@ -203,7 +203,7 @@ When reportv2 is run with `--n-trials auto`, the repo builds the strategy return
 
 ## G. HAC mean inference (Newey–West)
 
-The repo implements `hac_mean_inference(x, L, min_obs=30)` in `statistics`: Newey–West long-run variance with Bartlett weights, then $t = \bar{x}\sqrt{n}/\sqrt{\Omega}$, $p = 2(1 - \Phi(|t|))$. When `L` is None, $L = \lfloor 4(n/100)^{2/9} \rfloor$ capped by $n/3$. When $n < 30$, the function returns null t/p and `hac_skipped_reason: "n < 30"`. Non-finite HAC variance also sets a skip reason. This is inference on the **mean** (e.g. mean return or mean IC), not full finite-sample Sharpe.
+The repo implements `hac_mean_inference(x, L, min_obs=30)` in `crypto_analyzer/statistics.py`: Newey–West long-run variance with Bartlett weights, then $t = \bar{x}\sqrt{n}/\sqrt{\Omega}$, $p = 2(1 - \Phi(|t|))$. When `L` is None, $L = \lfloor 4(n/100)^{2/9} \rfloor$ capped by $n/3$. When $n < 30$, the function returns null t/p and `hac_skipped_reason: "n < 30"`. Non-finite HAC variance also sets a skip reason. The function returns `t_hac`, `p_hac`; reportv2 maps these to `t_hac_mean_return`, `p_hac_mean_return` in stats_overview. This is inference on the **mean** (e.g. mean return or mean IC), not full finite-sample Sharpe.
 
 **Artifact keys:** `hac_lags_used`, `t_hac_mean_return`, `p_hac_mean_return`, `hac_skipped_reason`.
 
@@ -211,15 +211,15 @@ The repo implements `hac_mean_inference(x, L, min_obs=30)` in `statistics`: Newe
 
 ## H. CSCV PBO (canonical)
 
-The repo implements `pbo_cscv(R, S, seed, max_splits, metric)` in `multiple_testing`. Data (matrix $R$ T×J) is split into $S$ equal blocks; $S$ must be even. Splits are combinations of $S/2$ blocks for train; the other half for test. If $\binom{S}{S/2} > \mathrm{max\_splits}$, splits are random-sampled with the given seed. For each split: rank strategies by in-sample metric, take the winner’s OOS rank, $\lambda = \mathrm{logit}(\mathrm{rank}/J)$; PBO = fraction of splits with $\lambda < 0$. Midrank used for ties. **Skip:** When $T < S \times 4$, or $J < 2$, or $S$ odd, the function returns a dict with `pbo_cscv_skipped_reason` and no `pbo_cscv` value.
+The repo implements `pbo_cscv(R, S, seed, max_splits, metric)` in `crypto_analyzer/multiple_testing.py`. Data (matrix $R$ T×J) is split into $S$ equal blocks; $S$ must be even. **Split construction:** The code uses $n_{\mathrm{splits}} = \min(\binom{S}{S/2}, \mathrm{max\_splits})$ iterations; each iteration draws a random permutation of block indices (train = first $S/2$, test = second $S/2$). Splits are thus always random partitions, not full enumeration of $\binom{S}{S/2}$ (deterministic for fixed seed). When $\binom{S}{S/2} > \mathrm{max\_splits}$, only $\mathrm{max\_splits}$ such random splits are used. For each split: rank strategies by in-sample metric, take the winner’s OOS rank, $\lambda = \mathrm{logit}(\mathrm{rank}/J)$; PBO = fraction of splits with $\lambda < 0$. Midrank used for ties. **Skip:** When $T < S \times 4$, or $J < 2$, or $S$ odd, the function returns a dict with `pbo_cscv_skipped_reason` and no `pbo_cscv` value.
 
-**Artifact keys:** `pbo_cscv`, `pbo_cscv_blocks` (n_blocks), `pbo_cscv_total_splits`, `pbo_cscv_splits_used` (n_splits), `pbo_metric`; when skipped: `pbo_cscv_skipped_reason`.
+**Artifact keys:** `pbo_cscv`, `pbo_cscv_blocks` (n_blocks), `pbo_cscv_total_splits`, `pbo_cscv_splits_used` (n_splits), `pbo_metric`; when skipped: `pbo_cscv_skipped_reason`. Known deviation: see [alignment audit](../audit/methods_implementation_alignment.md#known-deviations--todo-for-future).
 
 ---
 
 ## I. Structural break diagnostics
 
-The repo implements CUSUM mean-shift (HAC-calibrated) and sup-Chow single-break scan in `structural_breaks`. **CUSUM:** `calibration_method`: "HAC"; min obs configurable (e.g. 20). **Sup-Chow:** `calibration_method`: "asymptotic"; min obs 100. Each test returns `stat`, `p_value`, `break_suspected`, `estimated_break_index`, `estimated_break_date` (index converted to date via series index, UTC→naive, format `%Y-%m-%dT%H:%M:%S`). When skipped (e.g. n too small, non-finite variance): `skipped_reason` set, `break_suspected` false, stat/p/date null. `run_break_diagnostics` writes a structure `{"series": { name: [cusum_entry, scan_entry], ... }}` to `break_diagnostics.json`. `stats_overview`: `break_diagnostics_written`, `break_diagnostics_skipped_reason`.
+The repo implements CUSUM mean-shift (HAC-calibrated) and sup-Chow single-break scan in `crypto_analyzer/structural_breaks.py`. **CUSUM:** `calibration_method`: "HAC"; min obs 20 (`CUSUM_MIN_OBS`). **Sup-Chow:** `calibration_method`: "asymptotic"; min obs 100 (`SCAN_MIN_OBS`). Each test returns `test_name`, `stat`, `p_value`, `break_suspected`, `estimated_break_index`, `estimated_break_date` (index converted to date via series index, UTC→naive, format `%Y-%m-%dT%H:%M:%S`). When skipped (e.g. n too small, non-finite variance): `skipped_reason` set, `break_suspected` false, stat/p/date null. `run_break_diagnostics(series_dict)` returns `{"series": { series_name: [cusum_entry, scan_entry], ... }, "hac_lags": ...}`; each entry includes `series_name`. `stats_overview`: `break_diagnostics_written`, `break_diagnostics_skipped_reason`.
 
 ---
 
@@ -235,9 +235,9 @@ The repo implements `capacity_curve()` in `execution_cost`. **Impact:** When `us
 
 - **DSR** here is a screening statistic using an i.i.d.-style Sharpe variance approximation with skew/excess kurtosis and a leading-order extreme-value correction $\sqrt{2 \ln N}$ (see `multiple_testing`). When `--n-trials auto`, $N$ is set from effective trials (eigenvalue ratio). It is not a full, formally calibrated multiple-testing p-value.
 - **BH/BY** are standard FDR adjustments; BY's harmonic inflation $c_m$ makes it valid under arbitrary dependence and asymptotically costs a $\ln m$ factor (see `multiple_testing_adjuster`).
-- **PBO proxy** is a heuristic "median underperformance rate" across walk-forward splits (see `multiple_testing`). **CSCV PBO** is implemented separately: canonical PBO = P($\lambda < 0$) with split sampling when combinations exceed max_splits; skipped when T &lt; S×4 or J &lt; 2 with reason in artifacts.
+- **PBO proxy** is a heuristic "median underperformance rate" across walk-forward splits (see `multiple_testing`). **CSCV PBO** is implemented separately: P($\lambda < 0$) with random-permutation splits (see §H and [alignment audit](../audit/methods_implementation_alignment.md)); skipped when T &lt; S×4 or J &lt; 2 with reason in artifacts.
 - **Bootstrap** uses fixed or stationary blocks; stationary bootstrap uses geometric block lengths with mean $\ell$ and wrap-around (see `statistics`).
 - **Reality Check** is implemented as a max-statistic bootstrap test with dependence preserved by sharing resampling indices across hypotheses, and p-value $(1 + \bigl\lvert \lbrace T^* \geq T \rbrace \bigr\rvert) / (B + 1)$; see `reality_check`. **Romano–Wolf** stepdown is implemented (opt-in env flag); outputs `rw_adjusted_p_values` when enabled.
-- **HAC mean inference** is Newey–West LRV for the mean; skipped when n &lt; 30 with `hac_skipped_reason`; see `statistics`.
-- **Break diagnostics:** CUSUM (HAC) and sup-Chow (asymptotic); skip reasons and `estimated_break_date` in `break_diagnostics.json`.
+- **HAC mean inference** is Newey–West LRV for the mean; skipped when n &lt; 30 with `hac_skipped_reason`; see `crypto_analyzer/statistics.py`.
+- **Break diagnostics:** CUSUM (HAC) and sup-Chow (asymptotic) in `crypto_analyzer/structural_breaks.py`; skip reasons and `estimated_break_date` in `break_diagnostics.json`.
 - **Capacity curve:** Participation-based impact (or power-law fallback); required CSV columns; `non_monotone_capacity_curve_observed` flag; execution_evidence cost_config must match.

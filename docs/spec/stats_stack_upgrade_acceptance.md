@@ -1,6 +1,6 @@
 # Stats stack upgrade — Acceptance criteria (Definition of Done per PR)
 
-Use this checklist per PR. Matches existing patterns: reportv2 outputs + JSON/CSV artifacts + pytest coverage + deterministic seeds + no contract breaks.
+Use this checklist per PR. Matches existing patterns: reportv2 outputs + JSON/CSV artifacts + pytest coverage + deterministic seeds + no contract breaks. For implementation locations and formula/artifact alignment, see [Methods & limits](../methods_and_limits.md) §13 and [Methods implementation alignment](../audit/methods_implementation_alignment.md).
 
 ---
 

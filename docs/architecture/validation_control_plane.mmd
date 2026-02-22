@@ -1,0 +1,81 @@
+%% Validation Control Plane — Mermaid architecture diagram
+%% Matches code: dataset_id_v2, run_key/run_instance_id, RunContext, fold causality, eligibility, governance, lineage, backends
+
+flowchart TB
+    subgraph Data["Data layer"]
+        SQLiteInputs[("SQLite research tables\n(bars_*, snapshots, universe)")]
+        DatasetHash["dataset_id_v2\ncontent-addressed hash\n(STRICT/FAST_DEV)"]
+        SQLiteInputs --> DatasetHash
+    end
+
+    subgraph RunIdentity["Run identity"]
+        RunKey["run_key\n(semantic, deterministic)"]
+        RunInstanceId["run_instance_id\n(execution instance)"]
+        RunContext["RunContext\n(run_key, dataset_id_v2,\nseed_version, versions)"]
+        RunKey --> RunContext
+        RunInstanceId --> RunContext
+        DatasetHash --> RunKey
+    end
+
+    subgraph Eval["Evaluation layer"]
+        FoldSplits["Fold splits\n(purge / embargo)"]
+        Transforms["Transforms\n(trainable vs exogenous)"]
+        Scoring["Scoring / metrics"]
+        FoldSplits --> Scoring
+        Transforms --> Scoring
+    end
+
+    subgraph Validation["Validation layer"]
+        BHBY["BH / BY\n(FDR)"]
+        RC["Reality Check\n(max-statistic bootstrap)"]
+        RW["Romano–Wolf\n(stepdown)"]
+        CSCV["CSCV PBO"]
+        HAC["HAC mean inference"]
+        CalHarness["Calibration harness\n(Type I checks)"]
+        BHBY --> CalHarness
+        RC --> CalHarness
+        RW --> CalHarness
+        CSCV --> CalHarness
+        HAC --> CalHarness
+    end
+
+    subgraph Artifacts["Artifacts"]
+        ValBundle["validation_bundle\n(manifest, metrics)"]
+        FoldAtt["fold_causality_attestation"]
+        RcSummary["rc_summary"]
+        ValBundle --> FoldAtt
+        ValBundle --> RcSummary
+    end
+
+    subgraph Governance["Governance"]
+        EvalElig["evaluate_eligibility\n→ eligibility_reports"]
+        PromCand["promotion_candidates\n(status: exploratory\n→ candidate → accepted)"]
+        DBTriggers["DB triggers\nfail-closed\n(candidate/accepted require\npassing eligibility_report_id)"]
+        GovEvents["governance_events\n(append-only)"]
+        EvalElig --> PromCand
+        PromCand --> DBTriggers
+        EvalElig --> GovEvents
+        PromCand --> GovEvents
+    end
+
+    subgraph Lineage["Lineage"]
+        ArtLineage["artifact_lineage\n(run_key, dataset_id_v2,\nartifact_id, sha256)"]
+        ArtEdges["artifact_edges\n(child, parent, relation)"]
+        ArtLineage --> ArtEdges
+    end
+
+    subgraph Backends["Backends"]
+        SQLiteAuth["SQLite\n(authoritative\nfor governance)"]
+        DuckDBOpt["DuckDB\n(optional analytics\nread-only for governance)"]
+    end
+
+    RunContext --> Eval
+    Eval --> Validation
+    Validation --> Artifacts
+    Artifacts --> EvalElig
+    Artifacts --> ArtLineage
+    Governance --> Lineage
+    SQLiteAuth --> Data
+    SQLiteAuth --> Governance
+    SQLiteAuth --> Lineage
+    DuckDBOpt -.-> SQLiteAuth

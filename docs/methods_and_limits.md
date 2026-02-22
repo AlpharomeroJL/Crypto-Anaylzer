@@ -1,12 +1,12 @@
 # Methods & Limits
 
-This document formalizes the statistical methods used in Crypto-Analyzer's research validation stack and clarifies their assumptions, implementation boundaries, and limitations.
+This document formalizes the statistical methods used in Crypto-Anaylzer's research validation stack and clarifies their assumptions, implementation boundaries, and limitations.
 
 The goal is not to "prove alpha," but to control false discovery, quantify selection bias, and make overfitting visible.
 
 ## 1. Research Philosophy
 
-Crypto-Analyzer treats backtesting as a multiple testing problem under dependence.
+Crypto-Anaylzer treats backtesting as a multiple testing problem under dependence.
 
 Markets exhibit:
 
@@ -215,9 +215,9 @@ Multiple testing requires estimating the number of "independent" tests. Signals 
 
 **Reality Check (RC):** Max-statistic bootstrap test for data snooping. Observed statistic = max over hypotheses (e.g. mean IC); null = same max over bootstrap draws with *shared* resampling indices across hypotheses to preserve dependence. P-value = (1 + count of null max ≥ observed) / (B + 1). Keyed by `family_id`.
 
-**Romano–Wolf (RW):** MaxT stepdown procedure. When enabled (env flag), the repo computes adjusted p-values monotone in stepdown order using the same joint null matrix. **Output contract:** `rw_adjusted_p_values` is *absent* when RW is disabled; when enabled and computed, it is present (non-empty dict hypothesis_id → adjusted p-value). `stats_overview.json` includes `rw_enabled` (bool).
+**Romano–Wolf (RW):** MaxT stepdown procedure. When enabled (env `CRYPTO_ANALYZER_ENABLE_ROMANOWOLF=1`), the repo computes adjusted p-values monotone in stepdown order using the same joint null matrix. **Output contract:** `rw_adjusted_p_values` is *absent* when RW is disabled; when enabled and computed, it is present (non-empty dict hypothesis_id → adjusted p-value). `stats_overview.json` includes `rw_enabled` (bool). Implementation: `crypto_analyzer/stats/reality_check.py` (`_romano_wolf_stepdown`, `run_reality_check`).
 
-**Artifact keys:** RC summary JSON: `rc_p_value`, `observed_max`, `n_sim`, `hypothesis_ids`, `rc_metric`, `rc_method`, `rc_avg_block_length`; when RW enabled: `rw_adjusted_p_values`, `rw_alpha`, bootstrap params.
+**Artifact keys:** RC summary JSON: `rc_p_value`, `observed_max`, `n_sim`, `requested_n_sim`, `actual_n_sim`, `n_sim_shortfall_warning`, `null_construction_spec`, `component_salt`, `seed_root`, `rc_summary_schema_version`, `rc_metric`, `rc_method`, `rc_avg_block_length`; when RW enabled: `rw_adjusted_p_values`, `rw_alpha`, bootstrap params.
 
 **Limits:** RC and RW assume the bootstrap null is appropriate; regime breaks can distort calibration.
 
@@ -249,7 +249,7 @@ Multiple testing requires estimating the number of "independent" tests. Signals 
 
 ## 13. Artifacts / Audit (Stats Stack Keys)
 
-Single source of truth for JSON/CSV keys. All report paths and specs should reference this section.
+Single source of truth for JSON/CSV keys. All report paths and specs should reference this section. Schema version contracts (gatekeeper requires exact match): `validation_bundle_schema_version` (bundle meta), `rc_summary_schema_version` (RC summary), `fold_causality_attestation_schema_version` (fold attestation). Current values: 1 (see `crypto_analyzer/contracts/schema_versions.py`, `crypto_analyzer/fold_causality/attestation.py`). Determinism: `seed_root(run_key, salt, fold_id=None, version)` in `crypto_analyzer/rng.py`; provenance in RC summary: `seed_root`, `component_salt`, `null_construction_spec`, `requested_n_sim`, `actual_n_sim`.
 
 ### stats_overview.json
 
@@ -267,7 +267,8 @@ Single source of truth for JSON/CSV keys. All report paths and specs should refe
 ### reality_check_summary_*.json
 
 - `rw_adjusted_p_values`: absent when RW disabled; present/non-empty when enabled and computed (hypothesis_id → adjusted p-value). When cache is used and full null matrix not stored, may be empty.
-- Existing RC keys: `rc_p_value`, `observed_max`, `n_sim`, `hypothesis_ids`, `rc_metric`, `rc_method`, `rc_avg_block_length`, etc.
+- RC provenance: `requested_n_sim`, `actual_n_sim`, `n_sim_shortfall_warning` (when actual < requested), `null_construction_spec`, `component_salt`, `seed_root`, `rc_summary_schema_version`.
+- Other RC keys: `rc_p_value`, `observed_max`, `n_sim`, `hypothesis_ids`, `rc_metric`, `rc_method`, `rc_avg_block_length`.
 
 ### execution_evidence_*.json
 
@@ -279,7 +280,7 @@ Single source of truth for JSON/CSV keys. All report paths and specs should refe
 - **HAC:** `hac_skipped_reason` set ⇒ t/p null.
 - **CSCV:** `pbo_cscv_skipped_reason` set ⇒ CSCV fields may be absent.
 
-See [Stats stack acceptance](spec/stats_stack_upgrade_acceptance.md).
+See [Stats stack acceptance](spec/stats_stack_upgrade_acceptance.md). For implementation locations and known deviations, see [Methods implementation alignment](audit/methods_implementation_alignment.md).
 
 ## 14. Null Suite (Placebo Tests)
 
@@ -332,7 +333,7 @@ All conditions must hold.
 
 ## 18. Research Integrity Statement
 
-Crypto-Analyzer is a research validation engine. It is not a trading system, an execution engine, or a guarantee of profit.
+Crypto-Anaylzer is a research validation engine. It is not a trading system, an execution engine, or a guarantee of profit.
 
 All outputs are conditional on: data quality, model assumptions, market stability.
 
@@ -345,6 +346,10 @@ All outputs are conditional on: data quality, model assumptions, market stabilit
 - Politis & Romano (1994), Stationary bootstrap (Deep Research Review of Alpharo…).
 - White (2000), Reality Check (Deep Research Review of Alpharo…).
 
+## Known deviations / implementation notes
+
+Where the implementation intentionally or unintentionally differs from a canonical academic definition, see [Methods implementation alignment](audit/methods_implementation_alignment.md) for exact code pointers and impact. Examples: CSCV PBO uses random permutations for splits (no full enumeration of choose(S,S/2)); DSR uses excess kurtosis in the variance term.
+
 ## Docs QA checklist (verified in docs-only polish)
 
 - [x] No claim that Romano–Wolf is stubbed or NotImplementedError; RW documented as implemented, opt-in.
@@ -353,3 +358,4 @@ All outputs are conditional on: data quality, model assumptions, market stabilit
 - [x] Artifacts §13 is the single canonical list for stats_overview, break_diagnostics, reality_check_summary, execution_evidence keys and skip semantics.
 - [x] Math in this doc is GitHub-safe (no raw \$\$ or \$$\$$ in prose; inline/display conventions consistent).
 - [x] Cross-links to implementation appendix and stats_stack_upgrade_acceptance.md preserved.
+- [x] Determinism/provenance: RC summary keys (requested_n_sim, actual_n_sim, null_construction_spec, component_salt, seed_root); schema versions in [alignment audit](audit/methods_implementation_alignment.md).
