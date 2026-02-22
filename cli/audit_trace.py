@@ -29,8 +29,27 @@ def _get_db_path(args: argparse.Namespace) -> str:
     return os.environ.get("CRYPTO_ANALYZER_DB_PATH", str(Path("reports") / "crypto_analyzer.db"))
 
 
+def _get_eligibility_provenance(conn: sqlite3.Connection, eligibility_report_id: str | None) -> dict:
+    """Return run_key, dataset_id_v2, engine_version, config_version from eligibility_reports if present."""
+    out = {"run_key": "", "dataset_id_v2": "", "engine_version": "", "config_version": "", "seed_version": ""}
+    if not eligibility_report_id:
+        return out
+    cur = conn.execute(
+        "SELECT run_key, run_instance_id, dataset_id_v2, engine_version, config_version FROM eligibility_reports WHERE eligibility_report_id = ?",
+        (eligibility_report_id,),
+    )
+    row = cur.fetchone()
+    if row:
+        out["run_key"] = row[0] or ""
+        out["dataset_id_v2"] = row[2] or ""
+        out["engine_version"] = row[3] or ""
+        out["config_version"] = row[4] or ""
+    # seed_version is in bundle meta / lineage schema_versions_json, not eligibility_reports
+    return out
+
+
 def cmd_trace_acceptance(args: argparse.Namespace) -> int:
-    """Print audit trace for an accepted/candidate ID (read-only)."""
+    """Print audit trace for a candidate_id (read-only). Works for any status; warns if not accepted."""
     db_path = _get_db_path(args)
     candidate_id = getattr(args, "candidate_id", None) or getattr(args, "id", None)
     if not candidate_id:
@@ -43,7 +62,34 @@ def cmd_trace_acceptance(args: argparse.Namespace) -> int:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
+        cur = conn.execute("SELECT status FROM promotion_candidates WHERE candidate_id = ?", (candidate_id,))
+        row = cur.fetchone()
+        if not row:
+            print(f"Candidate not found: {candidate_id}", file=sys.stderr)
+            return 1
+        status = (row[0] or "").strip()
+        if status != "accepted":
+            print(
+                f"Candidate is not accepted; status={status!r}. Trace is most meaningful after promotion to accepted.",
+                file=sys.stderr,
+            )
+
         trace = trace_acceptance(conn, candidate_id)
+        prov = _get_eligibility_provenance(conn, trace.eligibility_report_id)
+        # seed_version from artifact_lineage.schema_versions_json (trace does not select it)
+        run_inst = trace.artifact_lineage[0].get("run_instance_id") if trace.artifact_lineage else ""
+        if run_inst:
+            cur = conn.execute(
+                "SELECT schema_versions_json FROM artifact_lineage WHERE run_instance_id = ? LIMIT 1",
+                (run_inst,),
+            )
+            r = cur.fetchone()
+            if r and r[0]:
+                try:
+                    sv = json.loads(r[0])
+                    prov["seed_version"] = str(sv.get("seed_derivation", ""))
+                except Exception:
+                    pass
     finally:
         conn.close()
 
@@ -55,7 +101,6 @@ def cmd_trace_acceptance(args: argparse.Namespace) -> int:
     }
 
     if getattr(args, "json", False):
-        # Serialize for JSON (sqlite3.Row -> dict already)
         def _serialize(obj):
             if isinstance(obj, dict):
                 return {k: _serialize(v) for k, v in obj.items()}
@@ -69,6 +114,11 @@ def cmd_trace_acceptance(args: argparse.Namespace) -> int:
     else:
         print(f"Candidate ID: {trace.candidate_id}")
         print(f"Eligibility report ID: {trace.eligibility_report_id}")
+        print(f"run_key: {prov['run_key'] or '(none)'}")
+        print(f"dataset_id_v2: {prov['dataset_id_v2'] or '(none)'}")
+        print(f"engine_version: {prov['engine_version'] or '(none)'}")
+        print(f"config_version: {prov['config_version'] or '(none)'}")
+        print(f"seed_version: {prov['seed_version'] or '(see bundle meta / lineage)'}")
         print(f"Governance events: {len(trace.governance_events)}")
         print(f"Artifact lineage rows: {len(trace.artifact_lineage)}")
         for ev in trace.governance_events[:5]:

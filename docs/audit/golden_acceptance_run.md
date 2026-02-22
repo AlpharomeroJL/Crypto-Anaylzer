@@ -2,6 +2,8 @@
 
 This document provides copy-paste steps to demonstrate the system’s institutional guarantees end-to-end on Windows PowerShell, using public endpoints only (no API keys). DuckDB is optional; the proof uses SQLite only.
 
+**Prerequisite:** This proof requires **Phase 3 migrations** applied (tables: `governance_events`, `artifact_lineage`, `artifact_edges`, `eligibility_reports`, promotion triggers). The “Create DB + Phase 3 migrations” snippet in Section C does this in one step when using a fresh DB.
+
 ---
 
 ## A. Goal and guarantees
@@ -74,13 +76,17 @@ print('DB created and Phase 3 migrations applied')
 $env:CRYPTO_ANALYZER_DETERMINISTIC_TIME = "1"
 .\scripts\run.ps1 reportv2 --freq 1h --out-dir reports --db $env:CRYPTO_ANALYZER_DB_PATH --hypothesis "golden proof"
 
-# 4) Get run_id from latest manifest (used in create)
-$runId = (Get-Content (Get-ChildItem reports\csv\manifest_*.json | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName | ConvertFrom-Json).run_instance_id
-if (-not $runId) { $runId = (Get-ChildItem reports\csv\validation_bundle_*.json | Sort-Object LastWriteTime -Descending | Select-Object -First 1).BaseName -replace 'validation_bundle_[^_]+_[^_]+_', '' -replace '\.json$', '' }
-Write-Host "Run ID for create: $runId"
+# 4) Get run_id and bundle path deterministically (latest manifest → run_instance_id → matching bundle)
+$manifestFile = Get-ChildItem -Path reports\manifests -Filter "*.json" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if (-not $manifestFile) { Write-Error "No manifest in reports\manifests. Run reportv2 first."; exit 1 }
+$manifestJson = Get-Content $manifestFile.FullName -Raw | ConvertFrom-Json
+$runId = $manifestJson.run_instance_id
+if (-not $runId) { $runId = $manifestJson.run_id }
+$bundlePath = Get-ChildItem -Path reports\csv -Filter "*validation_bundle*${runId}*.json" -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $bundlePath) { Write-Error "No validation_bundle_*_${runId}.json in reports\csv."; exit 1 }
+Write-Host "Run ID: $runId  Bundle: $($bundlePath.FullName)"
 
-# 5) Create promotion candidate (signal/horizon must match report; adjust if needed)
-$bundlePath = Get-ChildItem reports\csv\validation_bundle_*_$runId.json -ErrorAction SilentlyContinue | Select-Object -First 1
+# 5) Create promotion candidate (signal/horizon must match report; verify with: python cli/promotion.py --help)
 $cid = .\.venv\Scripts\python.exe cli/promotion.py create --from-run $runId --signal "clean_momentum" --horizon 1 --db $env:CRYPTO_ANALYZER_DB_PATH --bundle-path $bundlePath.FullName 2>&1 | Select-Object -Last 1
 $cid = $cid.Trim()
 Write-Host "Candidate ID: $cid"
@@ -88,7 +94,10 @@ Write-Host "Candidate ID: $cid"
 # 6) Evaluate and promote to accepted (no --require-rc for minimal proof)
 .\.venv\Scripts\python.exe cli/promotion.py evaluate --id $cid --db $env:CRYPTO_ANALYZER_DB_PATH
 
-# 7) Demonstrate trigger: direct SQL update without eligibility_report_id is blocked
+# 7) Run audit trace after promotion to accepted (trace-acceptance works for any candidate_id; CLI warns if status is not accepted)
+.\.venv\Scripts\python.exe cli/audit_trace.py trace-acceptance --db $env:CRYPTO_ANALYZER_DB_PATH --candidate-id $cid
+
+# 8) Demonstrate trigger: direct SQL update without eligibility_report_id is blocked
 .\.venv\Scripts\python.exe -c "
 import sqlite3, os
 db = os.environ.get('CRYPTO_ANALYZER_DB_PATH', 'reports/crypto_analyzer.db')
@@ -107,23 +116,25 @@ else:
 conn.close()
 "
 
-# 8) Emit DB-only audit trace (see Section D for SQL and helper)
-.\.venv\Scripts\python.exe cli/audit_trace.py trace-acceptance --db $env:CRYPTO_ANALYZER_DB_PATH --candidate-id $cid
+# 9) (Optional) Emit full trace as JSON — see Section D for raw SQL
+.\.venv\Scripts\python.exe cli/audit_trace.py trace-acceptance --db $env:CRYPTO_ANALYZER_DB_PATH --candidate-id $cid --json
 ```
 
-### Full proof (walk-forward strict + RC + RW enabled)
+### Full proof (optional; walk-forward strict + RC + RW enabled)
+
+Depends on enabled features and artifact names. **Verify promotion CLI flags with:** `python cli/promotion.py create --help` and `python cli/promotion.py evaluate --help` (e.g. `--rc-summary-path`, `--execution-evidence-path`, `--require-rc`, `--require-exec`).
 
 - Use reportv2 with `--reality-check` and `--execution-evidence`; optionally enable Romano–Wolf and walk-forward.
-- Same steps as above, but:
+- Same steps as minimal proof, but:
   - Set `CRYPTO_ANALYZER_ENABLE_ROMANOWOLF=1` if you want RW in RC.
-  - Run reportv2 with `--reality-check` and `--execution-evidence`; create candidate with `--rc-summary-path` and `--execution-evidence-path` pointing to the generated files.
+  - Run reportv2 with `--reality-check` and `--execution-evidence`; create candidate with `--rc-summary-path` and `--execution-evidence-path` pointing to the generated RC summary and execution_evidence JSON files for that run.
   - Evaluate with `--require-rc` (and optionally `--require-exec`).
 
 ```powershell
 $env:CRYPTO_ANALYZER_DETERMINISTIC_TIME = "1"
 # Optional: $env:CRYPTO_ANALYZER_ENABLE_ROMANOWOLF = "1"
 .\scripts\run.ps1 reportv2 --freq 1h --out-dir reports --db $env:CRYPTO_ANALYZER_DB_PATH --reality-check --execution-evidence --hypothesis "full proof"
-# Then create with --rc-summary-path and --execution-evidence-path; evaluate with --require-rc
+# Then: create with --rc-summary-path and --execution-evidence-path (paths from reports/csv for this run); evaluate with --require-rc
 ```
 
 ---
@@ -189,13 +200,13 @@ ORDER BY child_artifact_id, relation;
 
 ### Invoking the read-only audit helper
 
-The repo provides a read-only CLI that calls `crypto_analyzer.governance.audit.trace_acceptance`:
+Run **after promotion to accepted** for a complete trace. The CLI works for any `candidate_id` (it will warn if status is not accepted). It calls `crypto_analyzer.governance.audit.trace_acceptance`:
 
 ```powershell
 .\.venv\Scripts\python.exe cli/audit_trace.py trace-acceptance --db reports\crypto_analyzer.db --candidate-id <CANDIDATE_ID>
 ```
 
-Optional: `--json` to dump machine-readable trace (eligibility_report_id, governance_events, artifact_lineage). No writes, no migrations, no promotion actions.
+Use `--json` to dump the full trace (eligibility_report_id, governance_events, artifact_lineage). No writes, no migrations, no promotion actions.
 
 ---
 
@@ -213,6 +224,8 @@ Optional: `--json` to dump machine-readable trace (eligibility_report_id, govern
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/test_reality_check_deterministic.py tests/test_reality_check_rng_determinism.py -q --tb=short
 ```
+
+**Verification (recommended before merge):** Run `ruff check .` and `ruff format .`; then `pytest tests/test_acceptance_audit_trace.py tests/test_no_illegal_imports.py -q --tb=short`. Full fast suite: `pytest -m "not slow" -q --tb=short`.
 
 ---
 

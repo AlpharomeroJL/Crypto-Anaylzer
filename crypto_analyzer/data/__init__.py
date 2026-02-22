@@ -1,5 +1,6 @@
 """
-Normalized data layer: load from SQLite and return clean pandas DataFrames.
+Data layer: normalized load from SQLite and clean pandas DataFrames.
+Scale-ready package; public API unchanged (load_bars, load_snapshots, etc.).
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from .config import (
+from crypto_analyzer.config import (
     ALLOWED_PRICE_COLUMNS,
     ALLOWED_SNAPSHOT_TABLES,
     allowed_bars_tables,
@@ -19,14 +20,14 @@ from .config import (
     is_btc_pair,
     price_column,
 )
-from .config import factor_symbol as config_factor_symbol
-from .config import (
+from crypto_analyzer.config import factor_symbol as config_factor_symbol
+from crypto_analyzer.config import (
     min_liquidity_usd as config_min_liq,
 )
-from .config import (
+from crypto_analyzer.config import (
     min_vol_h24 as config_min_vol,
 )
-from .read_api import _with_conn
+from crypto_analyzer.read_api import _with_conn
 
 NORMAL_COLUMNS = [
     "ts_utc",
@@ -133,7 +134,7 @@ def load_snapshots(
         df = df.loc[mask]
     df = df.reset_index(drop=True)
     try:
-        from .integrity import assert_monotonic_time_index
+        from crypto_analyzer.integrity import assert_monotonic_time_index
 
         w = assert_monotonic_time_index(df, col="ts_utc")
         if w:
@@ -204,7 +205,7 @@ def load_bars(
         valid = counts[counts >= min_bars].index
         df = df[df.set_index(["chain_id", "pair_address"]).index.isin(valid)].reset_index(drop=True)
     try:
-        from .integrity import assert_monotonic_time_index
+        from crypto_analyzer.integrity import assert_monotonic_time_index
 
         w = assert_monotonic_time_index(df, col="ts_utc")
         if w:
@@ -410,3 +411,16 @@ def load_factor_run(
     residual_df = resid_df.pivot(index="ts_utc", columns="asset_id", values="resid_log_return")
 
     return betas_dict, r2_df, residual_df
+
+
+__all__ = [
+    "NORMAL_COLUMNS",
+    "append_spot_returns_to_returns_df",
+    "get_factor_returns",
+    "load_bars",
+    "load_factor_run",
+    "load_snapshots",
+    "load_snapshots_as_bars",
+    "load_spot_price_resampled",
+    "load_spot_series",
+]
