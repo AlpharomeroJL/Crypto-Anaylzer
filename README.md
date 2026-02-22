@@ -81,6 +81,17 @@ One-command demo (preflight + poll + materialize + report): `.\scripts\run.ps1 d
 - **artifact_lineage + artifact_edges** — Audit graph from accepted → run → configs/versions/artifacts.
 - **SQLite authoritative** — Single source of truth for governance and lineage; optional DuckDB analytics backend (read-only for governance).
 
+### System guarantees
+
+| Risk | Control | Enforcement mechanism | Verified by |
+|------|---------|------------------------|-------------|
+| Data drift | dataset_id_v2 | Content-addressed hash + STRICT requirement for promotion | test_dataset_v2.py |
+| Seed drift | seed_root + versioned salts | SEED_ROOT_VERSION; deterministic RNG across processes | Deterministic tests (e.g. test_reportv2_deterministic_rerun, test_statistics_research) |
+| Promotion bypass | DB triggers | candidate/accepted require linked passing eligibility_report_id; trigger blocks UPDATE/DELETE without it | test_migrations_phase3.py |
+| Leakage (fold) | fold_causality_attestation | Purge/embargo, train-only fit; gatekeeper requires valid attestation when walk-forward used | test_fold_causality_attestation.py, test_promotion_requires_fold_causality_attestation.py, test_transform_fit_called_only_on_train.py |
+| RC provenance ambiguity | rc_summary schema version + seed_root | rc_summary_schema_version; seed_root/component_salt in RC summary; gatekeeper version check | test_calibration_rc_smoke.py, test_promotion_gating.py |
+| Artifact mutability | sha256 + artifact_lineage | compute_file_sha256; artifact_lineage rows with sha256; append-only lineage triggers | test_artifact_lineage_*.py, test_lineage_reproducibility_same_run_key_same_hashes.py |
+
 ### Design rationale
 
 **Why deterministic IDs?** So every run is traceable and repeatable: same inputs and config produce the same `dataset_id_v2`, `run_key`, and artifact hashes. That lets you compare runs, invalidate caches when data changes, and prove reproducibility in audits. **Why opt-in migrations?** Phase 3 (regimes, promotion, lineage) adds schema and behavior that not every user needs. **Why governance modeling?** Research that moves toward production needs a path from “exploratory” to “accepted” with clear gates (eligibility reports, fold attestation, RC/RW when enabled) and an append-only audit log.
