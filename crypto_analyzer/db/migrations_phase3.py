@@ -19,8 +19,8 @@ import sqlite3
 from pathlib import Path
 from typing import Callable, List, Tuple
 
-from ..governance import get_git_commit
-from ..timeutils import now_utc_iso
+from crypto_analyzer.core.run_identity import get_git_commit
+from crypto_analyzer.timeutils import now_utc_iso
 
 logger = logging.getLogger(__name__)
 

@@ -11,6 +11,7 @@ import pytest
 
 from crypto_analyzer.contracts.schema_versions import (
     RC_SUMMARY_SCHEMA_VERSION,
+    SEED_DERIVATION_SCHEMA_VERSION,
     VALIDATION_BUNDLE_SCHEMA_VERSION,
 )
 from crypto_analyzer.db.migrations import run_migrations
@@ -37,6 +38,7 @@ def _minimal_bundle(
             "engine_version": "abc",
             "config_version": "cfg1",
             "research_spec_version": "1",
+            "seed_version": SEED_DERIVATION_SCHEMA_VERSION,
         }
     return ValidationBundle(
         run_id="run1",
@@ -123,6 +125,7 @@ def test_e2e_promotion_with_rw_strict_eligibility_persisted_and_direct_update_bl
         "engine_version": "abc",
         "config_version": "cfg1",
         "research_spec_version": "1",
+        "seed_version": SEED_DERIVATION_SCHEMA_VERSION,
         "rw_enabled": True,
         "rw_adjusted_p_values": {"sig_a|1": 0.03},
     }

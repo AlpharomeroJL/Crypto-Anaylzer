@@ -81,3 +81,40 @@ def test_store_cannot_import_core_business_logic():
                     raise AssertionError(
                         f"store must not import business logic: {path.relative_to(root)} line {line} imports {mod}"
                     )
+
+
+def test_db_cannot_import_governance():
+    """DB (store-layer persistence) must not import governance (run identity lives in core)."""
+    root = Path(__file__).resolve().parent.parent
+    db_dir = root / "crypto_analyzer" / "db"
+    if not db_dir.is_dir():
+        return
+    for path in db_dir.rglob("*.py"):
+        if path.name.startswith("_"):
+            continue
+        for mod, line in _collect_imports_from_file(path):
+            if mod.startswith("crypto_analyzer.governance"):
+                raise AssertionError(
+                    f"db must not import governance: {path.relative_to(root)} line {line} imports {mod}"
+                )
+
+
+# Legacy module paths that must not appear as import targets (Phase 3.5 A6). Add when removing modules.
+FORBIDDEN_IMPORT_STRINGS: list[str] = []
+
+
+def test_no_forbidden_import_strings():
+    """No file under crypto_analyzer/ or cli/ may use forbidden import patterns (legacy/removed modules)."""
+    root = Path(__file__).resolve().parent.parent
+    for dir_name in ("crypto_analyzer", "cli"):
+        dir_path = root / dir_name
+        if not dir_path.is_dir():
+            continue
+        for path in dir_path.rglob("*.py"):
+            try:
+                text = path.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            for forbidden in FORBIDDEN_IMPORT_STRINGS:
+                if forbidden in text:
+                    raise AssertionError(f"Forbidden import pattern {forbidden!r} found in {path.relative_to(root)}")

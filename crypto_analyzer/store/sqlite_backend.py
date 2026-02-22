@@ -5,7 +5,6 @@ Phase 3 A5. Default backend; authoritative for governance and lineage.
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -13,6 +12,8 @@ import pandas as pd
 
 from crypto_analyzer.db.lineage import write_artifact_edge as _write_artifact_edge
 from crypto_analyzer.db.lineage import write_artifact_lineage as _write_artifact_lineage
+
+from .sqlite_session import sqlite_conn
 
 
 class SQLiteBackend:
@@ -28,16 +29,12 @@ class SQLiteBackend:
     ) -> pd.DataFrame:
         if db_path is None:
             raise ValueError("SQLiteBackend.read_table requires db_path")
-        db_path = str(Path(db_path).resolve())
-        conn = sqlite3.connect(db_path)
-        try:
+        with sqlite_conn(db_path) as conn:
             cols = ", ".join(columns) if columns else "*"
             q = f"SELECT {cols} FROM {table}"
             if limit is not None:
                 q += f" LIMIT {limit}"
             return pd.read_sql_query(q, conn)
-        finally:
-            conn.close()
 
     def write_artifact_lineage(
         self,

@@ -30,6 +30,7 @@ class RunnerConfig:
     dataset_id_v2: str = ""
     engine_version: str = ""
     config_version: str = ""
+    seed_version: int = 1
 
 
 def _is_trainable(t: Any) -> bool:
@@ -106,7 +107,7 @@ def run_walk_forward_with_causality(
     seed_root_val = None
     seed_salt = None
     if cfg.run_key:
-        seed_root_val = seed_root(cfg.run_key, salt=SALT_FOLD_SPLITS)
+        seed_root_val = seed_root(cfg.run_key, salt=SALT_FOLD_SPLITS, version=cfg.seed_version)
         seed_salt = SALT_FOLD_SPLITS
 
     attestation = build_fold_causality_attestation(
@@ -124,5 +125,6 @@ def run_walk_forward_with_causality(
         config_version=cfg.config_version,
         seed_root=seed_root_val,
         seed_salt=seed_salt,
+        seed_version=cfg.seed_version,
     )
     return per_fold_results, attestation

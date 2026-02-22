@@ -1,5 +1,6 @@
 """Bundle contract: candidate rejected on missing keys; exploratory ok with warnings."""
 
+from crypto_analyzer.contracts.schema_versions import SEED_DERIVATION_SCHEMA_VERSION
 from crypto_analyzer.contracts.validation_bundle_contract import (
     VALIDATION_BUNDLE_SCHEMA_VERSION,
     validate_bundle_for_level,
@@ -15,6 +16,7 @@ def _meta_provenance(**overrides):
         "run_key": "rk",
         "engine_version": "v1",
         "config_version": "c1",
+        "seed_version": SEED_DERIVATION_SCHEMA_VERSION,
     }
     base.update(overrides)
     return base

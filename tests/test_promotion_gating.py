@@ -12,6 +12,7 @@ sys.path.insert(0, str(_root))
 
 from crypto_analyzer.contracts.schema_versions import (
     RC_SUMMARY_SCHEMA_VERSION,
+    SEED_DERIVATION_SCHEMA_VERSION,
     VALIDATION_BUNDLE_SCHEMA_VERSION,
 )
 from crypto_analyzer.promotion import ThresholdConfig, evaluate_candidate, evaluate_eligibility
@@ -165,6 +166,7 @@ def _eligibility_meta(**overrides):
         "run_key": "rk1",
         "engine_version": "v1",
         "config_version": "cfg1",
+        "seed_version": SEED_DERIVATION_SCHEMA_VERSION,
     }
     base.update(overrides)
     return base

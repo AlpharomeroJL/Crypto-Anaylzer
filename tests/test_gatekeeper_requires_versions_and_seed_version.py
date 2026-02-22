@@ -71,6 +71,7 @@ def test_eligibility_passed_when_versions_present():
             "engine_version": "e1",
             "config_version": "c1",
             "validation_bundle_schema_version": 1,
+            "seed_version": 1,
         },
     )
     report = evaluate_eligibility(bundle, "candidate", rc_summary=None)

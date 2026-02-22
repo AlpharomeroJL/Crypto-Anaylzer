@@ -18,6 +18,7 @@ from crypto_analyzer.promotion.store_sqlite import (
     insert_eligibility_report,
     promote_to_accepted,
 )
+from crypto_analyzer.store.sqlite_session import sqlite_conn
 
 
 def test_default_run_migrations_does_not_create_phase3_tables():
@@ -25,16 +26,15 @@ def test_default_run_migrations_does_not_create_phase3_tables():
     with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as f:
         path = f.name
     try:
-        conn = sqlite3.connect(path)
-        run_migrations(conn, path)
-        cur = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('regime_runs','regime_states','schema_migrations_phase3')"
-        )
-        phase3_tables = [r[0] for r in cur.fetchall()]
-        assert "regime_runs" not in phase3_tables
-        assert "regime_states" not in phase3_tables
-        assert "schema_migrations_phase3" not in phase3_tables
-        conn.close()
+        with sqlite_conn(path) as conn:
+            run_migrations(conn, path)
+            cur = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('regime_runs','regime_states','schema_migrations_phase3')"
+            )
+            phase3_tables = [r[0] for r in cur.fetchall()]
+            assert "regime_runs" not in phase3_tables
+            assert "regime_states" not in phase3_tables
+            assert "schema_migrations_phase3" not in phase3_tables
     finally:
         Path(path).unlink(missing_ok=True)
 
@@ -44,41 +44,40 @@ def test_run_migrations_phase3_creates_tables_and_records():
     with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as f:
         path = f.name
     try:
-        conn = sqlite3.connect(path)
-        run_migrations(conn, path)
-        run_migrations_phase3(conn, path)
-        assert _schema_migrations_phase3_exists(conn)
-        assert _max_applied_version_phase3(conn) == len(MIGRATIONS_PHASE3)
-        cur = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('regime_runs','regime_states','promotion_candidates','promotion_events','sweep_families','sweep_hypotheses')"
-        )
-        tables = [r[0] for r in cur.fetchall()]
-        assert "regime_runs" in tables
-        assert "regime_states" in tables
-        assert "promotion_candidates" in tables
-        assert "promotion_events" in tables
-        assert "sweep_families" in tables
-        assert "sweep_hypotheses" in tables
-        cur = conn.execute("PRAGMA table_info(promotion_candidates)")
-        cols = [r[1] for r in cur.fetchall()]
-        for c in (
-            "candidate_id",
-            "created_at_utc",
-            "status",
-            "dataset_id",
-            "run_id",
-            "signal_name",
-            "horizon",
-            "config_hash",
-            "git_commit",
-            "evidence_json",
-        ):
-            assert c in cols
-        cur = conn.execute("PRAGMA table_info(promotion_events)")
-        cols_ev = [r[1] for r in cur.fetchall()]
-        for c in ("event_id", "candidate_id", "ts_utc", "event_type", "payload_json"):
-            assert c in cols_ev
-        conn.close()
+        with sqlite_conn(path) as conn:
+            run_migrations(conn, path)
+            run_migrations_phase3(conn, path)
+            assert _schema_migrations_phase3_exists(conn)
+            assert _max_applied_version_phase3(conn) == len(MIGRATIONS_PHASE3)
+            cur = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('regime_runs','regime_states','promotion_candidates','promotion_events','sweep_families','sweep_hypotheses')"
+            )
+            tables = [r[0] for r in cur.fetchall()]
+            assert "regime_runs" in tables
+            assert "regime_states" in tables
+            assert "promotion_candidates" in tables
+            assert "promotion_events" in tables
+            assert "sweep_families" in tables
+            assert "sweep_hypotheses" in tables
+            cur = conn.execute("PRAGMA table_info(promotion_candidates)")
+            cols = [r[1] for r in cur.fetchall()]
+            for c in (
+                "candidate_id",
+                "created_at_utc",
+                "status",
+                "dataset_id",
+                "run_id",
+                "signal_name",
+                "horizon",
+                "config_hash",
+                "git_commit",
+                "evidence_json",
+            ):
+                assert c in cols
+            cur = conn.execute("PRAGMA table_info(promotion_events)")
+            cols_ev = [r[1] for r in cur.fetchall()]
+            for c in ("event_id", "candidate_id", "ts_utc", "event_type", "payload_json"):
+                assert c in cols_ev
     finally:
         Path(path).unlink(missing_ok=True)
 
@@ -88,20 +87,18 @@ def test_run_migrations_phase3_rerun_idempotent():
     with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as f:
         path = f.name
     try:
-        conn = sqlite3.connect(path)
-        run_migrations(conn, path)
-        run_migrations_phase3(conn, path)
-        max_before = _max_applied_version_phase3(conn)
-        cur = conn.execute("SELECT COUNT(*) FROM schema_migrations_phase3")
-        count_before = cur.fetchone()[0]
-        conn.close()
+        with sqlite_conn(path) as conn:
+            run_migrations(conn, path)
+            run_migrations_phase3(conn, path)
+            max_before = _max_applied_version_phase3(conn)
+            cur = conn.execute("SELECT COUNT(*) FROM schema_migrations_phase3")
+            count_before = cur.fetchone()[0]
 
-        conn2 = sqlite3.connect(path)
-        run_migrations_phase3(conn2, path)
-        max_after = _max_applied_version_phase3(conn2)
-        cur = conn2.execute("SELECT COUNT(*) FROM schema_migrations_phase3")
-        count_after = cur.fetchone()[0]
-        conn2.close()
+        with sqlite_conn(path) as conn2:
+            run_migrations_phase3(conn2, path)
+            max_after = _max_applied_version_phase3(conn2)
+            cur = conn2.execute("SELECT COUNT(*) FROM schema_migrations_phase3")
+            count_after = cur.fetchone()[0]
 
         assert max_after == max_before
         assert count_after == count_before
@@ -114,34 +111,33 @@ def test_trigger_blocks_direct_update_to_candidate_without_eligibility_report():
     with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as f:
         path = f.name
     try:
-        conn = sqlite3.connect(path)
-        run_migrations(conn, path)
-        run_migrations_phase3(conn, path)
-        cid = create_candidate(
-            conn,
-            dataset_id="ds1",
-            run_id="run1",
-            signal_name="sig",
-            horizon=1,
-            config_hash="x",
-            git_commit="y",
-        )
-        conn.commit()
-        # Trigger: UPDATE status to candidate without eligibility_report_id must raise (IntegrityError for RAISE(ABORT))
-        try:
-            conn.execute(
-                "UPDATE promotion_candidates SET status = ? WHERE candidate_id = ?",
-                ("candidate", cid),
+        with sqlite_conn(path) as conn:
+            run_migrations(conn, path)
+            run_migrations_phase3(conn, path)
+            cid = create_candidate(
+                conn,
+                dataset_id="ds1",
+                run_id="run1",
+                signal_name="sig",
+                horizon=1,
+                config_hash="x",
+                git_commit="y",
             )
             conn.commit()
-        except (sqlite3.IntegrityError, sqlite3.OperationalError) as e:
-            assert "eligibility" in str(e).lower() or "abort" in str(e).lower()
-            return
+            # Trigger: UPDATE status to candidate without eligibility_report_id must raise (IntegrityError for RAISE(ABORT))
+            try:
+                conn.execute(
+                    "UPDATE promotion_candidates SET status = ? WHERE candidate_id = ?",
+                    ("candidate", cid),
+                )
+                conn.commit()
+            except (sqlite3.IntegrityError, sqlite3.OperationalError) as e:
+                assert "eligibility" in str(e).lower() or "abort" in str(e).lower()
+                return
         assert False, (
             "Expected IntegrityError/OperationalError from trigger when setting status=candidate without eligibility_report_id"
         )
     finally:
-        conn.close()
         Path(path).unlink(missing_ok=True)
 
 
@@ -150,44 +146,43 @@ def test_trigger_blocks_delete_eligibility_report_when_referenced():
     with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as f:
         path = f.name
     try:
-        conn = sqlite3.connect(path)
-        run_migrations(conn, path)
-        run_migrations_phase3(conn, path)
-        cid = create_candidate(
-            conn,
-            dataset_id="ds1",
-            run_id="run1",
-            signal_name="sig",
-            horizon=1,
-            config_hash="x",
-            git_commit="y",
-        )
-        conn.commit()
-        report_id = "elig_immutable_test_001"
-        insert_eligibility_report(
-            conn,
-            report_id,
-            cid,
-            "accepted",
-            True,
-            "[]",
-            "[]",
-            "2026-02-01T12:00:00Z",
-            run_key="rk1",
-            run_instance_id="run1",
-            dataset_id_v2="d2",
-            engine_version="v1",
-            config_version="c1",
-        )
-        promote_to_accepted(conn, cid, report_id, reason="test")
-        conn.commit()
-        try:
-            conn.execute("DELETE FROM eligibility_reports WHERE eligibility_report_id = ?", (report_id,))
+        with sqlite_conn(path) as conn:
+            run_migrations(conn, path)
+            run_migrations_phase3(conn, path)
+            cid = create_candidate(
+                conn,
+                dataset_id="ds1",
+                run_id="run1",
+                signal_name="sig",
+                horizon=1,
+                config_hash="x",
+                git_commit="y",
+            )
             conn.commit()
-        except (sqlite3.IntegrityError, sqlite3.OperationalError) as e:
-            assert "immutable" in str(e).lower() or "delete" in str(e).lower() or "abort" in str(e).lower()
-            return
+            report_id = "elig_immutable_test_001"
+            insert_eligibility_report(
+                conn,
+                report_id,
+                cid,
+                "accepted",
+                True,
+                "[]",
+                "[]",
+                "2026-02-01T12:00:00Z",
+                run_key="rk1",
+                run_instance_id="run1",
+                dataset_id_v2="d2",
+                engine_version="v1",
+                config_version="c1",
+            )
+            promote_to_accepted(conn, cid, report_id, reason="test")
+            conn.commit()
+            try:
+                conn.execute("DELETE FROM eligibility_reports WHERE eligibility_report_id = ?", (report_id,))
+                conn.commit()
+            except (sqlite3.IntegrityError, sqlite3.OperationalError) as e:
+                assert "immutable" in str(e).lower() or "delete" in str(e).lower() or "abort" in str(e).lower()
+                return
         assert False, "Expected trigger to block DELETE of referenced eligibility report"
     finally:
-        conn.close()
         Path(path).unlink(missing_ok=True)

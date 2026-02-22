@@ -9,6 +9,7 @@ from pathlib import Path
 
 from crypto_analyzer.contracts.schema_versions import (
     RC_SUMMARY_SCHEMA_VERSION,
+    SEED_DERIVATION_SCHEMA_VERSION,
     VALIDATION_BUNDLE_SCHEMA_VERSION,
 )
 from crypto_analyzer.db.migrations import run_migrations
@@ -30,6 +31,7 @@ def _write_bundle(path: Path, mean_ic: float = 0.03, t_stat: float = 3.0) -> Non
         "run_key": "rk_e2e",
         "engine_version": "abc",
         "config_version": "xyz",
+        "seed_version": SEED_DERIVATION_SCHEMA_VERSION,
     }
     bundle = ValidationBundle(
         run_id="run_e2e",

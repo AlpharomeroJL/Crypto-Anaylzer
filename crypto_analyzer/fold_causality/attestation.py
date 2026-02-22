@@ -23,6 +23,7 @@ def build_fold_causality_attestation(
     config_version: str = "",
     seed_root: Optional[int] = None,
     seed_salt: Optional[str] = None,
+    seed_version: int = 1,
 ) -> Dict[str, Any]:
     """
     Build attestation dict for persistence. checks must include:
@@ -59,6 +60,7 @@ def build_fold_causality_attestation(
         out["seed_root"] = seed_root
     if seed_salt is not None:
         out["seed_salt"] = seed_salt
+    out["seed_version"] = seed_version
     return out
 
 

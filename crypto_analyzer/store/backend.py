@@ -1,6 +1,6 @@
 """
-Backend interface: read_table, write_artifact_lineage (SQLite), query_analytics (DuckDB optional).
-Phase 3 A5. SQLite remains authoritative for governance and lineage.
+Backend interface: read/write analytics (read_table, query_analytics) and lineage writer (always SQLite).
+Phase 3.5 A7. SQLite is the single authority for governance and lineage; conn passed to write_* is always SQLite.
 """
 
 from __future__ import annotations
@@ -15,7 +15,8 @@ _backend: Optional["Backend"] = None
 
 class Backend(ABC):
     """
-    Read/compute backend. Lineage and governance always write to SQLite.
+    Read/compute backend for analytics. Lineage writer interface: write_artifact_lineage and
+    write_artifact_edge always write to the provided SQLite connection (never to DuckDB or other).
     """
 
     @abstractmethod

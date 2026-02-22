@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Tuple
 
-from .schema_versions import VALIDATION_BUNDLE_SCHEMA_VERSION
+from .schema_versions import SEED_DERIVATION_SCHEMA_VERSION, VALIDATION_BUNDLE_SCHEMA_VERSION
 
 _REQUIRED_PROVENANCE_KEYS = (
     "dataset_id_v2",
@@ -59,5 +59,10 @@ def validate_bundle_for_level(
         reasons.append("dataset_hash_algo must be sqlite_logical_v2")
     if meta.get("dataset_hash_mode") != "STRICT":
         reasons.append("dataset_hash_mode must be STRICT for promotion")
+    seed_ver = meta.get("seed_version")
+    if seed_ver is None:
+        reasons.append("seed_version missing (required for candidate/accepted)")
+    elif seed_ver != SEED_DERIVATION_SCHEMA_VERSION:
+        reasons.append(f"seed_version must be {SEED_DERIVATION_SCHEMA_VERSION} (got {seed_ver!r})")
     ok = len(reasons) == 0
     return (ok, reasons, warnings)

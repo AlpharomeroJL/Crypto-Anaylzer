@@ -38,13 +38,11 @@ def require_promotion_tables(conn: sqlite3.Connection) -> None:
 def init_promotion_tables(db_path: Union[str, Path]) -> None:
     """Run Phase 3 migrations to create promotion (and regime) tables. Opt-in. Call from CLI or UI."""
     from crypto_analyzer.db.migrations_phase3 import run_migrations_phase3
+    from crypto_analyzer.store.sqlite_session import sqlite_conn
 
     path = str(Path(db_path).resolve())
-    conn = sqlite3.connect(path)
-    try:
+    with sqlite_conn(path) as conn:
         run_migrations_phase3(conn, path)
-    finally:
-        conn.close()
 
 
 def _canonical_json(obj: Any, float_round: int = 10) -> Any:

@@ -13,3 +13,6 @@ RC_SUMMARY_SCHEMA_VERSION = 1
 
 # Calibration harness outputs: for persisted calibration results
 CALIBRATION_HARNESS_SCHEMA_VERSION = 1
+
+# Seed derivation: version of seed_root(run_key, salt, version); must appear in bundle meta, RC summary, fold attestation
+SEED_DERIVATION_SCHEMA_VERSION = 1

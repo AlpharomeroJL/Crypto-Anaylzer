@@ -27,6 +27,7 @@ from crypto_analyzer.artifacts import (
     write_df_csv_stable,
     write_json_sorted,
 )
+from crypto_analyzer.core.context import RunContext
 from crypto_analyzer.governance import stable_run_id
 from crypto_analyzer.promotion.gating import (
     PromotionDecision,
@@ -116,15 +117,9 @@ def _record_lineage_if_requested(
         )
     except ImportError:
         return
-    if conn is None and db_path is not None:
-        import sqlite3
 
-        conn = sqlite3.connect(str(Path(db_path).resolve()))
-        own_conn = True
-    else:
-        own_conn = False
-    try:
-        if not lineage_tables_exist(conn):
+    def _do_record(c: Any) -> None:
+        if not lineage_tables_exist(c):
             return
         created_utc = now_utc_iso()
         schema_versions: Dict[str, Any] = {}
@@ -157,7 +152,7 @@ def _record_lineage_if_requested(
             artifact_id = sha256
             rel_path = str(path.relative_to(bundle_dir)) if path.is_relative_to(bundle_dir) else name
             write_artifact_lineage(
-                conn,
+                c,
                 artifact_id=artifact_id,
                 run_instance_id=run_id,
                 run_key=run_key,
@@ -177,14 +172,20 @@ def _record_lineage_if_requested(
             for k in ("manifest", "metrics_ic", "ic_decay", "rc_summary", "fold_causality_attestation"):
                 if k in written_ids:
                     write_artifact_edge(
-                        conn,
+                        c,
                         child_artifact_id=child_id,
                         parent_artifact_id=written_ids[k],
                         relation="derived_from",
                     )
-    finally:
-        if own_conn and conn is not None:
-            conn.close()
+
+    if conn is not None:
+        _do_record(conn)
+        return
+    if db_path is not None:
+        from crypto_analyzer.store.sqlite_session import sqlite_conn
+
+        with sqlite_conn(db_path) as c:
+            _do_record(c)
 
 
 def run_research_pipeline(
@@ -196,6 +197,7 @@ def run_research_pipeline(
     enable_reality_check: bool = False,
     conn: Optional[Any] = None,
     db_path: Optional[Union[str, Path]] = None,
+    run_context: Optional[RunContext] = None,
 ) -> ResearchPipelineResult:
     """
     End-to-end demo pipeline: load data → construct signals → IC/decay/coverage
@@ -203,8 +205,7 @@ def run_research_pipeline(
 
     Determinism: stable sorting, sort_keys JSON, stable run_id when not provided.
     Bundle directory contains manifest.json, metrics files, and hashes.json.
-
-    config: dict with at least out_dir, dataset_id, signal_name, freq, horizons; optional seed, thresholds.
+    When run_context is provided, it is used for lineage and RC seed; otherwise built from config.
     """
     out_dir = Path(config.get("out_dir", "artifacts/research"))
     dataset_id = str(config.get("dataset_id", "demo"))
@@ -221,6 +222,29 @@ def run_research_pipeline(
     # Stable run_id
     if run_id is None:
         run_id = _stable_run_id_from_pipeline(hypothesis_id, family_id, _config_digest(config))
+
+    # Explicit RunContext: use provided or build from config (no scattered provenance dicts)
+    if run_context is None:
+        _schema: Dict[str, Any] = {}
+        try:
+            from crypto_analyzer.contracts.schema_versions import (
+                RC_SUMMARY_SCHEMA_VERSION,
+                VALIDATION_BUNDLE_SCHEMA_VERSION,
+            )
+
+            _schema["validation_bundle"] = VALIDATION_BUNDLE_SCHEMA_VERSION
+            _schema["rc_summary"] = RC_SUMMARY_SCHEMA_VERSION
+        except Exception:
+            pass
+        run_context = RunContext(
+            run_key=config.get("run_key") or run_id,
+            run_instance_id=run_id,
+            dataset_id_v2=config.get("dataset_id_v2") or dataset_id,
+            engine_version=config.get("engine_version", ""),
+            config_version=config.get("config_version", ""),
+            seed_version=int(config.get("seed_version", 1)),
+            schema_versions=_schema,
+        )
 
     # 1) Load data (synthetic for demo)
     n_bars = int(config.get("n_bars", 100))
@@ -296,10 +320,11 @@ def run_research_pipeline(
 
                 runner_cfg = RunnerConfig(
                     ts_column="ts_utc",
-                    run_key=config.get("run_key") or run_id,
-                    dataset_id_v2=config.get("dataset_id_v2") or dataset_id,
-                    engine_version=config.get("engine_version", ""),
-                    config_version=config.get("config_version", ""),
+                    run_key=run_context.run_key,
+                    dataset_id_v2=run_context.dataset_id_v2,
+                    engine_version=run_context.engine_version,
+                    config_version=run_context.config_version,
+                    seed_version=run_context.seed_version,
                 )
                 _, fold_causality_attestation = run_walk_forward_with_causality(
                     data_wf, split_plan, [], _wf_scorer, runner_cfg
@@ -327,6 +352,7 @@ def run_research_pipeline(
         "hypothesis_id": hypothesis_id,
         "family_id": family_id,
         "regime_coverage_summary": regime_coverage_summary,
+        "seed_version": run_context.seed_version,
     }
     if walk_forward_used and fold_causality_attestation is not None:
         meta["walk_forward_used"] = True
@@ -340,17 +366,20 @@ def run_research_pipeline(
         ic_series = ic_series_by_horizon[primary_h]
         observed_stats = pd.Series({hypothesis_id: float(ic_series.mean())}).sort_index()
         series_by_hyp = {hypothesis_id: ic_series.reindex(returns_df.index).dropna()}
-        run_key = config.get("run_key") or run_id
         from crypto_analyzer.rng import SALT_RC_NULL
         from crypto_analyzer.rng import seed_root as _seed_root
 
-        rc_seed = _seed_root(run_key, salt=SALT_RC_NULL) if run_key else (seed + 1)
+        rc_seed = (
+            _seed_root(run_context.run_key, salt=SALT_RC_NULL, version=run_context.seed_version)
+            if run_context.run_key
+            else (seed + 1)
+        )
         rc_cfg = RealityCheckConfig(
             metric="mean_ic",
             horizon=primary_h,
             n_sim=int(config.get("rc_n_sim", 50)),
             seed=rc_seed,
-            run_key=run_key or None,
+            run_key=run_context.run_key or None,
         )
         null_gen = make_null_generator_stationary(series_by_hyp, rc_cfg)
         rc_summary = run_reality_check(observed_stats, null_gen, rc_cfg)
@@ -443,15 +472,19 @@ def run_research_pipeline(
     write_json_sorted(hashes_content, hashes_path)
     artifact_paths["hashes"] = str(hashes_path)
 
+    # Phase 3.5 A2: candidate/accepted path requires valid RunContext before doing work
+    if decision.status in ("candidate", "accepted"):
+        run_context.require_for_promotion()
+
     # Phase 3 A4: record artifact lineage when conn or db_path provided
     _record_lineage_if_requested(
         conn=conn,
         db_path=db_path,
         run_id=run_id,
-        run_key=config.get("run_key") or run_id,
-        dataset_id_v2=config.get("dataset_id_v2") or config.get("dataset_id", ""),
-        engine_version=config.get("engine_version", ""),
-        config_version=config.get("config_version", ""),
+        run_key=run_context.run_key,
+        dataset_id_v2=run_context.dataset_id_v2,
+        engine_version=run_context.engine_version,
+        config_version=run_context.config_version,
         artifact_paths=artifact_paths,
         hashes_content=hashes_content,
         bundle_dir=bundle_dir,
