@@ -10,13 +10,31 @@ import json
 import platform
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Dict
 
 import pandas as pd
 
 from .artifacts import ensure_dir, write_json_sorted
 from .spec import spec_summary
 from .timeutils import now_utc_iso
+
+# Keys to exclude from run_key (semantic identity must not depend on these)
+_RUN_KEY_EXCLUDE_KEYS = frozenset({"ts_utc", "created_utc", "timestamp", "out_dir", "output_dir", "path", "paths"})
+
+
+@dataclass
+class RunIdentity:
+    """Phase 1 run identity: run_key (semantic) + run_instance_id (execution-specific)."""
+
+    run_key: str
+    run_instance_id: str
+    run_identity_schema_version: int = 1
+    engine_version: str = ""
+    config_version: str = ""
+    research_spec_version: str = ""
+    pipeline_contract_version: str = ""
 
 
 def get_git_commit() -> str:
@@ -55,6 +73,55 @@ def stable_run_id(payload: dict) -> str:
     """Return a stable hash of the payload (e.g. for reproducibility)."""
     blob = json.dumps(payload, sort_keys=True, default=str)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+
+def _payload_for_run_key(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Strip keys that must not affect run_key (timestamps, paths)."""
+    out: Dict[str, Any] = {}
+    for k, v in payload.items():
+        if k in _RUN_KEY_EXCLUDE_KEYS:
+            continue
+        if isinstance(v, dict):
+            out[k] = _payload_for_run_key(v)
+        elif isinstance(v, list):
+            out[k] = [_payload_for_run_key(x) if isinstance(x, dict) else x for x in v]
+        else:
+            out[k] = v
+    return out
+
+
+def compute_run_key(payload: dict) -> str:
+    """
+    Deterministic run_key from semantic payload only.
+    Must include: dataset_id_v2, semantic config (signals, horizons, toggles, RC/RW config),
+    version pins (engine_version, config_version, research_spec_version).
+    Must exclude: timestamps (ts_utc, created_utc), file paths.
+    """
+    cleaned = _payload_for_run_key(payload)
+    blob = json.dumps(cleaned, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+
+def build_run_identity(
+    semantic_payload: Dict[str, Any],
+    run_instance_id: str,
+    *,
+    engine_version: str = "",
+    config_version: str = "",
+    research_spec_version: str = "",
+    pipeline_contract_version: str = "",
+) -> RunIdentity:
+    """Build RunIdentity: compute_run_key(semantic_payload) + instance id and version pins."""
+    run_key = compute_run_key(semantic_payload)
+    return RunIdentity(
+        run_key=run_key,
+        run_instance_id=run_instance_id,
+        run_identity_schema_version=1,
+        engine_version=engine_version or get_git_commit(),
+        config_version=config_version,
+        research_spec_version=research_spec_version,
+        pipeline_contract_version=pipeline_contract_version,
+    )
 
 
 def make_run_manifest(

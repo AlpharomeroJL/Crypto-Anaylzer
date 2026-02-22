@@ -1701,13 +1701,46 @@ def main():
                                 )
                                 reason = st.text_input("Reason (for audit)", value="", key="prom_reason")
                                 if st.button("Update status", key="prom_upd"):
-                                    conn3 = sqlite3.connect(prom_db)
-                                    try:
-                                        update_status(conn3, sel_id, new_status, reason=reason or None)
-                                    finally:
-                                        conn3.close()
-                                    st.success("Status updated.")
-                                    st.rerun()
+                                    if new_status in ("candidate", "accepted"):
+                                        evidence = json.loads(row["evidence_json"]) if row.get("evidence_json") else {}
+                                        bundle_path = evidence.get("bundle_path") or evidence.get("validation_bundle_path")
+                                        if not bundle_path:
+                                            st.error("Candidate/accepted requires a bundle path in evidence. Use Evaluate candidate instead.")
+                                        else:
+                                            base = Path(bundle_path).parent if bundle_path else None
+                                            thresh = ThresholdConfig(
+                                                require_reality_check=require_rc,
+                                                max_rc_p_value=max_rc_p,
+                                                require_execution_evidence=require_exec,
+                                                min_liquidity_usd_min=min_liq,
+                                                max_participation_rate_max=max_part,
+                                            )
+                                            conn3 = sqlite3.connect(prom_db)
+                                            try:
+                                                dec = evaluate_and_record(
+                                                    conn3,
+                                                    sel_id,
+                                                    thresh,
+                                                    bundle_path,
+                                                    evidence_base_path=base,
+                                                    target_status=new_status,
+                                                    allow_missing_execution_evidence=allow_missing_exec,
+                                                )
+                                            finally:
+                                                conn3.close()
+                                            if dec.status == "accepted":
+                                                st.success(f"Promoted to {new_status}. Reasons: {dec.reasons or 'none'}")
+                                            else:
+                                                st.error(f"Cannot promote: {dec.status}. Reasons: {'; '.join(dec.reasons) if dec.reasons else 'none'}")
+                                            st.rerun()
+                                    else:
+                                        conn3 = sqlite3.connect(prom_db)
+                                        try:
+                                            update_status(conn3, sel_id, new_status, reason=reason or None)
+                                        finally:
+                                            conn3.close()
+                                        st.success("Status updated.")
+                                        st.rerun()
                 else:
                     st.info(
                         "No candidates match filters. Use CLI: promotion create --from-run <run_id> --signal <name> --horizon <h>"

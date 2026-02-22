@@ -72,6 +72,44 @@ def reality_check_pvalue(
     return (1.0 + count_ge) / (B + 1.0)
 
 
+def _romano_wolf_stepdown(
+    observed_stats: pd.Series,
+    null_stats_matrix: np.ndarray,
+) -> pd.Series:
+    """
+    Romano–Wolf stepdown adjusted p-values. observed_stats and null_stats_matrix columns
+    must align (same hypothesis order). Returns Series index=hypothesis_id, values=adjusted p in [0,1].
+    Stepdown order: by decreasing observed statistic. Adjusted p-values non-decreasing in that order.
+    Caller must ensure observed_stats contains no NaN/inf (fail-closed: do not call if not finite).
+    """
+    if observed_stats.empty or null_stats_matrix.size == 0:
+        return pd.Series(dtype=float)
+    vals = np.asarray(observed_stats.values, dtype=float)
+    if not np.all(np.isfinite(vals)):
+        return pd.Series(dtype=float)
+    # Order by decreasing observed stat (most significant first)
+    order = np.argsort(-vals)
+    hyp_index = observed_stats.index
+    m = len(hyp_index)
+    B = null_stats_matrix.shape[0]
+    p_adj = np.ones(m)
+    for j in range(m):
+        # Remaining set: order[j], order[j+1], ..., order[m-1]
+        remaining = order[j:]
+        null_max_j = np.nanmax(null_stats_matrix[:, remaining], axis=1)
+        T_j = observed_stats.iloc[order[j]]
+        count_ge = int(np.sum(null_max_j >= T_j))
+        p_adj[j] = (1.0 + count_ge) / (B + 1.0)
+    # Enforce monotonicity (non-decreasing in stepdown order)
+    for j in range(1, m):
+        p_adj[j] = max(p_adj[j], p_adj[j - 1])
+    # Map back to hypothesis_id order (same as observed_stats.index)
+    result_vals = np.ones(m)
+    for j in range(m):
+        result_vals[order[j]] = p_adj[j]
+    return pd.Series(result_vals, index=hyp_index)
+
+
 def run_reality_check(
     observed_stats: pd.Series,
     null_generator: Callable[[int], np.ndarray],
@@ -81,43 +119,69 @@ def run_reality_check(
     """
     Run RC: build null_stats_matrix by calling null_generator(b) for b in 0..n_sim-1,
     then compute rc_p_value. Returns dict with rc_p_value, observed_max, null_max_distribution.
-    If cached_null_max is provided (1d array of length n_sim), skip null_generator and use it.
-    Romano–Wolf stepdown: stub (returns empty or NotImplemented when CRYPTO_ANALYZER_ENABLE_ROMANOWOLF=1).
+    Hypothesis order: canonical order is sorted(observed_stats.index). observed_stats is reindexed
+    to this order for RC/RW; null_generator(b) must return a 1d array in the same order (column j
+    = hypothesis_ids[j]). If cached_null_max is provided (1d array of length n_sim), skip
+    null_generator and use it for RC only. When CRYPTO_ANALYZER_ENABLE_ROMANOWOLF=1: also compute
+    Romano–Wolf stepdown (requires full null matrix; if only cached_null_max, RW skipped).
+    Emits requested_n_sim and actual_n_sim; if actual < requested, n_sim_shortfall_warning is set.
     """
     if observed_stats.empty:
         return {
             "rc_p_value": 1.0,
             "observed_max": np.nan,
             "null_max_distribution": np.array([]),
+            "requested_n_sim": 0,
+            "actual_n_sim": 0,
             "n_sim": 0,
             "hypothesis_ids": [],
+            "rw_adjusted_p_values": pd.Series(dtype=float),
         }
+    # Canonical hypothesis order: sorted. All RC/RW use this order; null_generator rows must match.
     hypothesis_ids = sorted(observed_stats.index.tolist())
+    obs_reindexed = observed_stats.reindex(hypothesis_ids)
     n_sim = cfg.n_sim
-    if cached_null_max is not None and cached_null_max.size == n_sim:
+    requested_n_sim = n_sim
+    rw_enabled = os.environ.get("CRYPTO_ANALYZER_ENABLE_ROMANOWOLF", "").strip() == "1"
+    null_stats_matrix: Optional[np.ndarray] = None
+    n_sim_shortfall_warning: Optional[str] = None
+
+    if cached_null_max is not None and cached_null_max.size == n_sim and not rw_enabled:
         null_max_dist = np.asarray(cached_null_max, dtype=float).ravel()
-        T_obs = float(observed_stats.max())
+        T_obs = float(obs_reindexed.max())
         count_ge = int(np.sum(null_max_dist >= T_obs))
         rc_p_value = (1.0 + count_ge) / (n_sim + 1.0)
+        actual_n_sim = len(null_max_dist)
     else:
         null_rows = []
+        dropped = 0
         for b in range(n_sim):
             row = null_generator(b)
             if row is not None and len(row) == len(hypothesis_ids):
                 null_rows.append(row)
+            else:
+                dropped += 1
         null_stats_matrix = np.array(null_rows, dtype=float) if null_rows else np.zeros((0, len(hypothesis_ids)))
+        actual_n_sim = null_stats_matrix.shape[0]
+        if actual_n_sim < requested_n_sim:
+            n_sim_shortfall_warning = (
+                f"actual_n_sim={actual_n_sim} < requested_n_sim={requested_n_sim}"
+                + (f" ({dropped} null rows dropped due to length mismatch)" if dropped else "")
+            )
         if null_stats_matrix.shape[0] == 0:
             rc_p_value = 1.0
         else:
-            rc_p_value = reality_check_pvalue(observed_stats, null_stats_matrix)
+            rc_p_value = reality_check_pvalue(obs_reindexed, null_stats_matrix)
         null_max_dist = np.nanmax(null_stats_matrix, axis=1) if null_stats_matrix.size else np.array([])
-    observed_max = float(observed_stats.max())
+    observed_max = float(obs_reindexed.max())
 
-    out = {
+    out: Dict = {
         "rc_p_value": float(rc_p_value),
         "observed_max": observed_max,
         "null_max_distribution": null_max_dist,
-        "n_sim": len(null_max_dist),
+        "requested_n_sim": requested_n_sim,
+        "actual_n_sim": actual_n_sim,
+        "n_sim": actual_n_sim,
         "hypothesis_ids": hypothesis_ids,
         "rc_metric": cfg.metric,
         "rc_horizon": cfg.horizon,
@@ -125,11 +189,34 @@ def run_reality_check(
         "rc_method": cfg.method,
         "rc_avg_block_length": cfg.avg_block_length,
     }
-    if os.environ.get("CRYPTO_ANALYZER_ENABLE_ROMANOWOLF", "").strip() == "1":
-        raise NotImplementedError(
-            "Romano–Wolf stepdown not implemented; set CRYPTO_ANALYZER_ENABLE_ROMANOWOLF=0 or unset"
-        )
-    out["rw_adjusted_p_values"] = pd.Series(dtype=float)
+    if n_sim_shortfall_warning:
+        out["n_sim_shortfall_warning"] = n_sim_shortfall_warning
+
+    # RW: require full null matrix and finite observed stats (fail-closed)
+    rw_skipped_reason: Optional[str] = None
+    if rw_enabled and null_stats_matrix is not None and null_stats_matrix.shape[0] >= 1:
+        if not np.all(np.isfinite(np.asarray(obs_reindexed.values, dtype=float))):
+            rw_skipped_reason = "observed stats contain NaN/inf; RW requires finite values"
+            out["rw_adjusted_p_values"] = pd.Series(dtype=float)
+            out["rw_enabled"] = True
+            out["rw_skipped_reason"] = rw_skipped_reason
+        else:
+            rw_adj = _romano_wolf_stepdown(obs_reindexed, null_stats_matrix)
+            out["rw_adjusted_p_values"] = rw_adj
+            out["rw_enabled"] = True
+            out["rw_method"] = "romano_wolf_stepdown"
+            out["rw_null_params"] = {
+                "rc_method": cfg.method,
+                "rc_seed": cfg.seed,
+                "rc_avg_block_length": cfg.avg_block_length,
+                "requested_n_sim": requested_n_sim,
+                "actual_n_sim": actual_n_sim,
+            }
+    else:
+        out["rw_adjusted_p_values"] = pd.Series(dtype=float)
+        out["rw_enabled"] = rw_enabled
+        if rw_enabled and (null_stats_matrix is None or null_stats_matrix.shape[0] == 0):
+            out["rw_skipped_reason"] = "no null simulations produced; RW requires full null matrix"
     return out
 
 

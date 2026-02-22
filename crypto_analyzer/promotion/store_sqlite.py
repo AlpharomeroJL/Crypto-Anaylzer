@@ -129,32 +129,148 @@ def create_candidate(
     if evidence:
         evidence = _relativize_evidence_paths(evidence, Path(evidence_base_path) if evidence_base_path else None)
     evidence_json = _evidence_to_json(evidence) if evidence else None
-    conn.execute(
-        """
-        INSERT INTO promotion_candidates (
-            candidate_id, created_at_utc, status, dataset_id, run_id, family_id,
-            signal_name, horizon, estimator, config_hash, git_commit, notes, evidence_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            candidate_id,
-            created_at_utc,
-            status,
-            dataset_id,
-            run_id,
-            family_id,
-            signal_name,
-            horizon,
-            estimator,
-            config_hash,
-            git_commit,
-            notes,
-            evidence_json,
-        ),
-    )
+    # Phase 1: include eligibility_report_id (NULL for new candidates; required for candidate/accepted by trigger)
+    try:
+        conn.execute(
+            """
+            INSERT INTO promotion_candidates (
+                candidate_id, created_at_utc, status, dataset_id, run_id, family_id,
+                signal_name, horizon, estimator, config_hash, git_commit, notes, evidence_json,
+                eligibility_report_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                candidate_id,
+                created_at_utc,
+                status,
+                dataset_id,
+                run_id,
+                family_id,
+                signal_name,
+                horizon,
+                estimator,
+                config_hash,
+                git_commit,
+                notes,
+                evidence_json,
+                None,
+            ),
+        )
+    except sqlite3.OperationalError:
+        # Fallback if eligibility_report_id column not yet migrated
+        conn.execute(
+            """
+            INSERT INTO promotion_candidates (
+                candidate_id, created_at_utc, status, dataset_id, run_id, family_id,
+                signal_name, horizon, estimator, config_hash, git_commit, notes, evidence_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                candidate_id,
+                created_at_utc,
+                status,
+                dataset_id,
+                run_id,
+                family_id,
+                signal_name,
+                horizon,
+                estimator,
+                config_hash,
+                git_commit,
+                notes,
+                evidence_json,
+            ),
+        )
     conn.commit()
     record_event(conn, candidate_id, "created", {"created_at_utc": created_at_utc})
     return candidate_id
+
+
+def _eligibility_reports_exist(conn: sqlite3.Connection) -> bool:
+    cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='eligibility_reports'")
+    return cur.fetchone() is not None
+
+
+def insert_eligibility_report(
+    conn: sqlite3.Connection,
+    eligibility_report_id: str,
+    candidate_id: str,
+    level: str,
+    passed: bool,
+    blockers_json: str,
+    warnings_json: str,
+    computed_at_utc: str,
+    *,
+    run_key: Optional[str] = None,
+    run_instance_id: Optional[str] = None,
+    dataset_id_v2: Optional[str] = None,
+    engine_version: Optional[str] = None,
+    config_version: Optional[str] = None,
+) -> None:
+    """Insert one row into eligibility_reports (Phase 1). Fails if table does not exist."""
+    if not _eligibility_reports_exist(conn):
+        raise RuntimeError("eligibility_reports table not found; run Phase 3 migrations 008+")
+    conn.execute(
+        """
+        INSERT INTO eligibility_reports (
+            eligibility_report_id, candidate_id, level, passed, blockers_json, warnings_json,
+            computed_at_utc, run_key, run_instance_id, dataset_id_v2, engine_version, config_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            eligibility_report_id,
+            candidate_id,
+            level,
+            1 if passed else 0,
+            blockers_json,
+            warnings_json,
+            computed_at_utc,
+            run_key or "",
+            run_instance_id or "",
+            dataset_id_v2 or "",
+            engine_version or "",
+            config_version or "",
+        ),
+    )
+    conn.commit()
+
+
+def promote_to_candidate(
+    conn: sqlite3.Connection,
+    candidate_id: str,
+    eligibility_report_id: str,
+    reason: Optional[str] = None,
+) -> None:
+    """Phase 1: Set status to candidate and link eligibility report. Trigger enforces report exists and passed."""
+    require_promotion_tables(conn)
+    conn.execute(
+        "UPDATE promotion_candidates SET status = ?, eligibility_report_id = ? WHERE candidate_id = ?",
+        ("candidate", eligibility_report_id, candidate_id),
+    )
+    conn.commit()
+    payload: Dict[str, Any] = {"new_status": "candidate", "eligibility_report_id": eligibility_report_id, "ts_utc": now_utc_iso()}
+    if reason:
+        payload["reason"] = reason
+    record_event(conn, candidate_id, "status_change", payload)
+
+
+def promote_to_accepted(
+    conn: sqlite3.Connection,
+    candidate_id: str,
+    eligibility_report_id: str,
+    reason: Optional[str] = None,
+) -> None:
+    """Phase 1: Set status to accepted and link eligibility report. Trigger enforces report exists and passed."""
+    require_promotion_tables(conn)
+    conn.execute(
+        "UPDATE promotion_candidates SET status = ?, eligibility_report_id = ? WHERE candidate_id = ?",
+        ("accepted", eligibility_report_id, candidate_id),
+    )
+    conn.commit()
+    payload: Dict[str, Any] = {"new_status": "accepted", "eligibility_report_id": eligibility_report_id, "ts_utc": now_utc_iso()}
+    if reason:
+        payload["reason"] = reason
+    record_event(conn, candidate_id, "status_change", payload)
 
 
 def update_status(
@@ -162,9 +278,18 @@ def update_status(
     candidate_id: str,
     status: str,
     reason: Optional[str] = None,
+    *,
+    eligibility_report_id: Optional[str] = None,
 ) -> None:
-    """Update candidate status and record status_change event."""
+    """
+    Update candidate status and record status_change event.
+    Phase 1: status 'candidate' or 'accepted' is not allowed here; use promote_to_candidate or promote_to_accepted.
+    """
     require_promotion_tables(conn)
+    if status in ("candidate", "accepted"):
+        raise ValueError(
+            "Use promote_to_candidate() or promote_to_accepted() with an eligibility report for status candidate/accepted"
+        )
     conn.execute(
         "UPDATE promotion_candidates SET status = ? WHERE candidate_id = ?",
         (status, candidate_id),

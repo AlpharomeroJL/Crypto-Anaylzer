@@ -60,6 +60,14 @@ _MIGRATION_COLUMNS = [
     ("tags_json", "TEXT"),
     ("dataset_id", "TEXT"),
     ("params_json", "TEXT"),
+    # Phase 1: run identity and dataset v2
+    ("run_key", "TEXT"),
+    ("dataset_id_v2", "TEXT"),
+    ("dataset_hash_algo", "TEXT"),
+    ("dataset_hash_mode", "TEXT"),
+    ("engine_version", "TEXT"),
+    ("config_version", "TEXT"),
+    ("research_spec_version", "TEXT"),
 ]
 
 
@@ -70,6 +78,11 @@ def _migrate_experiment_tables(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE experiments ADD COLUMN {col_name} {col_type}")
         except sqlite3.OperationalError:
             pass
+    # Phase 1: index on run_key (non-unique; multiple instances per key)
+    try:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_experiments_run_key ON experiments(run_key)")
+    except sqlite3.OperationalError:
+        pass
 
 
 def ensure_experiment_tables(conn: sqlite3.Connection) -> None:
@@ -116,8 +129,10 @@ def record_experiment_run(
             """INSERT OR REPLACE INTO experiments
                (run_id, ts_utc, git_commit, spec_version, out_dir, notes,
                 data_start, data_end, config_hash, env_fingerprint,
-                hypothesis, tags_json, dataset_id, params_json)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                hypothesis, tags_json, dataset_id, params_json,
+                run_key, dataset_id_v2, dataset_hash_algo, dataset_hash_mode,
+                engine_version, config_version, research_spec_version)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 run_id,
                 experiment_row.get("ts_utc", ""),
@@ -133,6 +148,13 @@ def record_experiment_run(
                 tags_raw,
                 experiment_row.get("dataset_id"),
                 params_raw,
+                experiment_row.get("run_key") or "",
+                experiment_row.get("dataset_id_v2") or "",
+                experiment_row.get("dataset_hash_algo") or "",
+                experiment_row.get("dataset_hash_mode") or "",
+                experiment_row.get("engine_version") or "",
+                experiment_row.get("config_version") or "",
+                experiment_row.get("research_spec_version") or "",
             ),
         )
 

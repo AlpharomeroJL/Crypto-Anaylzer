@@ -17,7 +17,22 @@ from crypto_analyzer.promotion.store_sqlite import create_candidate, get_candida
 from crypto_analyzer.validation_bundle import ValidationBundle
 
 
-def _minimal_bundle(mean_ic: float = 0.03, t_stat: float = 3.0) -> ValidationBundle:
+def _minimal_bundle(
+    mean_ic: float = 0.03,
+    t_stat: float = 3.0,
+    with_eligibility_meta: bool = False,
+) -> ValidationBundle:
+    meta = {}
+    if with_eligibility_meta:
+        meta = {
+            "dataset_id_v2": "ds2v2",
+            "dataset_hash_algo": "sqlite_logical_v2",
+            "dataset_hash_mode": "STRICT",
+            "run_key": "rk16",
+            "engine_version": "abc",
+            "config_version": "cfg1",
+            "research_spec_version": "1",
+        }
     return ValidationBundle(
         run_id="run1",
         dataset_id="ds1",
@@ -26,7 +41,7 @@ def _minimal_bundle(mean_ic: float = 0.03, t_stat: float = 3.0) -> ValidationBun
         horizons=[1],
         ic_summary_by_horizon={1: {"mean_ic": mean_ic, "t_stat": t_stat, "n_obs": 200}},
         ic_decay_table=[],
-        meta={},
+        meta=meta,
     )
 
 
@@ -45,6 +60,7 @@ def conn_with_promotion():
 
 
 def test_evaluate_and_record_accepted(conn_with_promotion):
+    """Phase 1: accepted requires target_status=accepted and bundle with eligibility meta (dataset_id_v2, run_key, etc.)."""
     conn = conn_with_promotion
     cid = create_candidate(
         conn,
@@ -56,8 +72,15 @@ def test_evaluate_and_record_accepted(conn_with_promotion):
         git_commit="y",
     )
     thresholds = ThresholdConfig(ic_mean_min=0.02, tstat_min=2.0, require_reality_check=False)
-    bundle = _minimal_bundle(mean_ic=0.03, t_stat=3.0)
-    decision = evaluate_and_record(conn, cid, thresholds, bundle)
+    bundle = _minimal_bundle(mean_ic=0.03, t_stat=3.0, with_eligibility_meta=True)
+    decision = evaluate_and_record(
+        conn,
+        cid,
+        thresholds,
+        bundle,
+        target_status="accepted",
+        allow_missing_execution_evidence=True,
+    )
     assert decision.status == "accepted"
     row = get_candidate(conn, cid)
     assert row["status"] == "accepted"
@@ -70,6 +93,78 @@ def test_evaluate_and_record_accepted(conn_with_promotion):
     assert "artifact_pointers" in payload
     assert "metrics_snapshot" in payload
     assert payload["thresholds_used"].get("ic_mean_min") == 0.02
+
+
+def test_e2e_promotion_with_rw_strict_eligibility_persisted_and_direct_update_blocked(conn_with_promotion, monkeypatch):
+    """E2E: RW enabled + STRICT hash; promotion via promote_to_accepted; eligibility report persisted; direct SQL update to candidate fails (trigger)."""
+    monkeypatch.setenv("CRYPTO_ANALYZER_ENABLE_ROMANOWOLF", "1")
+    conn = conn_with_promotion
+    cid = create_candidate(
+        conn,
+        dataset_id="ds1",
+        run_id="run1",
+        signal_name="sig_a",
+        horizon=1,
+        config_hash="x",
+        git_commit="y",
+    )
+    thresholds = ThresholdConfig(ic_mean_min=0.02, tstat_min=2.0, require_reality_check=False)
+    meta = {
+        "dataset_id_v2": "ds2v2",
+        "dataset_hash_algo": "sqlite_logical_v2",
+        "dataset_hash_mode": "STRICT",
+        "run_key": "rk16",
+        "engine_version": "abc",
+        "config_version": "cfg1",
+        "research_spec_version": "1",
+        "rw_enabled": True,
+        "rw_adjusted_p_values": {"sig_a|1": 0.03},
+    }
+    rc_summary = {
+        "rw_enabled": True,
+        "rw_adjusted_p_values": {"sig_a|1": 0.03},
+        "hypothesis_ids": ["sig_a|1"],
+        "actual_n_sim": 100,
+        "requested_n_sim": 100,
+    }
+    bundle = ValidationBundle(
+        run_id="run1",
+        dataset_id="ds1",
+        signal_name="sig_a",
+        freq="1h",
+        horizons=[1],
+        ic_summary_by_horizon={1: {"mean_ic": 0.03, "t_stat": 3.0, "n_obs": 200}},
+        ic_decay_table=[],
+        meta=meta,
+    )
+    decision = evaluate_and_record(
+        conn,
+        cid,
+        thresholds,
+        bundle,
+        target_status="accepted",
+        rc_summary=rc_summary,
+        allow_missing_execution_evidence=True,
+    )
+    assert decision.status == "accepted"
+    row = get_candidate(conn, cid)
+    assert row["status"] == "accepted"
+    eligibility_report_id = row.get("eligibility_report_id")
+    assert eligibility_report_id, "eligibility_report_id must be set when status=accepted"
+    cur = conn.execute("SELECT eligibility_report_id, candidate_id, level, passed FROM eligibility_reports WHERE candidate_id = ?", (cid,))
+    report_row = cur.fetchone()
+    assert report_row is not None, "eligibility report must be persisted"
+    assert report_row[2] == "accepted" and report_row[3] == 1
+    # Direct SQL update to candidate without eligibility_report_id must fail (trigger)
+    cid2 = create_candidate(conn, dataset_id="ds1", run_id="run2", signal_name="sig_b", horizon=1, config_hash="x", git_commit="y")
+    conn.commit()
+    try:
+        conn.execute("UPDATE promotion_candidates SET status = ? WHERE candidate_id = ?", ("candidate", cid2))
+        conn.commit()
+    except (sqlite3.IntegrityError, sqlite3.OperationalError) as e:
+        assert "eligibility" in str(e).lower() or "abort" in str(e).lower()
+        return
+    assert False, "Expected trigger to block direct UPDATE to status=candidate without eligibility_report_id"
 
 
 def test_evaluate_and_record_rejected_low_ic(conn_with_promotion):
@@ -125,7 +220,7 @@ def test_sweep_candidate_requires_rc_for_acceptance(conn_with_promotion):
 
 
 def test_sweep_candidate_accepted_when_rc_passes(conn_with_promotion):
-    """Sweep candidate with family_id is accepted when RC summary passes and require_reality_check=False (enforced)."""
+    """Sweep candidate with family_id is accepted when RC summary passes; Phase 1 requires target_status and eligibility meta."""
     conn = conn_with_promotion
     cid = create_candidate(
         conn,
@@ -138,16 +233,24 @@ def test_sweep_candidate_accepted_when_rc_passes(conn_with_promotion):
         family_id="rcfam_xyz",
     )
     thresholds = ThresholdConfig(ic_mean_min=0.02, tstat_min=2.0, require_reality_check=False, max_rc_p_value=0.05)
-    bundle = _minimal_bundle(mean_ic=0.03, t_stat=3.0)
+    bundle = _minimal_bundle(mean_ic=0.03, t_stat=3.0, with_eligibility_meta=True)
     rc_summary = {"rc_p_value": 0.03}
-    decision = evaluate_and_record(conn, cid, thresholds, bundle, rc_summary=rc_summary)
+    decision = evaluate_and_record(
+        conn,
+        cid,
+        thresholds,
+        bundle,
+        rc_summary=rc_summary,
+        target_status="accepted",
+        allow_missing_execution_evidence=True,
+    )
     assert decision.status == "accepted"
     row = get_candidate(conn, cid)
     assert row["status"] == "accepted"
 
 
 def test_reject_when_target_candidate_and_execution_evidence_missing_override_false(conn_with_promotion):
-    """When target_status is candidate and no execution evidence and override False -> rejected."""
+    """When target_status is accepted and no execution evidence and override False -> rejected."""
     conn = conn_with_promotion
     cid = create_candidate(
         conn,
@@ -159,11 +262,8 @@ def test_reject_when_target_candidate_and_execution_evidence_missing_override_fa
         git_commit="y",
         evidence={"bundle_path": "/fake/bundle.json"},
     )
-    # Candidate status so target is "accepted"; no execution_evidence_path in evidence
-    conn.execute("UPDATE promotion_candidates SET status = ? WHERE candidate_id = ?", ("candidate", cid))
-    conn.commit()
     thresholds = ThresholdConfig(ic_mean_min=0.02, tstat_min=2.0, require_execution_evidence=False)
-    bundle = _minimal_bundle(mean_ic=0.03, t_stat=3.0)
+    bundle = _minimal_bundle(mean_ic=0.03, t_stat=3.0, with_eligibility_meta=True)
     decision = evaluate_and_record(
         conn,
         cid,
@@ -178,7 +278,7 @@ def test_reject_when_target_candidate_and_execution_evidence_missing_override_fa
 
 
 def test_accept_when_override_true_records_override_in_event(conn_with_promotion):
-    """When allow_missing_execution_evidence=True, accept and record override in event payload."""
+    """When allow_missing_execution_evidence=True, accept and record override in event payload. Phase 1: no direct status update."""
     conn = conn_with_promotion
     cid = create_candidate(
         conn,
@@ -190,10 +290,8 @@ def test_accept_when_override_true_records_override_in_event(conn_with_promotion
         git_commit="y",
         evidence={"bundle_path": "/fake/bundle.json"},
     )
-    conn.execute("UPDATE promotion_candidates SET status = ? WHERE candidate_id = ?", ("candidate", cid))
-    conn.commit()
     thresholds = ThresholdConfig(ic_mean_min=0.02, tstat_min=2.0, require_execution_evidence=False)
-    bundle = _minimal_bundle(mean_ic=0.03, t_stat=3.0)
+    bundle = _minimal_bundle(mean_ic=0.03, t_stat=3.0, with_eligibility_meta=True)
     decision = evaluate_and_record(
         conn,
         cid,

@@ -44,11 +44,13 @@ from crypto_analyzer.artifacts import (
 from crypto_analyzer.config import db_path
 from crypto_analyzer.data import get_factor_returns, load_bars, load_factor_run
 from crypto_analyzer.dataset import compute_dataset_fingerprint, dataset_id_from_fingerprint, fingerprint_to_json
+from crypto_analyzer.dataset_v2 import get_dataset_id_v2
 from crypto_analyzer.diagnostics import build_health_summary, rolling_ic_stability
 from crypto_analyzer.evaluation import conditional_metrics, lead_lag_analysis
 from crypto_analyzer.experiments import log_experiment, record_experiment_run
 from crypto_analyzer.factors import build_factor_matrix, rolling_multifactor_ols
 from crypto_analyzer.governance import (
+    compute_run_key,
     get_env_fingerprint,
     get_git_commit,
     make_run_manifest,
@@ -493,7 +495,7 @@ def main() -> int:
             reg_ser = regime_df.set_index("ts_utc")["regime_label"]
             regime_labels_series = reg_ser.reindex(returns_df.index).fillna("unknown").astype(str)
 
-    # Compute run_id and dataset_id once for ValidationBundles and deterministic paths
+    # Compute run_id (instance id), run_key (semantic), dataset_id v1/v2 once for ValidationBundles and manifests
     import hashlib as _hl
     import json as _js
 
@@ -503,11 +505,34 @@ def main() -> int:
     )
     config_hash_early = _hl.sha256(config_blob_early.encode()).hexdigest()[:16]
     ts_now_early = now_utc_iso()
+    # run_id_early = run_instance_id (for filenames and PK; may include timestamp for uniqueness)
     run_id_early = stable_run_id(
         {"name": "research_report_v2", "ts_utc": ts_now_early, "config_hash": config_hash_early}
     )
     _fp_early = compute_dataset_fingerprint(str(db))
     _computed_dataset_id_early = dataset_id_from_fingerprint(_fp_early)
+    # Phase 1: dataset_id_v2 (logical content) and run_key (semantic, no timestamps)
+    try:
+        _dataset_id_v2_early, _dataset_hash_meta_early = get_dataset_id_v2(str(db), mode="STRICT")
+    except Exception:
+        _dataset_id_v2_early = ""
+        _dataset_hash_meta_early = {}
+    _engine_version_early = get_git_commit()
+    from crypto_analyzer.spec import RESEARCH_SPEC_VERSION as _RESEARCH_SPEC_VERSION
+
+    _semantic_payload_early = {
+        "name": "research_report_v2",
+        "dataset_id_v2": _dataset_id_v2_early,
+        "config_hash": config_hash_early,
+        "freq": args.freq,
+        "signals": args.signals,
+        "portfolio": args.portfolio,
+        "cov_method": args.cov_method,
+        "engine_version": _engine_version_early,
+        "config_version": config_hash_early,
+        "research_spec_version": _RESEARCH_SPEC_VERSION,
+    }
+    _run_key_early = compute_run_key(_semantic_payload_early) if _dataset_id_v2_early else ""
     deterministic_time_used = bool(os.environ.get("CRYPTO_ANALYZER_DETERMINISTIC_TIME", "").strip())
 
     portfolio_pnls = {}
@@ -602,9 +627,16 @@ def main() -> int:
             meta = {
                 "config_hash": config_hash_early,
                 "git_commit": get_git_commit(),
-                "engine_version": None,
+                "engine_version": _engine_version_early,
                 "as_of_lag_bars": 1,
                 "deterministic_time_used": deterministic_time_used,
+                "dataset_id_v2": _dataset_id_v2_early,
+                "dataset_hash_algo": _dataset_hash_meta_early.get("dataset_hash_algo", "sqlite_logical_v2"),
+                "dataset_hash_mode": _dataset_hash_meta_early.get("dataset_hash_mode", "STRICT"),
+                "dataset_hash_scope": _dataset_hash_meta_early.get("dataset_hash_scope", []),
+                "run_key": _run_key_early,
+                "config_version": config_hash_early,
+                "research_spec_version": _RESEARCH_SPEC_VERSION,
             }
             ic_summary_by_regime_path_rel: str | None = None
             ic_decay_by_regime_path_rel: str | None = None
@@ -1256,6 +1288,16 @@ def main() -> int:
                 metrics=metrics_summary,
                 notes=getattr(args, "notes", "") or "",
             )
+            manifest["run_key"] = _run_key_early
+            manifest["run_instance_id"] = run_id_early
+            manifest["dataset_id_v1"] = _computed_dataset_id_early
+            manifest["dataset_id_v2"] = _dataset_id_v2_early
+            manifest["dataset_hash_algo"] = _dataset_hash_meta_early.get("dataset_hash_algo", "sqlite_logical_v2")
+            manifest["dataset_hash_mode"] = _dataset_hash_meta_early.get("dataset_hash_mode", "STRICT")
+            manifest["dataset_hash_scope"] = _dataset_hash_meta_early.get("dataset_hash_scope", [])
+            manifest["engine_version"] = _engine_version_early
+            manifest["config_version"] = config_hash_early
+            manifest["research_spec_version"] = _RESEARCH_SPEC_VERSION
             save_manifest(str(out_dir), manifest)
         except Exception as e:
             print("Manifest skip:", e)
@@ -1293,6 +1335,13 @@ def main() -> int:
             "tags_json": tags_list,
             "dataset_id": getattr(args, "dataset_id", None) or _computed_dataset_id_early,
             "params_json": params_dict,
+            "run_key": _run_key_early,
+            "dataset_id_v2": _dataset_id_v2_early,
+            "dataset_hash_algo": _dataset_hash_meta_early.get("dataset_hash_algo", "sqlite_logical_v2"),
+            "dataset_hash_mode": _dataset_hash_meta_early.get("dataset_hash_mode", "STRICT"),
+            "engine_version": _engine_version_early,
+            "config_version": config_hash_early,
+            "research_spec_version": _RESEARCH_SPEC_VERSION,
         }
 
         artifacts_for_db = [{"artifact_path": p, "sha256": compute_file_sha256(p)} for p in output_paths]

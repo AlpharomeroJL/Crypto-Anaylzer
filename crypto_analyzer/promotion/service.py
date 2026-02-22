@@ -5,6 +5,7 @@ Phase 3 Slice 5. No UI dependencies.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from pathlib import Path
@@ -12,11 +13,24 @@ from typing import Any, Dict, Optional, Union
 
 import pandas as pd
 
+from crypto_analyzer.timeutils import now_utc_iso
 from crypto_analyzer.validation_bundle import ValidationBundle
 
 from .execution_evidence import ExecutionEvidence
-from .gating import PromotionDecision, ThresholdConfig, evaluate_candidate
-from .store_sqlite import get_candidate, record_event, update_status
+from .gating import (
+    PromotionDecision,
+    ThresholdConfig,
+    evaluate_candidate,
+    evaluate_eligibility,
+)
+from .store_sqlite import (
+    get_candidate,
+    insert_eligibility_report,
+    promote_to_accepted,
+    promote_to_candidate,
+    record_event,
+    update_status,
+)
 
 
 def _thresholds_snapshot(
@@ -245,7 +259,42 @@ def evaluate_and_record(
     elif isinstance(bundle_or_path, ValidationBundle) and evidence.get("validation_bundle_path"):
         bundle_path_for_pointers = evidence["validation_bundle_path"]
 
-    update_status(conn, candidate_id, decision.status, reason="; ".join(decision.reasons) if decision.reasons else None)
+    # Phase 1: candidate/accepted require eligibility report and promote_to_* (no raw update_status)
+    if target_status in ("candidate", "accepted") and decision.status == "accepted":
+        report = evaluate_eligibility(bundle, target_status, rc_summary=rc_summary)
+        if not report.passed:
+            return PromotionDecision(
+                status="rejected",
+                reasons=report.blockers,
+                metrics_snapshot=decision.metrics_snapshot,
+                warnings=report.warnings,
+            )
+        computed_at_utc = now_utc_iso()
+        eligibility_report_id = f"elig_{hashlib.sha256((candidate_id + target_status + computed_at_utc).encode()).hexdigest()[:16]}"
+        insert_eligibility_report(
+            conn,
+            eligibility_report_id,
+            candidate_id,
+            target_status,
+            True,
+            json.dumps(report.blockers, sort_keys=True),
+            json.dumps(report.warnings, sort_keys=True),
+            computed_at_utc,
+            run_key=report.run_key or None,
+            run_instance_id=report.run_instance_id or None,
+            dataset_id_v2=report.dataset_id_v2 or None,
+            engine_version=report.engine_version or None,
+            config_version=report.config_version or None,
+        )
+        if target_status == "candidate":
+            promote_to_candidate(conn, candidate_id, eligibility_report_id, reason="; ".join(decision.reasons) if decision.reasons else None)
+        else:
+            promote_to_accepted(conn, candidate_id, eligibility_report_id, reason="; ".join(decision.reasons) if decision.reasons else None)
+    else:
+        # Only exploratory/rejected can be written via update_status; do not write candidate/accepted without eligibility
+        status_to_write = decision.status if decision.status in ("exploratory", "rejected") else "exploratory"
+        update_status(conn, candidate_id, status_to_write, reason="; ".join(decision.reasons) if decision.reasons else None)
+
     payload: Dict[str, Any] = {
         "status": decision.status,
         "reasons": decision.reasons,

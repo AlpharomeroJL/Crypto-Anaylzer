@@ -2,6 +2,18 @@
 
 from __future__ import annotations
 
-from .gating import PromotionDecision, ThresholdConfig, evaluate_candidate
+from .gating import (
+    EligibilityReport,
+    PromotionDecision,
+    ThresholdConfig,
+    evaluate_candidate,
+    evaluate_eligibility,
+)
 
-__all__ = ["ThresholdConfig", "PromotionDecision", "evaluate_candidate"]
+__all__ = [
+    "EligibilityReport",
+    "PromotionDecision",
+    "ThresholdConfig",
+    "evaluate_candidate",
+    "evaluate_eligibility",
+]

@@ -131,6 +131,7 @@ def test_list_candidates_filter(conn_with_promotion):
 
 
 def test_update_status_and_record_event(conn_with_promotion):
+    """update_status works for exploratory/rejected and records status_change event. Phase 1: candidate/accepted not allowed."""
     conn = conn_with_promotion
     cid = create_candidate(
         conn,
@@ -143,13 +144,31 @@ def test_update_status_and_record_event(conn_with_promotion):
     )
     events_before = get_events(conn, cid)
     assert len(events_before) >= 1  # created
-    update_status(conn, cid, "accepted", reason="passed gates")
+    update_status(conn, cid, "rejected", reason="failed gates")
     row = get_candidate(conn, cid)
-    assert row["status"] == "accepted"
+    assert row["status"] == "rejected"
     events_after = get_events(conn, cid)
     assert len(events_after) > len(events_before)
     event_types = [e["event_type"] for e in events_after]
     assert "status_change" in event_types
+
+
+def test_update_status_raises_for_candidate_accepted(conn_with_promotion):
+    """Phase 1: update_status must not be used for candidate/accepted; use promote_to_* with eligibility report."""
+    conn = conn_with_promotion
+    cid = create_candidate(
+        conn,
+        dataset_id="ds1",
+        run_id="run1",
+        signal_name="sig_a",
+        horizon=1,
+        config_hash="abc",
+        git_commit="def",
+    )
+    with pytest.raises(ValueError, match="promote_to_candidate|promote_to_accepted|eligibility"):
+        update_status(conn, cid, "accepted", reason="passed")
+    with pytest.raises(ValueError, match="promote_to_candidate|promote_to_accepted|eligibility"):
+        update_status(conn, cid, "candidate", reason="passed")
 
 
 def test_events_append_only(conn_with_promotion):
