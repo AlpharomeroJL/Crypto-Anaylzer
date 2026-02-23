@@ -10,7 +10,7 @@ This document lists the **proposed file changes** that result from implementing 
 
 ## A) Guardrails (already in plan as §0)
 
-- Implement only what [docs/case_study_liqshock_spec.md](case_study_liqshock_spec.md) requires; no refactor of unrelated code.
+- Implement only what the case study spec requires (see this doc §B.1 for the planned `case_study_liqshock_spec.md`); no refactor of unrelated code.
 - reportv2 default behavior unchanged unless `--case-study liqshock` is passed.
 - Additive changes only; no breaking changes to `crypto_analyzer/data.py` public API; use existing `load_bars` as contract.
 - All new outputs keyed by run_id / existing artifact patterns.

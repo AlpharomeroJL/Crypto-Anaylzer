@@ -18,7 +18,7 @@ This plan also standardizes **GitHub rendering** (Mermaid fences + math delimite
 
 ### Links and references
 
-- **Canonical spec link:** Components consistently say “Canonical spec: [../master_architecture_spec.md](../master_architecture_spec.md)” or “(master_architecture_spec.md)”. implementation_ledger uses `[master_architecture_spec.md](master_architecture_spec.md)` and `[components/...](components/...)` (relative from spec/). Inconsistent: some use `../`, some use same-dir.
+- **Canonical spec link:** Components consistently say “Canonical spec: [../spec/master_architecture_spec.md](../spec/master_architecture_spec.md)” or “(master_architecture_spec.md)”. implementation_ledger uses `[master_architecture_spec.md](../spec/master_architecture_spec.md)` (when from audit; from spec/ use same-dir) and `[components/...](components/...)` (relative from spec/). Inconsistent: some use `../`, some use same-dir.
 - **Cross-references:** Master uses `[\[1\]](url)` style (numbered refs to GitHub URLs). Components rarely link to code; they reference “design.md”, “migrations.py” in prose. No single convention for “see also” (e.g. pipeline_contracts ↔ interfaces).
 - **Broken or repo-specific URLs:** Master links to `https://github.com/AlpharomeroJL/Crypto-Anaylzer/blob/main/...`; these are repo-specific and may break on fork/rename. implementation_ledger uses relative links; audit docs use file paths only.
 - **Drift/audit references:** drift_register uses IDs (D1, I1, S1); architecture_integrity_audit and simplification_plan refer to “drift”, “audit” without always citing drift ID. No standard “see drift_register §D2.”
@@ -119,8 +119,8 @@ graph TD
 
 ### Links
 
-- **Within repo:** Use relative links. From `docs/spec/components/X.md` to master: `[../master_architecture_spec.md](../master_architecture_spec.md)`. From `docs/spec/implementation_ledger.md`: `[master_architecture_spec.md](master_architecture_spec.md)` and `[components/foo.md](components/foo.md)`.
-- **Canonical spec:** Every component must have at the top: “**Canonical spec:** [../master_architecture_spec.md](../master_architecture_spec.md)” (or equivalent from its path).
+- **Within repo:** Use relative links. From `docs/spec/components/X.md` to master: `[../spec/master_architecture_spec.md](../spec/master_architecture_spec.md)`. From `docs/spec/implementation_ledger.md`: `[master_architecture_spec.md](../spec/master_architecture_spec.md)` (when from audit; from spec/ use same-dir) from within spec/; from audit use `[../spec/master_architecture_spec.md](../spec/master_architecture_spec.md)`.
+- **Canonical spec:** Every component must have at the top: “**Canonical spec:** [../spec/master_architecture_spec.md](../spec/master_architecture_spec.md)” (or equivalent from its path).
 - **Drift/audit:** When referring to drift register, use “(drift_register.md §D2)” or “see drift_register.md, D2.” When referring to audit, use “(architecture_integrity_audit.md §8)” or “see architecture_integrity_audit.md, Recommended changes.”
 - **Code references:** Prefer “`crypto_analyzer/data.py`” or “data.py” in prose; avoid long GitHub URLs in new content. Existing master spec links can remain until a dedicated link pass.
 
@@ -190,7 +190,7 @@ graph TD
 
 - Update “Implementation status” for rows that are Done in code but still “Not started” (e.g. ExecutionCostModel, Bootstrapper, MultipleTestingAdjuster, integration tests, versioning, performance, risk audit) to “Done” with a short note and test reference where applicable (align with drift S1–S15).
 - Romano–Wolf is now implemented (opt-in); ledger and interfaces updated. Historical note (drift I7): see methods_and_limits.md §9.
-- Ensure “Canonical spec” link is relative: `[master_architecture_spec.md](master_architecture_spec.md)` and component links `[components/foo.md](components/foo.md)`.
+- Ensure “Canonical spec” link is relative: `[master_architecture_spec.md](../spec/master_architecture_spec.md)` (when from audit; from spec/ use same-dir) and component links `[components/foo.md](components/foo.md)`.
 
 ### docs/audit/architecture_integrity_audit.md
 
