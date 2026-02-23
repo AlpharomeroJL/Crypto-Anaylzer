@@ -1,55 +1,79 @@
 """
-Backward-compat import shims: old paths must resolve and refer to same objects as canonical.
-No behavior change; purely import resolution and identity checks.
+Import compatibility and shim identity tests.
+Ensures old import paths still work and re-exports are the same objects as canonical.
+No behavior change; byte-for-byte determinism preserved.
 """
 
 from __future__ import annotations
 
+import sys
 
-def test_rng_shim_resolves():
-    """crypto_analyzer.rng still resolves and exports seed_root."""
+
+def test_import_crypto_analyzer_rng_works():
+    """import crypto_analyzer.rng works (shim)."""
     import crypto_analyzer.rng as rng_mod
 
+    assert rng_mod is not None
     assert hasattr(rng_mod, "seed_root")
-    assert callable(rng_mod.seed_root)
+    assert hasattr(rng_mod, "rng_for")
+    assert hasattr(rng_mod, "rng_from_seed")
 
 
-def test_rng_seed_root_identical_to_core_seeding():
-    """seed_root from rng and from core.seeding are the same callable."""
-    from crypto_analyzer.core.seeding import seed_root as seed_root_core
-    from crypto_analyzer.rng import seed_root as seed_root_rng
+def test_seed_root_identity_and_same_output():
+    """seed_root from crypto_analyzer.rng and crypto_analyzer.core.seeding are the same callable and produce same output."""
+    from crypto_analyzer import rng
+    from crypto_analyzer.core import seeding
 
-    assert seed_root_rng is seed_root_core
-
-
-def test_rng_seed_root_same_behavior_sample():
-    """Same inputs -> same seed from both import paths."""
-    from crypto_analyzer.core.seeding import seed_root as seed_root_core
-    from crypto_analyzer.rng import seed_root as seed_root_rng
-
-    run_key = "test_run_key"
-    salt = "test_salt"
-    s1 = seed_root_rng(run_key, salt=salt)
-    s2 = seed_root_core(run_key, salt=salt)
-    assert s1 == s2
-    assert isinstance(s1, int)
-    assert isinstance(s2, int)
+    assert rng.seed_root is seeding.seed_root
+    out_rng = rng.seed_root("run_key_1", salt="test_salt")
+    out_canonical = seeding.seed_root("run_key_1", salt="test_salt")
+    assert out_rng == out_canonical
 
 
-def test_core_context_run_context_imports():
-    """RunContext and ExecContext import from canonical core.context."""
-    from crypto_analyzer.core.context import ExecContext, RunContext
+def test_run_context_exec_context_import_from_core_context():
+    """RunContext and ExecContext import from crypto_analyzer.core.context and crypto_analyzer.core."""
+    from crypto_analyzer.core import ExecContext, RunContext, context
 
-    assert RunContext is not None
-    assert ExecContext is not None
-    # Smoke: construct once
-    rc = RunContext(
-        run_key="k",
-        run_instance_id="i",
-        dataset_id_v2="d",
-        engine_version="e",
-        config_version="c",
+    assert RunContext is context.RunContext
+    assert ExecContext is context.ExecContext
+
+
+def test_stable_public_surfaces_import_cleanly():
+    """Stable public surfaces import cleanly: data, artifacts, stats, governance."""
+    from crypto_analyzer import artifacts, data, governance, stats
+
+    assert hasattr(data, "load_bars")
+    assert hasattr(artifacts, "compute_file_sha256")
+    assert hasattr(stats, "run_reality_check")
+    assert hasattr(governance, "promote")
+    assert hasattr(governance, "evaluate_and_record")
+
+
+def test_pipeline_facade_exports_run_research_pipeline():
+    """crypto_analyzer.pipeline exposes run_research_pipeline and ResearchPipelineResult."""
+    from crypto_analyzer import pipeline
+    from crypto_analyzer.pipelines import research_pipeline as rp_impl
+
+    assert hasattr(pipeline, "run_research_pipeline")
+    assert pipeline.run_research_pipeline is rp_impl.run_research_pipeline
+    assert pipeline.ResearchPipelineResult is rp_impl.ResearchPipelineResult
+
+
+def test_facades_do_not_import_cli_or_promotion():
+    """Importing core/data/artifacts/stats/rng does not pull in cli or promotion (lightweight boundary smoke)."""
+    before = set(sys.modules.keys())
+    # Facades that must not depend on cli or promotion (pipeline intentionally re-exports from pipelines, which uses promotion).
+    import crypto_analyzer.artifacts  # noqa: F401
+    import crypto_analyzer.data  # noqa: F401
+    import crypto_analyzer.rng  # noqa: F401
+    import crypto_analyzer.stats  # noqa: F401
+    from crypto_analyzer import core  # noqa: F401
+
+    after = set(sys.modules.keys())
+    new_modules = after - before
+    assert "cli" not in new_modules and "crypto_analyzer.cli" not in new_modules, (
+        "core/data/artifacts/stats/rng must not import cli"
     )
-    assert rc.run_key == "k"
-    ec = ExecContext(out_dir="/tmp/out")
-    assert ec.out_dir == "/tmp/out"
+    assert "crypto_analyzer.promotion" not in new_modules, (
+        "core/data/artifacts/stats/rng must not import crypto_analyzer.promotion"
+    )

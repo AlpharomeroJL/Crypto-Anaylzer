@@ -1,9 +1,15 @@
 """
-Shared exception types for crypto_analyzer. Alias existing exceptions here if needed.
-Intentionally minimal; populated when shared exceptions emerge. Avoid creating new
-exceptions in this PR.
+Shared exception types for crypto_analyzer.
+Stable surface; extend only. No behavior change.
 """
 
 from __future__ import annotations
 
-__all__: list[str] = []
+
+class CryptoAnalyzerError(Exception):
+    """Base exception for crypto_analyzer; catch this for any package-raised error."""
+
+    pass
+
+
+__all__ = ["CryptoAnalyzerError"]

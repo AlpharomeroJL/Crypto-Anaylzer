@@ -1,4 +1,7 @@
-"""Stats corrections: Reality Check, Romano–Wolf stub. Phase 3 Slice 4."""
+"""
+Stable facade: stats entrypoints (Reality Check, Romano–Wolf stub). Phase 3 Slice 4.
+Re-exports from .reality_check only. Does not import cli or promotion. Do not add exports without updating __all__.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +12,7 @@ from .reality_check import (
     run_reality_check,
 )
 
+# Do not add exports without updating __all__.
 __all__ = [
     "RealityCheckConfig",
     "reality_check_pvalue",

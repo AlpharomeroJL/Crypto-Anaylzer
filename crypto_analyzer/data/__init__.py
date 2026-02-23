@@ -1,6 +1,6 @@
 """
-Data layer: normalized load from SQLite and clean pandas DataFrames.
-Scale-ready package; public API unchanged (load_bars, load_snapshots, etc.).
+Stable facade: data loaders from SQLite (load_bars, load_snapshots, get_factor_returns, etc.).
+Imports config and read_api only; does not import cli or promotion. Do not add exports without updating __all__.
 """
 
 from __future__ import annotations
@@ -413,6 +413,7 @@ def load_factor_run(
     return betas_dict, r2_df, residual_df
 
 
+# Do not add exports without updating __all__.
 __all__ = [
     "NORMAL_COLUMNS",
     "append_spot_returns_to_returns_df",

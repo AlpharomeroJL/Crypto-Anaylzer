@@ -33,23 +33,26 @@ def _collect_imports_from_file(path: Path) -> list[tuple[str, int]]:
 
 
 def test_core_cannot_import_governance_store_cli():
-    """Core must not import from governance, store, or cli."""
+    """Core must not import from governance, promotion, store, or cli."""
     root = Path(__file__).resolve().parent.parent
     core_dir = root / "crypto_analyzer" / "core"
     if not core_dir.is_dir():
         return
+    forbidden_prefixes = (
+        "crypto_analyzer.governance",
+        "crypto_analyzer.promotion",
+        "crypto_analyzer.store",
+        "cli.",
+    )
     for path in core_dir.rglob("*.py"):
         if path.name.startswith("_"):
             continue
         for mod, line in _collect_imports_from_file(path):
-            if (
-                mod.startswith("crypto_analyzer.governance")
-                or mod.startswith("crypto_analyzer.store")
-                or mod.startswith("cli.")
-            ):
-                raise AssertionError(
-                    f"core must not import governance/store/cli: {path.relative_to(root)} line {line} imports {mod}"
-                )
+            for prefix in forbidden_prefixes:
+                if mod.startswith(prefix):
+                    raise AssertionError(
+                        f"core must not import governance/promotion/store/cli: {path.relative_to(root)} line {line} imports {mod}"
+                    )
 
 
 def test_governance_cannot_import_cli():

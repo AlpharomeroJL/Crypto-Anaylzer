@@ -252,6 +252,8 @@ How to trace an accepted result (without reading report files):
 
 Exact commands (PowerShell). Run from repo root with venv activated (e.g. `.venv\Scripts\activate`).
 
+**Architecture refactor plan (no behavior change):** Package boundaries and compatibility shims are documented in [Refactor move map](docs/audit/refactor_move_map.md). That doc describes the target layout (core, data, artifacts, stats, pipeline, governance, execution, compute), shims (e.g. `crypto_analyzer.rng` → `core.seeding`), and verification commands. **Public API contract / refactor policy:** [public_api_contract.md](docs/audit/public_api_contract.md) defines stable facades, compatibility shims policy, import boundaries, and how to add new exports. The public API surface is frozen for release; see the contract doc for the exact `__all__` and versioning.
+
 ### Tier 1: Fast checks
 
 ```powershell
