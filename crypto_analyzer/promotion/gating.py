@@ -7,7 +7,6 @@ See docs/spec/phase3_regimes_slice2_alignment.md and components/testing_acceptan
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Optional
 
 import pandas as pd
@@ -249,7 +248,7 @@ def evaluate_candidate(
     execution_evidence: Optional["ExecutionEvidence"] = None,
     target_status: str = "exploratory",
     allow_missing_execution_evidence: bool = False,
-    execution_evidence_base_path: Optional[Path] = None,
+    execution_evidence_base_path: Optional[str] = None,
 ) -> PromotionDecision:
     """
     Deterministic promotion gate. No randomness.
@@ -329,8 +328,7 @@ def evaluate_candidate(
                 "execution evidence required (target beyond exploratory or require_execution_evidence) but none provided"
             )
         else:
-            base = execution_evidence_base_path
-            missing = execution_evidence.validate_required(base_path=base)
+            missing = execution_evidence.validate_required(base_path=execution_evidence_base_path)
             if missing:
                 reasons.append("execution evidence missing required: " + ", ".join(missing))
             else:

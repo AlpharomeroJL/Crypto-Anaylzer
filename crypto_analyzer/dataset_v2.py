@@ -83,8 +83,9 @@ def _detect_ts_column(conn: sqlite3.Connection, table: str) -> Optional[str]:
 def _get_pk_columns_ordered(conn: sqlite3.Connection, table: str) -> List[str]:
     """PK column names in pk ordinal order (for ORDER BY)."""
     info = _get_table_info(conn, table)
-    pk_cols = [(row[4], row[1]) for row in info if row[5]]  # (pk_ordinal, name)
-    pk_cols.sort(key=lambda x: x[0])
+    # row is (cid, name, type, notnull, dflt_value, pk); pk is 1-based ordinal or 0
+    pk_cols = [(row[5], row[1]) for row in info if row[5]]  # (pk_ordinal, name)
+    pk_cols.sort(key=lambda x: x[0] or 0)
     return [name for _, name in pk_cols]
 
 
@@ -204,6 +205,7 @@ def compute_dataset_id_v2(
     table_digests_sorted: List[Tuple[str, str]] = []
     all_warnings: Dict[str, Any] = {}
 
+    ambiguous_ordering: List[Tuple[str, str]] = []  # (table, ordering_mode)
     for table in sorted(scope):
         if not _table_exists(conn, table):
             continue
@@ -211,6 +213,17 @@ def compute_dataset_id_v2(
         table_digests_sorted.append((table, tdigest_hex))
         if tmeta.get("ordering_warning"):
             all_warnings[table] = tmeta
+        om = tmeta.get("ordering_mode")
+        if om in ("ts_then_rowid", "rowid_fallback"):
+            ambiguous_ordering.append((table, om))
+
+    if mode == "STRICT" and ambiguous_ordering:
+        parts = [
+            f"Table(s) with non-deterministic ordering: {', '.join(f'{t} ({om})' for t, om in ambiguous_ordering)}.",
+            "Add a PRIMARY KEY or add deterministic keys for this table in TABLE_DETERMINISTIC_KEYS.",
+            "FAST_DEV allows fallback but is non-promotable.",
+        ]
+        raise ValueError("STRICT mode requires deterministic ordering for all allowlisted tables. " + " ".join(parts))
 
     concat = b"".join((t.encode("utf-8") + d.encode("utf-8") for t, d in table_digests_sorted))
     full_hash = hashlib.sha256(concat).hexdigest()

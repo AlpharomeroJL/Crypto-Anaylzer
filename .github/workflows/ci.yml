@@ -1,0 +1,59 @@
+# CI: same checks as release validate job (minus tag version check). Keep in sync with release.yml validate-and-build.
+name: CI
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Lockfile drift check
+        run: uv lock --check
+
+      - name: Cache uv
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock', 'pyproject.toml') }}
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Entrypoint (module)
+        run: uv run python -m crypto_analyzer --help
+
+      - name: Entrypoint (console script)
+        run: uv run crypto-analyzer --help
+
+      - name: CLI smoke
+        run: uv run crypto-analyzer doctor --ci
+
+      - name: CI smoke (synthetic, no network)
+        run: uv run crypto-analyzer smoke --ci
+        env:
+          CRYPTO_ANALYZER_NO_NETWORK: "1"
+
+      - name: Ruff check
+        run: uv run ruff check .
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
+      # Pytest: STRICT_SYSPATH_GUARD not set; sys.path guard runs in xfail mode until legacy hacks removed.
+      # Full non-slow suite must complete; step fails if pytest fails or times out
+      - name: Pytest (not slow)
+        run: uv run pytest -m "not slow" -q --tb=short
+        timeout-minutes: 20

@@ -40,26 +40,79 @@ A local-first **research validation control plane** for crypto: it enforces dete
 
 ## Quickstart
 
-Prerequisites: Python 3.10+. No API keys (public endpoints only).
+Prerequisites: Python 3.10+. No API keys (public endpoints only). Run all commands from the **repo root** after cloning.
+
+### Canonical install (uv)
 
 ```powershell
-git clone https://github.com/AlpharomeroJL/Crypto-Anaylzer.git
-cd Crypto-Anaylzer
+
+uv venv
+uv sync --all-extras
+uv run crypto-analyzer --help
+uv run crypto-analyzer doctor
+
+```
+
+Minimal path to a research report (after install):
+
+```powershell
+
+uv run crypto-analyzer doctor
+uv run crypto-analyzer universe-poll --universe --universe-chain solana --interval 60
+uv run crypto-analyzer materialize --freq 1h
+uv run crypto-analyzer reportv2 --freq 1h --out-dir reports --hypothesis "baseline momentum"
+
+```
+
+One-command demo: `uv run crypto-analyzer demo`
+
+**Offline path (no network):** Install, then run init, demo-lite, and check-dataset. No config or live data required. CI smoke is for internal stability; demo-lite is for developer onboarding.
+
+```powershell
+uv run crypto-analyzer init
+uv run crypto-analyzer demo-lite
+uv run crypto-analyzer check-dataset --db data/crypto_analyzer.sqlite
+```
+
+### Pip fallback
+
+If you prefer pip or uv is not available:
+
+```powershell
+
 python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
+.\.venv\Scripts\activate
+python -m pip install -U pip setuptools wheel
+python -m pip install -e ".[dev]"
+python -m crypto_analyzer --help
+crypto-analyzer --help
+
 ```
 
-Minimal path to a research report:
+Then run commands as `crypto-analyzer <command>` or `python -m crypto_analyzer <command>`.
+
+### Windows: run.ps1 wrapper
+
+On Windows you can use `.\scripts\run.ps1 <command>` as a convenience wrapper. It uses `VIRTUAL_ENV` if set, otherwise `.venv` at repo root, and invokes `python -m crypto_analyzer <command>` (no reliance on PATH). See README Quickstart if the script reports venv not found.
+
+### Troubleshooting
+
+- **`crypto-analyzer` not found** — Use `python -m crypto_analyzer <command>`; it always works when the package is installed.
+- **uv sync fails** — Check `uv --version`. Install uv with `python -m pip install -U uv`. Run from repo root.
+- **Doctor reports "Not running inside a virtual environment"** — Activate the venv (e.g. `.\.venv\Scripts\activate`) or use `uv run crypto-analyzer doctor` so uv runs inside its environment.
+- **run.ps1 fails** — Ensure `.venv` exists at repo root and you are in the repo root when running the script.
+
+### Verification
+
+After install, confirm the CLI works (from repo root):
 
 ```powershell
-.\scripts\run.ps1 doctor
-.\scripts\run.ps1 universe-poll --universe --universe-chain solana --interval 60
-.\scripts\run.ps1 materialize --freq 1h
-.\scripts\run.ps1 reportv2 --freq 1h --out-dir reports --hypothesis "baseline momentum"
+
+uv run crypto-analyzer doctor
+
 ```
 
-One-command demo (preflight + poll + materialize + report): `.\scripts\run.ps1 demo`
+Fallback: `python -m crypto_analyzer doctor` (with venv activated).
 
 ---
 
@@ -191,11 +244,15 @@ Full diagram source: [docs/architecture/validation_control_plane.mmd](docs/archi
 
 ## CLI cheatsheet
 
-All commands: `.\scripts\run.ps1 <command> [args...]`
+Run any command as **`crypto-analyzer <command> [args...]`** or **`python -m crypto_analyzer <command> [args...]`** (cross-platform). On Windows, **`.\scripts\run.ps1 <command> [args...]`** is a convenience wrapper that invokes the same CLI.
 
 | Command | Description |
 |---------|-------------|
 | `doctor` | Preflight: environment, DB schema, pipeline smoke test |
+| `doctor --ci` | CI-safe preflight (no network, temp DB, migrations + tables) |
+| `smoke --ci` | Synthetic-data, no-network smoke (migrations, dataset_id_v2, run identity) |
+| `init` | Create local SQLite DB and run migrations (default `data/crypto_analyzer.sqlite`; optional `--phase3`) |
+| `demo-lite` | Synthetic dataset, no network; run after init for offline onboarding |
 | `poll` | Single-pair data poll (provider fallback) |
 | `universe-poll --universe ...` | Multi-asset universe discovery (e.g. `--universe-chain solana`) |
 | `materialize` | Build OHLCV bars (e.g. `--freq 1h`) |
@@ -217,6 +274,8 @@ All commands: `.\scripts\run.ps1 <command> [args...]`
 - **accepted** — Same fail-closed requirement at level `accepted`; eligibility_report_id and report level must match status.
 
 Walk-forward runs require a valid fold-causality attestation (schema version, purge_applied, embargo_applied, train_only_fit_enforced) for candidate/accepted.
+
+Promotion gating is policy-only and does not perform I/O; filesystem and evidence loading live in the service and execution_evidence layer.
 
 ---
 
@@ -252,6 +311,14 @@ How to trace an accepted result (without reading report files):
 
 Exact commands (PowerShell). Run from repo root with venv activated (e.g. `.venv\Scripts\activate`).
 
+**Doctor:** `crypto-analyzer doctor` = full local preflight (env, DB, pipeline). `crypto-analyzer doctor --ci` = CI-safe: no network, temp DB only; validates migrations and expected tables (core ingestion, phase3 promotion/governance, lineage).
+
+**CI smoke (no network):**
+
+```powershell
+crypto-analyzer smoke --ci
+```
+
 **Architecture refactor plan (no behavior change):** Package boundaries and compatibility shims are documented in [Refactor move map](docs/audit/refactor_move_map.md). That doc describes the target layout (core, data, artifacts, stats, pipeline, governance, execution, compute), shims (e.g. `crypto_analyzer.rng` → `core.seeding`), and verification commands. **Public API contract / refactor policy:** [public_api_contract.md](docs/audit/public_api_contract.md) defines stable facades, compatibility shims policy, import boundaries, and how to add new exports. The public API surface is frozen for release; see the contract doc for the exact `__all__` and versioning.
 
 ### Tier 1: Fast checks
@@ -264,6 +331,21 @@ python -m pytest -m "not slow" -q --tb=short
 
 - **ruff:** All checks passed.
 - **pytest -m "not slow":** Skips tests marked `@pytest.mark.slow` (full report pipeline). Typical runtime under a few minutes. See `pyproject.toml` for the `slow` marker.
+
+**Pre-release checklist (venv only, no uv):** If `uv` is not in PATH, run from repo root with venv activated (e.g. `.\.venv\Scripts\activate`). Use these in order:
+
+```powershell
+python -m ruff check .
+python -m ruff format --check .
+python tools/check_version_changelog.py --expected-version 0.3.0
+python -m crypto_analyzer --help
+crypto-analyzer --help
+crypto-analyzer doctor --ci
+$env:CRYPTO_ANALYZER_NO_NETWORK="1"; crypto-analyzer smoke --ci
+python -m pytest -m "not slow" -q --tb=short
+```
+
+(Skip `uv lock --check` if uv is not installed; CI runs it.)
 
 ### Tier 2: Phase-specific targeted suites
 
@@ -334,6 +416,12 @@ python scripts/normalize_markdown_math.py
 ```
 
 To check only: `python scripts/normalize_markdown_math.py --check`
+
+### Security
+
+- **Vulnerability scanning:** CI runs `pip-audit` (weekly schedule and on push to main). The job requires network for advisories and is separate from smoke/demo-lite so those remain guaranteed offline.
+- **SBOM:** CycloneDX SBOM is generated and uploaded as a workflow artifact (`sbom-cyclonedx`).
+- **Offline guarantees:** `smoke --ci` and `demo-lite` (with `CRYPTO_ANALYZER_NO_NETWORK=1`) are enforced network-free in CI. See [SECURITY.md](SECURITY.md) for supported versions and reporting.
 
 ---
 

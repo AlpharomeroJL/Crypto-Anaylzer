@@ -1,15 +1,8 @@
 """Capacity and estimated slippage behave as expected on synthetic inputs."""
 
-import sys
-from pathlib import Path
-
 import pandas as pd
 
-_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_root))
-sys.path.insert(0, str(_root / "cli"))
-
-from scan import _add_capacity_slippage_tradable
+from crypto_analyzer.cli.scan import _add_capacity_slippage_tradable
 
 
 def test_capacity_usd_scales_with_liquidity():

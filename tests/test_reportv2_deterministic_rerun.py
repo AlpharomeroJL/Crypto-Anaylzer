@@ -13,9 +13,6 @@ from unittest.mock import patch
 import numpy as np
 import pandas as pd
 
-_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_root))
-
 
 def _deterministic_returns_and_meta():
     """Returns (returns_df, meta_df) with fixed seed for reproducible reportv2."""
@@ -75,17 +72,17 @@ def test_deterministic_rerun_identical_bundle_and_manifest():
                 return None
 
             with (
-                patch("crypto_analyzer.research_universe.get_research_assets", side_effect=_fake_get_research_assets),
-                patch("cli.research_report_v2.get_factor_returns", side_effect=_fake_get_factor_returns),
+                patch("crypto_analyzer.cli.reportv2.get_research_assets", side_effect=_fake_get_research_assets),
+                patch("crypto_analyzer.cli.reportv2.get_factor_returns", side_effect=_fake_get_factor_returns),
             ):
                 # Run 1
                 sys.argv = argv_1
-                from cli import research_report_v2
+                from crypto_analyzer.cli import reportv2
 
-                research_report_v2.main()
+                reportv2.main()
                 # Run 2 (same DB so run_key/dataset_id_v2 identical => same seed_root/RC)
                 sys.argv = argv_2
-                research_report_v2.main()
+                reportv2.main()
         finally:
             try:
                 Path(db_path).unlink(missing_ok=True)

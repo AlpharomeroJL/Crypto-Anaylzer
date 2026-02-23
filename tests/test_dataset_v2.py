@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import sqlite3
 
-from crypto_analyzer.dataset_v2 import get_dataset_id_v2
+import pytest
+
+from crypto_analyzer.dataset_v2 import compute_dataset_id_v2, get_dataset_id_v2
 
 
 def _db_with_spot_table(path: str, rows: list[tuple]) -> None:
@@ -108,3 +110,52 @@ def test_strict_mode_metadata(tmp_path):
     assert "dataset_hash_scope" in meta
     assert "dataset_hash_excludes" in meta
     assert "spot_price_snapshots" in (meta.get("dataset_hash_scope") or [])
+
+
+def test_strict_raises_for_rowid_fallback(tmp_path):
+    """STRICT must raise when an allowlisted table has no PK and no time column (rowid_fallback)."""
+    db = str(tmp_path / "rowid.sqlite")
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE no_pk_table (a INTEGER, b TEXT)")
+        conn.execute("INSERT INTO no_pk_table (a, b) VALUES (1, 'x')")
+        conn.commit()
+    with sqlite3.connect(db) as conn:
+        with pytest.raises(ValueError) as exc_info:
+            compute_dataset_id_v2(conn, scope=["no_pk_table"], mode="STRICT")
+    msg = str(exc_info.value)
+    assert "no_pk_table" in msg
+    assert "rowid_fallback" in msg
+    assert "PRIMARY KEY" in msg or "TABLE_DETERMINISTIC_KEYS" in msg
+    with sqlite3.connect(db) as conn:
+        did, meta = compute_dataset_id_v2(conn, scope=["no_pk_table"], mode="FAST_DEV")
+    assert len(did) == 16
+    assert meta.get("dataset_hash_mode") == "FAST_DEV"
+
+
+def test_strict_raises_for_ts_then_rowid(tmp_path):
+    """STRICT must raise when an allowlisted table has ts_utc but no PK (ts_then_rowid)."""
+    db = str(tmp_path / "tsrowid.sqlite")
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE ts_no_pk (ts_utc TEXT NOT NULL, value REAL)")
+        conn.execute("INSERT INTO ts_no_pk (ts_utc, value) VALUES ('2026-01-01T00:00:00', 1.0)")
+        conn.commit()
+    with sqlite3.connect(db) as conn:
+        with pytest.raises(ValueError) as exc_info:
+            compute_dataset_id_v2(conn, scope=["ts_no_pk"], mode="STRICT")
+    msg = str(exc_info.value)
+    assert "ts_no_pk" in msg
+    assert "ts_then_rowid" in msg
+    assert "PRIMARY KEY" in msg or "TABLE_DETERMINISTIC_KEYS" in msg
+    with sqlite3.connect(db) as conn:
+        did, meta = compute_dataset_id_v2(conn, scope=["ts_no_pk"], mode="FAST_DEV")
+    assert len(did) == 16
+    assert meta.get("dataset_hash_mode") == "FAST_DEV"
+
+
+def test_strict_succeeds_with_pk(tmp_path):
+    """STRICT succeeds when every allowlisted table has a primary key."""
+    db = str(tmp_path / "pk.sqlite")
+    _db_with_spot_table(db, [("2026-01-01T00:00:00", "BTC", 50000.0, "cex")])
+    did, meta = get_dataset_id_v2(db, mode="STRICT")
+    assert len(did) == 16
+    assert meta.get("dataset_hash_mode") == "STRICT"

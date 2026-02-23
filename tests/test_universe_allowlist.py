@@ -4,15 +4,11 @@ from __future__ import annotations
 
 import math
 import sqlite3
-import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_root))
-sys.path.insert(0, str(_root / "cli"))
-from poll import (
+from crypto_analyzer.cli.poll import (
     _apply_churn_control,
     _persist_universe_allowlist,
     _universe_keep_pair,
@@ -182,7 +178,7 @@ def test_fetch_dex_universe_only_sol_usdc_survives_default_allowlist():
         }
         return r
 
-    with patch("poll.requests.get", side_effect=_mock_get):
+    with patch("crypto_analyzer.cli.poll.requests.get", side_effect=_mock_get):
         out = fetch_dex_universe_top_pairs(
             chain_id="solana",
             page_size=50,
@@ -234,7 +230,7 @@ def test_fetch_dex_universe_multi_query_sol_returns_sol_sol_usdc_returns_sol_usd
             r.json.return_value = {"pairs": []}
         return r
 
-    with patch("poll.requests.get", side_effect=_mock_get):
+    with patch("crypto_analyzer.cli.poll.requests.get", side_effect=_mock_get):
         out = fetch_dex_universe_top_pairs(
             chain_id="solana",
             page_size=50,
@@ -269,7 +265,7 @@ def test_fetch_dex_universe_dedup_by_pair_address():
         r.json.return_value = {"pairs": [common_pair]}
         return r
 
-    with patch("poll.requests.get", side_effect=_mock_get):
+    with patch("crypto_analyzer.cli.poll.requests.get", side_effect=_mock_get):
         out = fetch_dex_universe_top_pairs(
             chain_id="solana",
             page_size=50,
@@ -303,7 +299,7 @@ def test_fetch_dex_universe_uses_pair_address_not_dex_id():
             },
         ]
     }
-    with patch("poll.requests.get") as m:
+    with patch("crypto_analyzer.cli.poll.requests.get") as m:
         m.return_value.json.return_value = payload
         m.return_value.raise_for_status = MagicMock()
         out = fetch_dex_universe_top_pairs(
@@ -332,7 +328,7 @@ def test_fetch_dex_universe_debug_does_not_crash(capsys):
             }
         ]
     }
-    with patch("poll.requests.get") as m:
+    with patch("crypto_analyzer.cli.poll.requests.get") as m:
         m.return_value.json.return_value = payload
         m.return_value.raise_for_status = MagicMock()
         out = fetch_dex_universe_top_pairs(
@@ -351,7 +347,7 @@ def test_fetch_dex_universe_debug_does_not_crash(capsys):
 
 def test_fetch_dex_universe_top_pairs_mock_empty():
     """When API returns no pairs (all queries empty), result is empty for chains with no bootstrap."""
-    with patch("poll.requests.get") as m:
+    with patch("crypto_analyzer.cli.poll.requests.get") as m:
         m.return_value.json.return_value = {"pairs": []}
         m.return_value.raise_for_status = MagicMock()
         out = fetch_dex_universe_top_pairs(
@@ -362,7 +358,7 @@ def test_fetch_dex_universe_top_pairs_mock_empty():
 
 def test_fetch_dex_universe_bootstrap_when_solana_returns_zero():
     """When Solana API returns 0 accepted pairs, fetch returns [] (bootstrap is config-only in _get_universe_pairs)."""
-    with patch("poll.requests.get") as m:
+    with patch("crypto_analyzer.cli.poll.requests.get") as m:
         m.return_value.json.return_value = {"pairs": []}
         m.return_value.raise_for_status = MagicMock()
         out = fetch_dex_universe_top_pairs(
@@ -393,7 +389,7 @@ def test_fetch_dex_universe_top_pairs_mock_filter():
             },
         ]
     }
-    with patch("poll.requests.get") as m:
+    with patch("crypto_analyzer.cli.poll.requests.get") as m:
         m.return_value.json.return_value = payload
         m.return_value.raise_for_status = MagicMock()
         out = fetch_dex_universe_top_pairs(
@@ -416,7 +412,7 @@ def test_load_universe_config_defaults():
 
 def test_fetch_dex_search_pairs_mock():
     """fetch_dex_search_pairs returns list of pair dicts from API response."""
-    with patch("poll.requests.get") as m:
+    with patch("crypto_analyzer.cli.poll.requests.get") as m:
         m.return_value.json.return_value = {
             "pairs": [
                 {
@@ -467,7 +463,7 @@ def test_relaxed_thresholds_accept_when_strict_rejects():
             },
         ]
     }
-    with patch("poll.requests.get") as m:
+    with patch("crypto_analyzer.cli.poll.requests.get") as m:
         m.return_value.json.return_value = payload
         m.return_value.raise_for_status = MagicMock()
         strict = fetch_dex_universe_top_pairs(

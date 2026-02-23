@@ -1,6 +1,7 @@
 # Crypto-Analyzer: run commands using .venv (avoids ModuleNotFoundError).
-# Doctor-first: runs crypto_analyzer.doctor before most commands unless -SkipDoctor is passed.
-# Must run from repo root, or script will cd to repo root (parent of scripts/).
+# Delegates via: python -m crypto_analyzer <command> (does not rely on PATH for crypto-analyzer).
+# Doctor-first: runs doctor before most commands unless -SkipDoctor is passed.
+# Must run from repo root; script will cd to repo root (parent of scripts/).
 # Usage: .\scripts\run.ps1 [-SkipDoctor] <command> [args...]
 # Commands: poll, universe-poll, materialize, report, reportv2, case_study_liqshock, streamlit, doctor, test, demo, check-dataset
 param(
@@ -11,9 +12,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
-$py = Join-Path $root ".venv\Scripts\python.exe"
+if ($env:VIRTUAL_ENV) {
+    $py = Join-Path $env:VIRTUAL_ENV "Scripts\python.exe"
+} else {
+    $py = Join-Path $root ".venv\Scripts\python.exe"
+}
 if (-not (Test-Path $py)) {
-    Write-Error "Venv not found at $py. Create it: python -m venv .venv; .\.venv\Scripts\Activate; .\.venv\Scripts\python.exe -m pip install -e `".[dev]`""
+    Write-Error "Python venv not found at $py. Create .venv at repo root or set VIRTUAL_ENV. See README Quickstart."
     exit 1
 }
 Set-Location $root
@@ -34,7 +39,7 @@ if ($Command -and $Command -ne 'doctor' -and $Command -ne 'test' -and $Command -
 
 if ($runDoctorFirst) {
     $doctorExit = 0
-    & $py -m crypto_analyzer.doctor
+    & $py -m crypto_analyzer doctor
     $doctorExit = $LASTEXITCODE
     if ($doctorExit -ne 0) {
         exit $doctorExit
@@ -42,13 +47,13 @@ if ($runDoctorFirst) {
 }
 
 switch ($Command) {
-    "poll"           { & $py cli/poll.py --interval 60 @filtered; exit $LASTEXITCODE }
-    "universe-poll"  { & $py cli/poll.py --universe @filtered; exit $LASTEXITCODE }
-    "materialize"    { & $py cli/materialize.py @filtered; exit $LASTEXITCODE }
-    "analyze"        { & $py cli/analyze.py @filtered; exit $LASTEXITCODE }
-    "scan"           { & $py cli/scan.py @filtered; exit $LASTEXITCODE }
-    "report"         { & $py cli/research_report.py @filtered; exit $LASTEXITCODE }
-    "reportv2"       { & $py cli/research_report_v2.py @filtered; exit $LASTEXITCODE }
+    "poll"           { & $py -m crypto_analyzer poll --interval 60 @filtered; exit $LASTEXITCODE }
+    "universe-poll"  { & $py -m crypto_analyzer universe-poll @filtered; exit $LASTEXITCODE }
+    "materialize"    { & $py -m crypto_analyzer materialize @filtered; exit $LASTEXITCODE }
+    "analyze"        { & $py -m crypto_analyzer analyze @filtered; exit $LASTEXITCODE }
+    "scan"           { & $py -m crypto_analyzer scan @filtered; exit $LASTEXITCODE }
+    "report"         { & $py -m crypto_analyzer report @filtered; exit $LASTEXITCODE }
+    "reportv2"       { & $py -m crypto_analyzer reportv2 @filtered; exit $LASTEXITCODE }
     "case_study_liqshock" {
         $baseArgs = @(
             "--signals", "liquidity_shock_reversion",
@@ -58,7 +63,7 @@ switch ($Command) {
             "--case-study", "liqshock"
         )
         $filteredForReport = @($filtered | Where-Object { $_ -ne "--snapshot" })
-        & $py cli/research_report_v2.py @baseArgs @filteredForReport
+        & $py -m crypto_analyzer reportv2 @baseArgs @filteredForReport
         $exitCode = $LASTEXITCODE
         if ($exitCode -ne 0) { exit $exitCode }
         $outDir = "reports"
@@ -171,17 +176,17 @@ switch ($Command) {
         }
         exit 0
     }
-    "daily"          { & $py cli/report_daily.py @filtered; exit $LASTEXITCODE }
-    "backtest"       { & $py cli/backtest.py @filtered; exit $LASTEXITCODE }
-    "walkforward"    { & $py cli/backtest_walkforward.py @filtered; exit $LASTEXITCODE }
-    "streamlit"      { & $py -m streamlit run cli/app.py @filtered; exit $LASTEXITCODE }
-    "api"            { & $py cli/api.py @filtered; exit $LASTEXITCODE }
-    "doctor"         { & $py -m crypto_analyzer.doctor @filtered; exit $LASTEXITCODE }
+    "daily"          { & $py -m crypto_analyzer daily @filtered; exit $LASTEXITCODE }
+    "backtest"       { & $py -m crypto_analyzer backtest @filtered; exit $LASTEXITCODE }
+    "walkforward"    { & $py -m crypto_analyzer walkforward @filtered; exit $LASTEXITCODE }
+    "streamlit"      { & $py -m crypto_analyzer streamlit @filtered; exit $LASTEXITCODE }
+    "api"            { & $py -m crypto_analyzer api @filtered; exit $LASTEXITCODE }
+    "doctor"         { & $py -m crypto_analyzer doctor @filtered; exit $LASTEXITCODE }
     "test"           { & $py -m pytest tests/ @filtered; exit $LASTEXITCODE }
-    "demo"           { & $py cli/demo.py @filtered; exit $LASTEXITCODE }
-    "check-dataset"  { & $py tools/check_dataset.py @filtered; exit $LASTEXITCODE }
-    "null_suite"     { & $py cli/null_suite.py @filtered; exit $LASTEXITCODE }
-    "promotion"      { & $py cli/promotion.py @filtered; exit $LASTEXITCODE }
+    "demo"           { & $py -m crypto_analyzer demo @filtered; exit $LASTEXITCODE }
+    "check-dataset"  { & $py -m crypto_analyzer check-dataset @filtered; exit $LASTEXITCODE }
+    "null_suite"     { & $py -m crypto_analyzer null_suite @filtered; exit $LASTEXITCODE }
+    "promotion"      { & $py -m crypto_analyzer promotion @filtered; exit $LASTEXITCODE }
     "verify"         {
         Write-Host "== verify: doctor -> pytest -> ruff -> research-only -> diagrams =="
         Write-Host "OS:        $(& $py -c "import platform; print(platform.platform())" 2>&1)"
@@ -200,7 +205,7 @@ switch ($Command) {
             $sw.Stop()
             return @{ ExitCode = $ex; Seconds = [math]::Round($sw.Elapsed.TotalSeconds, 2) }
         }
-        $r1 = _RunStep -Label "doctor" -ScriptBlock { & $py -m crypto_analyzer.doctor }
+        $r1 = _RunStep -Label "doctor" -ScriptBlock { & $py -m crypto_analyzer doctor }
         if ($r1.ExitCode -ne 0) {
             _StepFail "doctor" "(exit $($r1.ExitCode), $($r1.Seconds)s)"
             $totalSw.Stop()

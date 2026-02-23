@@ -10,7 +10,6 @@ import numpy as np
 import pandas as pd
 
 _root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_root))
 
 
 def _synthetic_signals_and_metrics():
@@ -41,7 +40,7 @@ def _synthetic_signals_and_metrics():
 
 def test_render_case_study_liqshock_headings_and_tables():
     """Renderer unit test: output contains required headings and both table sections."""
-    from cli.case_study_liqshock_renderer import render_case_study_liqshock
+    from crypto_analyzer.cli.case_study_liqshock_renderer import render_case_study_liqshock
 
     signals_dict, orth_dict, portfolio_pnls, canonical_metrics, returns_df = _synthetic_signals_and_metrics()
     args = MagicMock()
@@ -126,12 +125,12 @@ def test_case_study_liqshock_arg_triggers_renderer():
             "liqshock",
         ]
 
-        with patch("cli.research_report_v2.get_research_assets", side_effect=_fake_assets):
-            with patch("cli.research_report_v2.load_bars", return_value=pd.DataFrame()):
+        with patch("crypto_analyzer.cli.reportv2.get_research_assets", side_effect=_fake_assets):
+            with patch("crypto_analyzer.cli.reportv2.load_bars", return_value=pd.DataFrame()):
                 sys.argv = argv
-                from cli import research_report_v2
+                from crypto_analyzer.cli import reportv2
 
-                code = research_report_v2.main()
+                code = reportv2.main()
 
         assert code == 0
         md_files = sorted(out_dir.glob("*.md"))

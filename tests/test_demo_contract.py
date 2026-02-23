@@ -1,11 +1,6 @@
 """Contract tests for the demo CLI and poll --run-seconds flag."""
 
-import sys
 import time
-from pathlib import Path
-
-_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_root))
 
 
 def test_run_seconds_flag_exits_loop():
@@ -39,8 +34,7 @@ def test_run_seconds_none_means_forever():
 def test_demo_preflight_needs_config(tmp_path, monkeypatch):
     """demo.main() should return 2 if config.yaml is missing."""
     monkeypatch.chdir(tmp_path)
-    # Patch _root so demo looks in tmp_path
-    import cli.demo as demo_mod
+    from crypto_analyzer.cli import demo as demo_mod
 
     monkeypatch.setattr(demo_mod, "_root", tmp_path)
     result = demo_mod.main()

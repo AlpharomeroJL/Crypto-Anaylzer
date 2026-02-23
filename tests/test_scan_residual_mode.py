@@ -1,17 +1,12 @@
 """Scan mode residual_momentum returns a DataFrame with residual columns when factors exist."""
 
-import sys
-from pathlib import Path
+import pandas as pd
 
-_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_root))
-sys.path.insert(0, str(_root / "cli"))
+from crypto_analyzer.cli.scan import run_scan
 
 
 def test_residual_momentum_mode_returns_dataframe():
     """run_scan with mode=residual_momentum returns (DataFrame, float, float, list)."""
-    import pandas as pd
-    from scan import run_scan
 
     try:
         res, disp_l, disp_z, reasons = run_scan(
@@ -30,8 +25,8 @@ def test_residual_momentum_mode_returns_dataframe():
 def test_residual_momentum_mode_has_residual_columns_in_contract():
     """When run_scan(mode=residual_momentum) returns non-empty df, it must include residual_return_24h (contract)."""
     import numpy as np
-    import pandas as pd
-    from scan import scan_residual_momentum
+
+    from crypto_analyzer.cli.scan import scan_residual_momentum
 
     # Minimal bars and returns_df with factor columns so residual_momentum can run
     idx = pd.date_range("2024-01-01", periods=50, freq="1h")

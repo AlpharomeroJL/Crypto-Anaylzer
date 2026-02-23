@@ -16,7 +16,7 @@ import pandas as pd
 from crypto_analyzer.timeutils import now_utc_iso
 from crypto_analyzer.validation_bundle import ValidationBundle
 
-from .execution_evidence import ExecutionEvidence
+from .evidence_resolver import resolve_evidence
 from .gating import (
     PromotionDecision,
     ThresholdConfig,
@@ -78,73 +78,6 @@ def _artifact_pointers(
     return out
 
 
-def _load_bundle(path: Union[str, Path]) -> Optional[ValidationBundle]:
-    """Load ValidationBundle from JSON path. Returns None if file missing or invalid."""
-    path = Path(path)
-    if not path.is_file():
-        return None
-    try:
-        with open(path, encoding="utf-8") as f:
-            d = json.load(f)
-        # ValidationBundle expects specific fields; build from dict
-        return ValidationBundle(
-            run_id=d.get("run_id", ""),
-            dataset_id=d.get("dataset_id", ""),
-            signal_name=d.get("signal_name", ""),
-            freq=d.get("freq", ""),
-            horizons=d.get("horizons", []),
-            ic_summary_by_horizon={int(k): v for k, v in (d.get("ic_summary_by_horizon") or {}).items()},
-            ic_decay_table=d.get("ic_decay_table", []),
-            meta=d.get("meta", {}),
-            ic_series_path_by_horizon={int(k): v for k, v in (d.get("ic_series_path_by_horizon") or {}).items()},
-            ic_decay_path=d.get("ic_decay_path"),
-            turnover_path=d.get("turnover_path"),
-            gross_returns_path=d.get("gross_returns_path"),
-            net_returns_path=d.get("net_returns_path"),
-            ic_summary_by_regime_path=d.get("ic_summary_by_regime_path"),
-            ic_decay_by_regime_path=d.get("ic_decay_by_regime_path"),
-            regime_coverage_path=d.get("regime_coverage_path"),
-        )
-    except Exception:
-        return None
-
-
-def _load_regime_summary(path: Union[str, Path]) -> Optional[pd.DataFrame]:
-    """Load regime summary CSV (columns e.g. regime, mean_ic). Returns None if missing."""
-    path = Path(path)
-    if not path.is_file():
-        return None
-    try:
-        return pd.read_csv(path)
-    except Exception:
-        return None
-
-
-def _load_rc_summary(path: Union[str, Path]) -> Optional[Dict[str, Any]]:
-    """Load RC summary JSON. Returns None if missing."""
-    path = Path(path)
-    if not path.is_file():
-        return None
-    try:
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return None
-
-
-def _load_execution_evidence(path: Union[str, Path]) -> Optional[ExecutionEvidence]:
-    """Load ExecutionEvidence from JSON file. Returns None if missing or invalid."""
-    path = Path(path)
-    if not path.is_file():
-        return None
-    try:
-        with open(path, encoding="utf-8") as f:
-            d = json.load(f)
-        return ExecutionEvidence.from_dict(d)
-    except Exception:
-        return None
-
-
 def evaluate_and_record(
     conn: sqlite3.Connection,
     candidate_id: str,
@@ -173,19 +106,6 @@ def evaluate_and_record(
             metrics_snapshot={},
         )
 
-    bundle: Optional[ValidationBundle] = None
-    if isinstance(bundle_or_path, ValidationBundle):
-        bundle = bundle_or_path
-    else:
-        bundle = _load_bundle(bundle_or_path)
-    if bundle is None:
-        return PromotionDecision(
-            status="rejected",
-            reasons=["could not load ValidationBundle from path"],
-            metrics_snapshot={},
-        )
-
-    # Resolve evidence and base path once (for regime, RC, execution evidence)
     evidence: Dict[str, Any] = {}
     if row.get("evidence_json"):
         try:
@@ -194,27 +114,20 @@ def evaluate_and_record(
             pass
     base = Path(evidence_base_path) if evidence_base_path else Path(".")
 
-    if regime_summary_df is None and evidence.get("ic_summary_by_regime_path"):
-        p = (
-            base / evidence["ic_summary_by_regime_path"]
-            if not Path(evidence["ic_summary_by_regime_path"]).is_absolute()
-            else Path(evidence["ic_summary_by_regime_path"])
+    bundle_resolved, regime_resolved, rc_resolved, execution_evidence_loaded = resolve_evidence(
+        evidence, base, bundle_or_path
+    )
+    if bundle_resolved is None:
+        return PromotionDecision(
+            status="rejected",
+            reasons=["could not load ValidationBundle from path"],
+            metrics_snapshot={},
         )
-        regime_summary_df = _load_regime_summary(p)
-    if rc_summary is None and evidence.get("rc_summary_path"):
-        p = (
-            base / evidence["rc_summary_path"]
-            if not Path(evidence["rc_summary_path"]).is_absolute()
-            else Path(evidence["rc_summary_path"])
-        )
-        rc_summary = _load_rc_summary(p)
-
-    # Load execution evidence from candidate evidence_json (PR2)
-    execution_evidence_loaded: Optional[ExecutionEvidence] = None
-    exec_path = evidence.get("execution_evidence_path")
-    if exec_path:
-        p = base / exec_path if not Path(exec_path).is_absolute() else Path(exec_path)
-        execution_evidence_loaded = _load_execution_evidence(p)
+    bundle = bundle_resolved
+    if regime_summary_df is None:
+        regime_summary_df = regime_resolved
+    if rc_summary is None:
+        rc_summary = rc_resolved
 
     # Sweep-originated candidates: require RC for Candidate/Accepted by default (data-snooping policy).
     # If family_id is set and caller did not set require_reality_check=True, enforce it for this evaluation.
@@ -243,7 +156,7 @@ def evaluate_and_record(
         execution_evidence=execution_evidence_loaded,
         target_status=target_status,
         allow_missing_execution_evidence=allow_missing_execution_evidence,
-        execution_evidence_base_path=base,
+        execution_evidence_base_path=str(base) if base else None,
     )
 
     # Snapshot inputs for "why was this accepted?" reproducibility

@@ -1,0 +1,45 @@
+# Security: dependency audit and SBOM. Requires network for advisories; separate from smoke/demo-lite.
+# Runs on schedule (weekly) and on push to main; does not block PRs (smoke/doctor remain network-free).
+name: Security
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  push:
+    branches: [main, master]
+    paths-ignore: ["**.md", "docs/**"]
+
+jobs:
+  audit-and-sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Install pip-audit
+        run: uv pip install pip-audit
+
+      - name: Dependency audit
+        run: uv run pip-audit
+        continue-on-error: true
+
+      - name: Install cyclonedx-bom
+        run: uv pip install cyclonedx-bom
+
+      - name: Generate SBOM (CycloneDX)
+        run: uv run cyclonedx-py environment --outfile sbom.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: sbom.json

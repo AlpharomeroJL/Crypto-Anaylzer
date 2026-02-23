@@ -25,7 +25,11 @@ postgres = ["sqlalchemy>=2.0", "psycopg2-binary>=2.9"]
 dev = ["pytest>=7.0", "ruff>=0.6"]
 
 [project.scripts]
-crypto-analyzer = "crypto_analyzer.__main__:main"
+crypto-analyzer = "crypto_analyzer.cli.main:main"
+
+# Allow uv lock to build the project (dynamic version reads crypto_analyzer which imports pandas)
+[tool.uv.extra-build-dependencies]
+crypto-analyzer = ["pandas", "numpy"]
 
 [tool.setuptools.dynamic]
 version = {attr = "crypto_analyzer.__version__"}
@@ -43,6 +47,7 @@ ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "cli/*.py" = ["E402"]
+"crypto_analyzer/cli/*.py" = ["E402"]
 "tools/*.py" = ["E402"]
 "tests/*.py" = ["E402"]
 

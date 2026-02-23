@@ -1,0 +1,116 @@
+# Release: on tag v*.*.*, validate (same checks as CI + tag version), build sdist + wheel, upload to GitHub Release.
+# Validate steps must stay in sync with .github/workflows/ci.yml (lock, sync, entrypoints, doctor, smoke, ruff, pytest).
+name: Release
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  validate-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set tag version
+        run: echo "TAG_VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Lockfile drift check
+        run: uv lock --check
+
+      - name: Cache uv
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock', 'pyproject.toml') }}
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Entrypoint (module)
+        run: uv run python -m crypto_analyzer --help
+
+      - name: Entrypoint (console script)
+        run: uv run crypto-analyzer --help
+
+      - name: Version/changelog consistency (must match tag)
+        run: uv run python tools/check_version_changelog.py --expected-version ${{ env.TAG_VERSION }}
+
+      - name: Ruff check
+        run: uv run ruff check .
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
+      - name: Pytest (not slow)
+        run: uv run pytest -m "not slow" -q --tb=short
+        timeout-minutes: 20
+
+      - name: Doctor (CI)
+        run: uv run crypto-analyzer doctor --ci
+
+      - name: Smoke (CI, no network)
+        run: uv run crypto-analyzer smoke --ci
+        env:
+          CRYPTO_ANALYZER_NO_NETWORK: "1"
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Install wheel and verify console script
+        run: |
+          uv pip install dist/*.whl
+          crypto-analyzer --help
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish-release:
+    needs: validate-and-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download dist
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+
+      - name: Create GitHub Release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-pypi:
+    needs: validate-and-build
+    runs-on: ubuntu-latest
+    if: false
+    # Enable when PyPI secret is configured: set if to "secrets.TWINE_PASSWORD != ''"
+    # and add TWINE_USERNAME=__token__, TWINE_PASSWORD, TWINE_REPOSITORY_URL if needed.
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+      - name: Publish to PyPI
+        run: |
+          pip install twine
+          twine upload dist/*
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.TWINE_PASSWORD }}

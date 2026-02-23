@@ -1,6 +1,7 @@
 """
 System doctor: preflight checks for env, deps, DB, integrity, and minimal pipeline.
 Run: python -m crypto_analyzer.doctor
+Run in CI (no network, temp DB only): python -m crypto_analyzer.doctor --ci
 Exit: 0 all OK, 2 env/deps, 3 DB/schema, 4 pipeline smoke.
 Research-only; no execution.
 """
@@ -9,7 +10,9 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 from pathlib import Path
+from typing import List, Optional
 
 # Repo root (parent of crypto_analyzer package)
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -224,12 +227,82 @@ def _warn_universe_zero_if_enabled() -> None:
         pass
 
 
-def main() -> int:
-    """Run all checks; return 0 OK, 2 env/deps, 3 DB/schema, 4 pipeline."""
+# CI-safe table assertions aligned with schema + docs: core ingestion, phase3 promotion/governance, lineage.
+CI_CORE_TABLES = ["sol_monitor_snapshots", "spot_price_snapshots"]
+CI_PHASE3_TABLES = ["promotion_candidates", "promotion_events", "eligibility_reports", "governance_events"]
+CI_LINEAGE_TABLES = ["artifact_lineage", "artifact_edges"]
+
+
+def check_ci_safe() -> bool:
+    """
+    CI-safe checks: no network, no config, temp DB only.
+    Verifies: imports, sqlite3, core migrations, phase3 migrations, expected tables (core + phase3 + lineage).
+    """
+    import sqlite3
+
+    if not check_dependencies():
+        return False
+    print("[OK] imports")
+
+    try:
+        conn = sqlite3.connect(":memory:")
+        conn.execute("SELECT 1")
+        conn.close()
+    except Exception as e:
+        print(f"[FAIL] sqlite3: {e}")
+        return False
+    print("[OK] sqlite3")
+
+    try:
+        from .db.migrations import run_migrations
+        from .db.migrations_phase3 import run_migrations_phase3
+    except ImportError as e:
+        print(f"[FAIL] migrations import: {e}")
+        return False
+
+    fd, path = tempfile.mkstemp(suffix=".sqlite")
+    try:
+        os.close(fd)
+        with sqlite3.connect(path) as conn:
+            run_migrations(conn, path)
+            print("[OK] core migrations")
+            run_migrations_phase3(conn, path)
+            print("[OK] phase3 migrations")
+            cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+            tables = {row[0] for row in cur.fetchall()}
+        for t in CI_CORE_TABLES + CI_PHASE3_TABLES + CI_LINEAGE_TABLES:
+            if t not in tables:
+                print(f"[FAIL] expected tables  missing: {t}")
+                return False
+        print("[OK] expected tables present")
+    except Exception as e:
+        print(f"[FAIL] ci migrations: {e}")
+        return False
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    return True
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    """Run all checks; return 0 OK, 2 env/deps, 3 DB/schema, 4 pipeline. With --ci: only CI-safe checks."""
+    if argv is None:
+        argv = sys.argv[1:]
+    ci_mode = "--ci" in argv
     try:
         print("Crypto-Analyzer system doctor")
+        if ci_mode:
+            print("(CI mode: no network, temp DB only)")
         print("-" * 40)
 
+        if ci_mode:
+            if not check_ci_safe():
+                return 2
+            print("-" * 40)
+            print("All CI checks passed.")
+            return 0
         if not check_env():
             return 2
         if not check_dependencies():

@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 
 @dataclass
@@ -26,7 +26,7 @@ class ExecutionEvidence:
     cost_config: Optional[Dict[str, Any]] = None
     notes: Optional[str] = None
 
-    def validate_required(self, base_path: Optional[Path] = None) -> List[str]:
+    def validate_required(self, base_path: Optional[Union[str, Path]] = None) -> List[str]:
         """
         Return list of missing required item names (hard fail). Empty list = pass.
         When base_path is set, capacity_curve_path must resolve to an existing readable file.
@@ -35,7 +35,8 @@ class ExecutionEvidence:
         if not self.capacity_curve_path or not (self.capacity_curve_path or "").strip():
             missing.append("capacity_curve_path")
         elif base_path is not None:
-            resolved = (base_path / self.capacity_curve_path.strip()).resolve()
+            base = Path(base_path) if isinstance(base_path, str) else base_path
+            resolved = (base / self.capacity_curve_path.strip()).resolve()
             if not resolved.is_file():
                 missing.append("capacity_curve_path")
             else:

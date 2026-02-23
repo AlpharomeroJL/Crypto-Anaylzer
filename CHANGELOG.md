@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+Releases must use a header `## [X.Y.Z] - YYYY-MM-DD` (or `## [vX.Y.Z]`). The first such line is the latest release and must match `crypto_analyzer.__version__`. See `tools/check_version_changelog.py`.
+
+---
+
+## [0.3.0] - 2026-02-23
+
+### Release pipeline and dev UX
+
+- Version/changelog consistency check (`tools/check_version_changelog.py`).
+- Release workflow: build sdist/wheel on tag push; optional PyPI publish.
+- `crypto-analyzer init`: create local SQLite DB and run migrations (optional `--phase3`).
+- `crypto-analyzer demo-lite`: synthetic dataset, no network, for offline onboarding.
+- Security: dependency audit and SBOM in CI; SECURITY.md and README Security section.
+
 ---
 
 ## [v0.1.0] — Deterministic Research Validation Control Plane
