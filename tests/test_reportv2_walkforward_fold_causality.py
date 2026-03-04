@@ -4,13 +4,7 @@ Walk-forward path uses fit-on-train-only; no refit on test. Attestation produced
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pandas as pd
-
-_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_root))
 
 from crypto_analyzer.fold_causality.attestation import FOLD_CAUSALITY_ATTESTATION_SCHEMA_VERSION
 from crypto_analyzer.fold_causality.folds import (

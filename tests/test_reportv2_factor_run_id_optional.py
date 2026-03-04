@@ -13,9 +13,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_root))
-
 
 def _make_returns_fixture(n_ts: int = 50, n_assets: int = 3, seed: int = 42) -> pd.DataFrame:
     np.random.seed(seed)
@@ -69,13 +66,13 @@ def test_reportv2_factor_run_id_invalid_exits():
         try:
             sys.stderr = io.StringIO()
             with (
-                patch("cli.research_report_v2.get_research_assets", return_value=_fake_returns_and_meta()),
-                patch("cli.research_report_v2.get_factor_returns", return_value=None),
+                patch("crypto_analyzer.cli.reportv2.get_research_assets", return_value=_fake_returns_and_meta()),
+                patch("crypto_analyzer.cli.reportv2.get_factor_returns", return_value=None),
             ):
                 sys.argv = argv
-                from cli import research_report_v2
+                from crypto_analyzer.cli.reportv2 import main
 
-                code = research_report_v2.main()
+                code = main()
             err = sys.stderr.getvalue()
         finally:
             sys.stderr = old_stderr
@@ -136,14 +133,14 @@ def test_reportv2_factor_run_id_valid_uses_materialized():
             factor_run_id,
         ]
         with (
-            patch("cli.research_report_v2.get_research_assets", return_value=_fake_returns_and_meta()),
-            patch("cli.research_report_v2.get_factor_returns", return_value=None),
-            patch("cli.research_report_v2.record_experiment_run"),
+            patch("crypto_analyzer.cli.reportv2.get_research_assets", return_value=_fake_returns_and_meta()),
+            patch("crypto_analyzer.cli.reportv2.get_factor_returns", return_value=None),
+            patch("crypto_analyzer.cli.reportv2.record_experiment_run"),
         ):
             sys.argv = argv
-            from cli import research_report_v2
+            from crypto_analyzer.cli.reportv2 import main
 
-            code = research_report_v2.main()
+            code = main()
 
         assert code == 0
         md_files = list(out_dir.glob("*.md"))

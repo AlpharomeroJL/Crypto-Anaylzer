@@ -6,15 +6,9 @@ Synthetic data where y = 2*BTC + 1*ETH + noise; ensure estimated betas near
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import pytest
-
-_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_root))
 
 from crypto_analyzer.factors import fit_ols, rolling_multifactor_ols
 

@@ -2,15 +2,9 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import pytest
-
-_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_root))
 
 from crypto_analyzer.factors import causal_rolling_ols
 from crypto_analyzer.factors_dynamic_beta import dynamic_beta_rls

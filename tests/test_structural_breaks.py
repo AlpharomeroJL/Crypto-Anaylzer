@@ -1,13 +1,7 @@
 """Structural break tests: CUSUM and sup-Chow."""
 
-import sys
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
-
-_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_root))
 
 from crypto_analyzer.structural_breaks import (
     CUSUM_MIN_OBS,

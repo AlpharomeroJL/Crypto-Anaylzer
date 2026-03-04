@@ -65,9 +65,7 @@ def test_seed_root_fold_id_prefix_avoids_collision():
 def test_rng_reproducible_across_process():
     """Spawn subprocess twice with same run_key+salt => same first N draws."""
     root = Path(__file__).resolve().parent.parent
-    code = f"""
-import sys
-sys.path.insert(0, {repr(str(root))})
+    code = """
 from crypto_analyzer.rng import SALT_RC_NULL, rng_for
 r = rng_for('cross_process_rk', SALT_RC_NULL)
 vals = r.random(5).tolist()

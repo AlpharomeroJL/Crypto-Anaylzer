@@ -3,14 +3,8 @@ Leakage sentinel: causal residual momentum must not exploit future factor inform
 Synthetic data where y_t is correlated with factor_{t+1}; causal path must not show abnormal IC.
 """
 
-import sys
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
-
-_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_root))
 
 from crypto_analyzer.alpha_research import (
     compute_forward_returns,

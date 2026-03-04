@@ -4,12 +4,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import sys
-from pathlib import Path
 
 import pytest
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from crypto_analyzer.experiments import (
     ensure_experiment_tables,

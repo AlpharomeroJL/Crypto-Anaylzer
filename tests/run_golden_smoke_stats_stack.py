@@ -17,9 +17,6 @@ from unittest.mock import patch
 import numpy as np
 import pandas as pd
 
-_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_root))
-
 
 def _fake_returns_and_meta(n_bars=60):
     np.random.seed(88)
@@ -66,14 +63,14 @@ def _run_report(out_dir: Path, rw_enabled: bool) -> None:
     with patch.dict(os.environ, env, clear=False):
         with (
             patch("crypto_analyzer.research_universe.get_research_assets", return_value=_fake_returns_and_meta()),
-            patch("cli.research_report_v2.get_research_assets", return_value=_fake_returns_and_meta()),
-            patch("cli.research_report_v2.get_factor_returns", return_value=None),
-            patch("cli.research_report_v2.record_experiment_run"),
+            patch("crypto_analyzer.cli.reportv2.get_research_assets", return_value=_fake_returns_and_meta()),
+            patch("crypto_analyzer.cli.reportv2.get_factor_returns", return_value=None),
+            patch("crypto_analyzer.cli.reportv2.record_experiment_run"),
         ):
             sys.argv = argv
-            from cli import research_report_v2
+            from crypto_analyzer.cli.reportv2 import main
 
-            research_report_v2.main()
+            main()
 
 
 def _redact_paths(obj, path_pattern: re.Pattern):

@@ -3,12 +3,8 @@
 from __future__ import annotations
 
 import sqlite3
-import sys
-from pathlib import Path
 
 import pytest
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 fastapi = pytest.importorskip("fastapi")
 httpx = pytest.importorskip("httpx")

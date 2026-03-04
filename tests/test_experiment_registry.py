@@ -6,13 +6,8 @@ Uses a temp file for isolation.
 from __future__ import annotations
 
 import sqlite3
-import sys
-from pathlib import Path
 
 import pytest
-
-_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_root))
 
 from crypto_analyzer.experiments import (
     ensure_experiment_tables,

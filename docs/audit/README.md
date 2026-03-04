@@ -7,4 +7,4 @@ This folder holds **audit results** (findings, checklists, alignment reports), s
 
 Use this folder for architecture audits, doc-upgrade checklists, and related artifacts.
 
-- **TODO:** Remove remaining sys.path hacks in tests; then enable `STRICT_SYSPATH_GUARD=1` in CI.
+- **Completed:** All sys.path hacks removed; STRICT_SYSPATH_GUARD=1 enforced in CI.

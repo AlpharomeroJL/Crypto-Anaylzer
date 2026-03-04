@@ -6,12 +6,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
-import sys
 import tempfile
-from pathlib import Path
-
-# Ensure package on path when running tests from repo root
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from crypto_analyzer import doctor
 

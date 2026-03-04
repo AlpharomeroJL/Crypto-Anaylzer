@@ -1,13 +1,7 @@
 """Portfolio: vol target scaling, beta neutralization."""
 
-import sys
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
-
-_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_root))
 
 from crypto_analyzer.portfolio import (
     beta_neutralize_weights,

@@ -52,8 +52,8 @@ jobs:
       - name: Ruff format check
         run: uv run ruff format --check .
 
-      # Pytest: STRICT_SYSPATH_GUARD not set; sys.path guard runs in xfail mode until legacy hacks removed.
-      # Full non-slow suite must complete; step fails if pytest fails or times out
       - name: Pytest (not slow)
+        env:
+          STRICT_SYSPATH_GUARD: "1"
         run: uv run pytest -m "not slow" -q --tb=short
         timeout-minutes: 20

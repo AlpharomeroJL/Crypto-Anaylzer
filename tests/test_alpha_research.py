@@ -1,11 +1,5 @@
 """Alpha research: IC sign, IC decay smoke, turnover bounds."""
 
-import sys
-from pathlib import Path
-
-_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_root))
-
 import numpy as np
 import pandas as pd
 

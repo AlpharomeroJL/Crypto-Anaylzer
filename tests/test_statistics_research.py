@@ -1,13 +1,7 @@
 """Statistics: block bootstrap outputs."""
 
-import sys
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
-
-_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_root))
 
 from crypto_analyzer.statistics import block_bootstrap_pnl, safe_nanmean, sharpe_ci, significance_summary
 

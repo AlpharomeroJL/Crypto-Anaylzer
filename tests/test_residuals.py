@@ -1,13 +1,7 @@
 """Residuals reduce correlation with factors on synthetic data."""
 
-import sys
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
-
-_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_root))
 
 from crypto_analyzer.factors import (
     compute_ols_betas,

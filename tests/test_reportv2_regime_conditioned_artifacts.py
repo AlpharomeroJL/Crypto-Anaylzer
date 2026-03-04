@@ -13,9 +13,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_root))
-
 from crypto_analyzer.validation_bundle import ValidationBundle
 
 
@@ -66,14 +63,14 @@ def test_reportv2_regimes_off_baseline_no_regime_artifacts():
         with patch.dict(os.environ, {"CRYPTO_ANALYZER_ENABLE_REGIMES": "0"}, clear=False):
             with (
                 patch("crypto_analyzer.research_universe.get_research_assets", return_value=_fake_returns_and_meta()),
-                patch("cli.research_report_v2.get_research_assets", return_value=_fake_returns_and_meta()),
-                patch("cli.research_report_v2.get_factor_returns", return_value=None),
-                patch("cli.research_report_v2.record_experiment_run"),
+                patch("crypto_analyzer.cli.reportv2.get_research_assets", return_value=_fake_returns_and_meta()),
+                patch("crypto_analyzer.cli.reportv2.get_factor_returns", return_value=None),
+                patch("crypto_analyzer.cli.reportv2.record_experiment_run"),
             ):
                 sys.argv = argv
-                from cli import research_report_v2
+                from crypto_analyzer.cli.reportv2 import main
 
-                research_report_v2.main()
+                main()
 
         csv_dir = out_dir / "csv"
         regime_coverage_files = list(csv_dir.glob("regime_coverage_*.json"))
@@ -172,14 +169,14 @@ def test_reportv2_regimes_on_new_artifacts_deterministic():
         with patch.dict(os.environ, {"CRYPTO_ANALYZER_ENABLE_REGIMES": "1"}, clear=False):
             with (
                 patch("crypto_analyzer.research_universe.get_research_assets", return_value=_fake_returns_and_meta()),
-                patch("cli.research_report_v2.get_research_assets", return_value=_fake_returns_and_meta()),
-                patch("cli.research_report_v2.get_factor_returns", return_value=None),
-                patch("cli.research_report_v2.record_experiment_run"),
+                patch("crypto_analyzer.cli.reportv2.get_research_assets", return_value=_fake_returns_and_meta()),
+                patch("crypto_analyzer.cli.reportv2.get_factor_returns", return_value=None),
+                patch("crypto_analyzer.cli.reportv2.record_experiment_run"),
             ):
                 sys.argv = argv
-                from cli import research_report_v2
+                from crypto_analyzer.cli.reportv2 import main
 
-                research_report_v2.main()
+                main()
 
         csv_dir = out_dir / "csv"
         regime_jsons = list(csv_dir.glob("regime_coverage_*.json"))

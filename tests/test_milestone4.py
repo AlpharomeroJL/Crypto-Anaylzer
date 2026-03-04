@@ -1,20 +1,15 @@
 """Milestone 4: signals_xs, risk_model, portfolio_advanced, evaluation, multiple_testing, experiments."""
 
-import sys
 import tempfile
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_root))
-
 from crypto_analyzer.evaluation import conditional_metrics  # noqa: E402, I001
 from crypto_analyzer.experiments import load_experiments, log_experiment  # noqa: E402, I001
 from crypto_analyzer.multiple_testing import (  # noqa: E402, I001
-    effective_trials_eigen,
     deflated_sharpe_ratio,
+    effective_trials_eigen,
     pbo_cscv,
     pbo_proxy_walkforward,
 )

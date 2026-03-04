@@ -12,9 +12,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_root))
-
 
 def _fake_returns_and_meta():
     np.random.seed(88)
@@ -60,14 +57,14 @@ def test_reportv2_without_reality_check_no_rc_artifacts():
         with patch.dict(os.environ, {}, clear=False):
             with (
                 patch("crypto_analyzer.research_universe.get_research_assets", return_value=_fake_returns_and_meta()),
-                patch("cli.research_report_v2.get_research_assets", return_value=_fake_returns_and_meta()),
-                patch("cli.research_report_v2.get_factor_returns", return_value=None),
-                patch("cli.research_report_v2.record_experiment_run"),
+                patch("crypto_analyzer.cli.reportv2.get_research_assets", return_value=_fake_returns_and_meta()),
+                patch("crypto_analyzer.cli.reportv2.get_factor_returns", return_value=None),
+                patch("crypto_analyzer.cli.reportv2.record_experiment_run"),
             ):
                 sys.argv = argv
-                from cli import research_report_v2
+                from crypto_analyzer.cli.reportv2 import main
 
-                research_report_v2.main()
+                main()
         rc_files = list((out_dir / "csv").glob("reality_check_*.json")) + list(
             (out_dir / "csv").glob("reality_check_*.csv")
         )
@@ -118,14 +115,14 @@ def test_reportv2_with_reality_check_produces_artifacts():
         with patch.dict(os.environ, {}, clear=False):
             with (
                 patch("crypto_analyzer.research_universe.get_research_assets", return_value=_fake_returns_and_meta()),
-                patch("cli.research_report_v2.get_research_assets", return_value=_fake_returns_and_meta()),
-                patch("cli.research_report_v2.get_factor_returns", return_value=None),
-                patch("cli.research_report_v2.record_experiment_run", side_effect=_record_run),
+                patch("crypto_analyzer.cli.reportv2.get_research_assets", return_value=_fake_returns_and_meta()),
+                patch("crypto_analyzer.cli.reportv2.get_factor_returns", return_value=None),
+                patch("crypto_analyzer.cli.reportv2.record_experiment_run", side_effect=_record_run),
             ):
                 sys.argv = argv
-                from cli import research_report_v2
+                from crypto_analyzer.cli.reportv2 import main
 
-                research_report_v2.main()
+                main()
         summary_files = list((out_dir / "csv").glob("reality_check_summary_*.json"))
         assert len(summary_files) >= 1
         import json
@@ -187,13 +184,13 @@ def test_reportv2_rc_persists_sweep_family_when_phase3():
         with patch.dict(os.environ, {"EXPERIMENT_DB_PATH": str(experiment_db)}, clear=False):
             with (
                 patch("crypto_analyzer.research_universe.get_research_assets", return_value=_fake_returns_and_meta()),
-                patch("cli.research_report_v2.get_research_assets", return_value=_fake_returns_and_meta()),
-                patch("cli.research_report_v2.get_factor_returns", return_value=None),
+                patch("crypto_analyzer.cli.reportv2.get_research_assets", return_value=_fake_returns_and_meta()),
+                patch("crypto_analyzer.cli.reportv2.get_factor_returns", return_value=None),
             ):
                 sys.argv = argv
-                from cli import research_report_v2
+                from crypto_analyzer.cli.reportv2 import main
 
-                research_report_v2.main()
+                main()
 
         conn2 = sqlite3.connect(str(experiment_db))
         cur = conn2.execute("SELECT family_id, dataset_id FROM sweep_families")

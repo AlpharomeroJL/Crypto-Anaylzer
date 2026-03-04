@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import os
+import json
 import sys
-from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
-
-_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_root))
 
 
 def _fake_returns_and_meta():
@@ -31,15 +27,12 @@ def _fake_returns_and_meta():
     return returns_df, meta_df
 
 
-def test_profiling_off_no_timings_file():
+def test_profiling_off_no_timings_file(tmp_path, monkeypatch):
     """When CRYPTO_ANALYZER_PROFILE is not set, timings.json is not written."""
-    out_dir = Path(__file__).resolve().parent.parent / "tmp_profile_off"
+    monkeypatch.delenv("CRYPTO_ANALYZER_PROFILE", raising=False)
+    out_dir = tmp_path / "profile_off"
     out_dir.mkdir(parents=True, exist_ok=True)
     timings_path = out_dir / "timings.json"
-    if timings_path.exists():
-        timings_path.unlink()
-    env = os.environ.copy()
-    env.pop("CRYPTO_ANALYZER_PROFILE", None)
     argv = [
         "research_report_v2",
         "--freq",
@@ -57,26 +50,21 @@ def test_profiling_off_no_timings_file():
         "--bottom-k",
         "2",
     ]
+    with patch("crypto_analyzer.cli.reportv2.get_research_assets", return_value=_fake_returns_and_meta()):
+        with patch("crypto_analyzer.cli.reportv2.get_factor_returns", return_value=None):
+            sys.argv = argv
+            from crypto_analyzer.cli.reportv2 import main
 
-    with patch.dict(os.environ, env, clear=False):
-        with patch("crypto_analyzer.research_universe.get_research_assets", return_value=_fake_returns_and_meta()):
-            with patch("crypto_analyzer.data.get_factor_returns", return_value=None):
-                sys.argv = argv
-                from cli import research_report_v2
-
-                research_report_v2.main()
+            main()
     assert not timings_path.exists(), "timings.json must not be created when profiling is off"
 
 
-def test_profiling_on_timings_written():
+def test_profiling_on_timings_written(tmp_path, monkeypatch):
     """When CRYPTO_ANALYZER_PROFILE=1, timings.json is written under out_dir."""
-    out_dir = Path(__file__).resolve().parent.parent / "tmp_profile_on"
+    monkeypatch.setenv("CRYPTO_ANALYZER_PROFILE", "1")
+    out_dir = tmp_path / "profile_on"
     out_dir.mkdir(parents=True, exist_ok=True)
     timings_path = out_dir / "timings.json"
-    if timings_path.exists():
-        timings_path.unlink()
-    env = os.environ.copy()
-    env["CRYPTO_ANALYZER_PROFILE"] = "1"
     argv = [
         "research_report_v2",
         "--freq",
@@ -94,17 +82,13 @@ def test_profiling_on_timings_written():
         "--bottom-k",
         "2",
     ]
+    with patch("crypto_analyzer.cli.reportv2.get_research_assets", return_value=_fake_returns_and_meta()):
+        with patch("crypto_analyzer.cli.reportv2.get_factor_returns", return_value=None):
+            sys.argv = argv
+            from crypto_analyzer.cli.reportv2 import main
 
-    with patch.dict(os.environ, env, clear=False):
-        with patch("crypto_analyzer.research_universe.get_research_assets", return_value=_fake_returns_and_meta()):
-            with patch("crypto_analyzer.data.get_factor_returns", return_value=None):
-                sys.argv = argv
-                from cli import research_report_v2
-
-                research_report_v2.main()
+            main()
     assert timings_path.is_file(), "timings.json must be written when CRYPTO_ANALYZER_PROFILE=1"
-    import json
-
     data = json.loads(timings_path.read_text(encoding="utf-8"))
     assert "stages" in data
     assert "run_id" in data
