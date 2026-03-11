@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 
 from crypto_analyzer.artifacts import compute_file_sha256, snapshot_outputs
+
 from crypto_analyzer.governance import (
     get_env_fingerprint,
     get_git_commit,

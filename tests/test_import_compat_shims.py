@@ -64,6 +64,7 @@ def test_facades_do_not_import_cli_or_promotion():
     before = set(sys.modules.keys())
     # Facades that must not depend on cli or promotion (pipeline intentionally re-exports from pipelines, which uses promotion).
     import crypto_analyzer.artifacts  # noqa: F401
+
     import crypto_analyzer.data  # noqa: F401
     import crypto_analyzer.rng  # noqa: F401
     import crypto_analyzer.stats  # noqa: F401

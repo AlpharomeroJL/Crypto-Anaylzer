@@ -59,6 +59,7 @@ def test_clean_facades_do_not_import_cli_or_promotion():
 def test_facade_import_order_a():
     """Facades can be imported in order: core, data, artifacts, stats, governance, pipeline, rng."""
     import crypto_analyzer.artifacts
+
     import crypto_analyzer.core
     import crypto_analyzer.data
     import crypto_analyzer.governance
@@ -78,6 +79,7 @@ def test_facade_import_order_a():
 def test_facade_import_order_b():
     """Facades can be imported in reverse order without circular import errors."""
     import crypto_analyzer.artifacts
+
     import crypto_analyzer.core
     import crypto_analyzer.data
     import crypto_analyzer.governance
