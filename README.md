@@ -45,13 +45,12 @@ Prerequisites: Python 3.10+. No API keys (public endpoints only). Run all comman
 ### Canonical install (uv)
 
 ```powershell
-
-uv venv
-uv sync --all-extras
+uv sync --frozen
 uv run crypto-analyzer --help
 uv run crypto-analyzer doctor
-
 ```
+
+Exact verification commands (same as CI): see [CONTRIBUTING](CONTRIBUTING.md#local-verification-canonical-commands).
 
 Minimal path to a research report (after install):
 
@@ -321,12 +320,12 @@ crypto-analyzer smoke --ci
 
 **Architecture refactor plan (no behavior change):** Package boundaries and compatibility shims are documented in [Refactor move map](docs/audit/refactor_move_map.md). That doc describes the target layout (core, data, artifacts, stats, pipeline, governance, execution, compute), shims (e.g. `crypto_analyzer.rng` → `core.seeding`), and verification commands. **Public API contract / refactor policy:** [public_api_contract.md](docs/audit/public_api_contract.md) defines stable facades, compatibility shims policy, import boundaries, and how to add new exports. The public API surface is frozen for release; see the contract doc for the exact `__all__` and versioning.
 
-### Tier 1: Fast checks
+### Tier 1: Fast checks (canonical; matches CI)
 
 ```powershell
-python -m ruff check .
-python -m ruff format .
-python -m pytest -m "not slow" -q --tb=short
+uv run ruff check crypto_analyzer cli tests tools
+uv run ruff format --check crypto_analyzer cli tests tools
+uv run python -m pytest -m "not slow and not network" -q --tb=short
 ```
 
 - **ruff:** All checks passed.

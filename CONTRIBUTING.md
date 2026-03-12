@@ -2,33 +2,71 @@
 
 ## Development Setup
 
-```bash
-# Clone and set up virtual environment
-git clone <repo-url> && cd crypto-analyzer
-python -m venv .venv
-.venv\Scripts\activate   # Windows
-pip install -r requirements.txt
-pip install -e ".[dev]"
+**Canonical (uv, recommended):**
 
-# Verify everything works
-python -m pytest -q
-.\scripts\run.ps1 doctor
+```powershell
+git clone <repo-url> && cd Crypto-Anaylzer
+uv sync --frozen
+uv run python -m crypto_analyzer --help
+uv run crypto-analyzer doctor
 ```
+
+**Pip fallback:**
+
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
+pip install -e ".[dev]"
+python -m crypto_analyzer --help
+crypto-analyzer doctor
+```
+
+Optional UI (dashboard/streamlit): `uv sync --frozen --extra ui` or `pip install -e ".[dev,ui]"`.
+
+## Local verification (canonical commands)
+
+Run from repo root. These match CI exactly.
+
+```powershell
+uv sync --frozen
+uv run python -m pytest -m "not slow and not network" -q --tb=short
+uv run ruff check crypto_analyzer cli tests tools
+uv run ruff format --check crypto_analyzer cli tests tools
+uv run python tools/check_md_links.py
+uv run python tools/check_import_boundaries.py
+uv run crypto-analyzer doctor --ci
+uv run crypto-analyzer smoke --ci
+```
+
+Use `python -m` if not using uv: `python -m pytest -m "not slow and not network" -q --tb=short`, etc.
+
+## Pre-commit
+
+Install hooks for fast local checks (ruff, trailing whitespace, end-of-file, check-yaml):
+
+```powershell
+uv run pre-commit install
+# or: pip install pre-commit && pre-commit install
+```
+
+Then `git commit` will run ruff and format. Run manually: `pre-commit run --all-files`.
 
 ## Running Tests
 
-```bash
-# Full suite (200 tests)
-python -m pytest -q
+- **Default (CI and docs):** `uv run python -m pytest -m "not slow and not network" -q --tb=short` — skips slow and network-marked tests.
+- **Full suite:** `uv run python -m pytest -q`
+- **Include slow:** `uv run python -m pytest -m "not slow" -q` or drop the marker.
 
-# Specific test file
-python -m pytest tests/test_provider_chain.py -v
+All tests must pass before submitting. No test may make live network calls unless marked `@pytest.mark.network` (and those are excluded from default run). Use mocked HTTP in tests.
 
-# With coverage (if installed)
-python -m pytest --cov=crypto_analyzer -q
-```
+## Offline / restricted network
 
-All tests must pass before submitting changes. No test may make live network calls — use mocked HTTP responses.
+To run without network (e.g. air-gapped or wheelhouse):
+
+1. **Wheelhouse (pip):** From a machine with network, download wheels:  
+   `pip download -r requirements.txt -d wheelhouse` (or use `pyproject.toml` and extras). Copy `wheelhouse/` and install with `pip install --no-index --find-links wheelhouse -e ".[dev]"`.
+2. **uv:** Use `uv sync --frozen --offline` when lock and cache are already present.
+3. **CI:** Test jobs do not require network; `smoke --ci` and `demo-lite` are explicitly no-network. Only lock/install steps and optional security audit use network.
 
 ## Code Style
 

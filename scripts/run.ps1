@@ -214,7 +214,7 @@ switch ($Command) {
             exit $r1.ExitCode
         }
         _StepPass "doctor" $r1.Seconds
-        $r2 = _RunStep -Label "pytest" -ScriptBlock { & $py -m pytest tests/ }
+        $r2 = _RunStep -Label "pytest" -ScriptBlock { & $py -m pytest -m "not slow and not network" -q tests/ }
         if ($r2.ExitCode -ne 0) {
             _StepFail "pytest" "(exit $($r2.ExitCode), $($r2.Seconds)s)"
             $totalSw.Stop()
@@ -225,7 +225,7 @@ switch ($Command) {
         _StepPass "pytest" $r2.Seconds
         $ruffOk = $false
         try {
-            $r3 = _RunStep -Label "ruff" -ScriptBlock { & $py -m ruff check . --no-cache }
+            $r3 = _RunStep -Label "ruff" -ScriptBlock { & $py -m ruff check crypto_analyzer cli tests tools --no-cache }
             $ruffOk = ($r3.ExitCode -eq 0)
             if (-not $ruffOk) {
                 _StepFail "ruff" "(exit $($r3.ExitCode), $($r3.Seconds)s)"
