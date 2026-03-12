@@ -1,0 +1,19 @@
+# Pre-commit: fast local checks. Install with: pre-commit install
+# See CONTRIBUTING.md for canonical commands.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+        files: ^(crypto_analyzer|cli|tests|tools)/
+      - id: ruff-format
+        files: ^(crypto_analyzer|cli|tests|tools)/
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+        args: [--maxkb=500]
