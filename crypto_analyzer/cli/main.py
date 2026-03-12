@@ -22,10 +22,18 @@ def _main_verify(argv: List[str]) -> int:
 
     if doctor_main() != 0:
         return 1
-    r = subprocess.run([sys.executable, "-m", "pytest", "tests/"] + argv, cwd=None)
+    r = subprocess.run(
+        [sys.executable, "-m", "pytest", "-m", "not slow and not network", "-q", "tests/"] + argv,
+        cwd=None,
+    )
     if r.returncode != 0:
         return r.returncode
-    r = subprocess.run([sys.executable, "-m", "ruff", "check", "."], cwd=None)
+    r = subprocess.run([sys.executable, "-m", "ruff", "check", "crypto_analyzer", "cli", "tests", "tools"], cwd=None)
+    if r.returncode != 0:
+        return r.returncode
+    r = subprocess.run(
+        [sys.executable, "-m", "ruff", "format", "--check", "crypto_analyzer", "cli", "tests", "tools"], cwd=None
+    )
     if r.returncode != 0:
         return r.returncode
     r = subprocess.run(
@@ -42,7 +50,10 @@ def _main_verify(argv: List[str]) -> int:
 
 
 def _main_test(argv: List[str]) -> int:
-    r = subprocess.run([sys.executable, "-m", "pytest", "tests/"] + argv, cwd=None)
+    r = subprocess.run(
+        [sys.executable, "-m", "pytest", "-m", "not slow and not network", "tests/"] + argv,
+        cwd=None,
+    )
     return r.returncode
 
 

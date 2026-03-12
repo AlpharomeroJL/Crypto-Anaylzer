@@ -60,7 +60,17 @@ def get_env_fingerprint() -> dict:
         "python_version": sys.version.split()[0],
         "platform": platform.platform(),
     }
-    for pkg in ("numpy", "pandas", "streamlit"):
+    for pkg in (
+        "numpy",
+        "pandas",
+    ):
+        try:
+            mod = __import__(pkg)
+            out[pkg] = getattr(mod, "__version__", "?")
+        except Exception:
+            out[pkg] = "not_installed"
+    # Optional UI deps: do not require for core; report if present
+    for pkg in ("streamlit", "plotly"):
         try:
             mod = __import__(pkg)
             out[pkg] = getattr(mod, "__version__", "?")

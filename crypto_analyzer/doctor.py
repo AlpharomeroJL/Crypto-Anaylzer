@@ -19,7 +19,8 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 REQUIRED_TABLES = ["sol_monitor_snapshots", "spot_price_snapshots", "bars_1h"]
 REQUIRED_BARS_COLUMNS = ["ts_utc", "chain_id", "pair_address", "close"]
-DEPENDENCIES = ["requests", "pandas", "numpy", "streamlit", "plotly"]
+DEPENDENCIES = ["requests", "pandas", "numpy"]
+OPTIONAL_UI_DEPS = ["streamlit", "plotly"]
 
 
 def _in_venv() -> bool:
@@ -51,20 +52,34 @@ def check_env() -> bool:
 
 
 def check_dependencies() -> bool:
-    """Return True if all required packages import; else print pip install and return False."""
+    """Return True if all required packages import; else print fix and return False. Optional UI deps (streamlit, plotly) are not required."""
     missing = []
     for pkg in DEPENDENCIES:
         try:
             __import__(pkg)
         except ImportError:
             missing.append(pkg)
-    if not missing:
-        print("[OK] dependencies  " + " ".join(DEPENDENCIES))
+    if missing:
+        print("[FAIL] Missing packages: " + ", ".join(missing))
+        print('  Fix: uv sync --frozen   or  pip install -e ".[dev]"')
+        return False
+    print("[OK] dependencies (core) " + " ".join(DEPENDENCIES))
+    optional_missing = [p for p in OPTIONAL_UI_DEPS if not _import_optional(p)]
+    if optional_missing:
+        print(
+            "  (optional ui not installed: "
+            + ", ".join(optional_missing)
+            + " — use uv sync --extra ui for dashboard/streamlit)"
+        )
+    return True
+
+
+def _import_optional(pkg: str) -> bool:
+    try:
+        __import__(pkg)
         return True
-    print("[FAIL] Missing packages: " + ", ".join(missing))
-    print("  Fix: .\\.venv\\Scripts\\python.exe -m pip install -r requirements.txt")
-    print("  Or:  .\\.venv\\Scripts\\python.exe -m pip install " + " ".join(missing))
-    return False
+    except ImportError:
+        return False
 
 
 def check_db() -> bool:
