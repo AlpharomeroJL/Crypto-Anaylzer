@@ -12,17 +12,16 @@ dependencies = [
     "pandas",
     "scipy>=1.10.0",
     "PyYAML",
-    "plotly",
-    "streamlit",
     "requests",
     "matplotlib",
     "pyarrow",
 ]
 
 [project.optional-dependencies]
+ui = ["plotly", "streamlit", "streamlit-autorefresh"]
 api = ["fastapi>=0.100", "uvicorn[standard]>=0.20"]
 postgres = ["sqlalchemy>=2.0", "psycopg2-binary>=2.9"]
-dev = ["pytest>=7.0", "ruff>=0.6"]
+dev = ["pytest>=7.0", "ruff>=0.6", "pre-commit"]
 
 [project.scripts]
 crypto-analyzer = "crypto_analyzer.cli.main:main"
@@ -50,8 +49,16 @@ ignore = ["E501"]
 "crypto_analyzer/cli/*.py" = ["E402"]
 "tools/*.py" = ["E402"]
 "tests/*.py" = ["E402"]
+# Intentional import order for boundary/facade tests
+"tests/test_import_compat_shims.py" = ["E402", "I001"]
+"tests/test_public_facade_contracts.py" = ["E402", "I001"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-markers = ["slow: marks tests that run the full report pipeline (deselect with -m 'not slow')"]
+markers = [
+    "slow: marks tests that run the full report pipeline (deselect with -m 'not slow')",
+    "network: marks tests that require network access (deselect with -m 'not network')",
+    "unit: fast tests, no I/O or external deps",
+    "integration: tests that touch DB or multi-module flows",
+]
