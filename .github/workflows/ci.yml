@@ -30,7 +30,7 @@ jobs:
           key: uv-${{ runner.os }}-${{ hashFiles('uv.lock', 'pyproject.toml') }}
 
       - name: Install dependencies
-        run: uv sync --all-extras
+        run: uv sync --frozen
 
       - name: Entrypoint (module)
         run: uv run python -m crypto_analyzer --help
@@ -47,13 +47,19 @@ jobs:
           CRYPTO_ANALYZER_NO_NETWORK: "1"
 
       - name: Ruff check
-        run: uv run ruff check .
+        run: uv run ruff check crypto_analyzer cli tests tools
 
       - name: Ruff format check
-        run: uv run ruff format --check .
+        run: uv run ruff format --check crypto_analyzer cli tests tools
 
-      - name: Pytest (not slow)
+      - name: Pytest (default: no slow, no network)
         env:
           STRICT_SYSPATH_GUARD: "1"
-        run: uv run pytest -m "not slow" -q --tb=short
+        run: uv run python -m pytest -m "not slow and not network" -q --tb=short
         timeout-minutes: 20
+
+      - name: Markdown link check
+        run: uv run python tools/check_md_links.py
+
+      - name: Dependency boundary check
+        run: uv run python tools/check_import_boundaries.py
