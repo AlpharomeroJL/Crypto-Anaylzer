@@ -36,8 +36,20 @@ class ExecutionEvidence:
             missing.append("capacity_curve_path")
         elif base_path is not None:
             base = Path(base_path) if isinstance(base_path, str) else base_path
-            resolved = (base / self.capacity_curve_path.strip()).resolve()
-            if not resolved.is_file():
+            rel = Path(self.capacity_curve_path.strip())
+            # reportv2 stores capacity_curve_path relative to out_dir (e.g. reports/), while promotion
+            # often passes base = parent(bundle) = reports/csv — try out_dir (base.parent) as well.
+            candidates = [base / rel, base.parent / rel]
+            resolved = None
+            for cand in candidates:
+                try:
+                    rp = cand.resolve()
+                except OSError:
+                    continue
+                if rp.is_file():
+                    resolved = rp
+                    break
+            if resolved is None:
                 missing.append("capacity_curve_path")
             else:
                 try:

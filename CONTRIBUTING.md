@@ -5,11 +5,13 @@
 **Canonical (uv, recommended):**
 
 ```powershell
-git clone <repo-url> && cd Crypto-Anaylzer
+git clone <repo-url> && cd <repository-folder>
 uv sync --frozen
 uv run python -m crypto_analyzer --help
 uv run crypto-analyzer doctor
 ```
+
+The clone directory name matches the GitHub repository name unless you pass a different path to `git clone`.
 
 **Pip fallback:**
 
@@ -22,6 +24,17 @@ crypto-analyzer doctor
 ```
 
 Optional UI (dashboard/streamlit): `uv sync --frozen --extra ui` or `pip install -e ".[dev,ui]"`.
+
+## Editor And AI Workspace
+
+This repo includes a shared editor setup for VS Code and Cursor plus a shared AI-skill layout for Cursor and Codex.
+
+- Workspace settings, tasks, and launch configs live in `.vscode/`
+- Canonical shared skills live in `ai/skills/`
+- Sync shared skills with `.\.venv\Scripts\python.exe .\tools\sync_ai_skills.py`
+- Install the same skills into Codex with `.\.venv\Scripts\python.exe .\tools\sync_ai_skills.py --install-codex`
+
+See [Developer Environment](docs/developer_environment.md) for the full workflow.
 
 ## Local verification (canonical commands)
 

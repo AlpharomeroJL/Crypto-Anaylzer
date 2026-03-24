@@ -11,7 +11,7 @@ Use the **full path** to `nssm.exe` (e.g. `C:\nssm\win64\nssm.exe`). Run PowerSh
 | Field | Value |
 |-------|--------|
 | **Application** | `C:\Users\jo312\OneDrive\Desktop\Github Projects\Crypto-Anaylzer\.venv\Scripts\python.exe` |
-| **Arguments** | `-u dex_poll_to_sqlite.py --interval 60 --log-file C:\ProgramData\CryptoAnalyzer\poller.log` |
+| **Arguments** | `-u -m crypto_analyzer poll --interval 60 --log-file C:\ProgramData\CryptoAnalyzer\poller.log` |
 | **Startup directory** | `C:\Users\jo312\OneDrive\Desktop\Github Projects\Crypto-Anaylzer` |
 
 **Log:** Python writes to `C:\ProgramData\CryptoAnalyzer\poller.log`. Tail with:

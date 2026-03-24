@@ -21,7 +21,14 @@ DATASET_HASH_SCOPE_V2 = [
     "bars_15min",
     "bars_5min",
     "universe_allowlist",
+    "venue_products",
+    "venue_bars_1h",
 ]
+
+# reportv2: scope hashes by universe so DEX runs are not perturbed by venue backfills.
+_VENUE_HASH_TABLES = frozenset({"venue_products", "venue_bars_1h"})
+DATASET_HASH_SCOPE_V2_DEX = [t for t in DATASET_HASH_SCOPE_V2 if t not in _VENUE_HASH_TABLES]
+DATASET_HASH_SCOPE_V2_MAJORS = sorted(_VENUE_HASH_TABLES)
 
 DATASET_HASH_EXCLUDES = [
     "experiments",
@@ -242,10 +249,20 @@ def compute_dataset_id_v2(
     return dataset_id_v2, metadata
 
 
-def get_dataset_id_v2(db_path: str, *, mode: Literal["STRICT", "FAST_DEV"] = "STRICT") -> Tuple[str, Dict[str, Any]]:
-    """Convenience: open DB at db_path, compute v2, return (dataset_id_v2, metadata)."""
+def get_dataset_id_v2(
+    db_path: str,
+    *,
+    mode: Literal["STRICT", "FAST_DEV"] = "STRICT",
+    scope: Optional[List[str]] = None,
+) -> Tuple[str, Dict[str, Any]]:
+    """
+    Convenience: open DB at db_path, compute v2, return (dataset_id_v2, metadata).
+
+    scope: default full DATASET_HASH_SCOPE_V2; reportv2 passes DEX-only or majors-only lists.
+    """
     with sqlite3.connect(db_path) as conn:
-        return compute_dataset_id_v2(conn, scope=list(DATASET_HASH_SCOPE_V2), mode=mode)
+        s = list(DATASET_HASH_SCOPE_V2) if scope is None else list(scope)
+        return compute_dataset_id_v2(conn, scope=s, mode=mode)
 
 
 def backfill_dataset_id_v2(db_path: str) -> Tuple[str, Dict[str, Any]]:

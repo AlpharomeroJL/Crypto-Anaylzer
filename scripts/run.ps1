@@ -3,7 +3,7 @@
 # Doctor-first: runs doctor before most commands unless -SkipDoctor is passed.
 # Must run from repo root; script will cd to repo root (parent of scripts/).
 # Usage: .\scripts\run.ps1 [-SkipDoctor] <command> [args...]
-# Commands: poll, universe-poll, materialize, report, reportv2, case_study_liqshock, streamlit, doctor, test, demo, check-dataset
+# Commands: poll, universe-poll, materialize, venue-sync, report, reportv2, case_study_liqshock, streamlit, doctor, test, demo, check-dataset
 param(
     [switch]$SkipDoctor,
     [Parameter(Position = 0)]$Command,
@@ -50,6 +50,7 @@ switch ($Command) {
     "poll"           { & $py -m crypto_analyzer poll --interval 60 @filtered; exit $LASTEXITCODE }
     "universe-poll"  { & $py -m crypto_analyzer universe-poll @filtered; exit $LASTEXITCODE }
     "materialize"    { & $py -m crypto_analyzer materialize @filtered; exit $LASTEXITCODE }
+    "venue-sync"     { & $py -m crypto_analyzer venue-sync @filtered; exit $LASTEXITCODE }
     "analyze"        { & $py -m crypto_analyzer analyze @filtered; exit $LASTEXITCODE }
     "scan"           { & $py -m crypto_analyzer scan @filtered; exit $LASTEXITCODE }
     "report"         { & $py -m crypto_analyzer report @filtered; exit $LASTEXITCODE }
@@ -66,7 +67,7 @@ switch ($Command) {
         & $py -m crypto_analyzer reportv2 @baseArgs @filteredForReport
         $exitCode = $LASTEXITCODE
         if ($exitCode -ne 0) { exit $exitCode }
-        $outDir = "reports"
+        $outDir = "reports/reportv2"
         $freq = "1h"
         $rcNsim = 200; $rcMethod = "stationary"; $rcBlock = 12; $rcSeed = 42
         $doSnapshot = $false
@@ -182,7 +183,21 @@ switch ($Command) {
     "streamlit"      { & $py -m crypto_analyzer streamlit @filtered; exit $LASTEXITCODE }
     "api"            { & $py -m crypto_analyzer api @filtered; exit $LASTEXITCODE }
     "doctor"         { & $py -m crypto_analyzer doctor @filtered; exit $LASTEXITCODE }
-    "test"           { & $py -m pytest tests/ @filtered; exit $LASTEXITCODE }
+    "test"           {
+        $hadPytestAutoload = Test-Path Env:PYTEST_DISABLE_PLUGIN_AUTOLOAD
+        $prevPytestAutoload = $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD
+        $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = "1"
+        try {
+            & $py -m pytest tests/ @filtered
+            exit $LASTEXITCODE
+        } finally {
+            if ($hadPytestAutoload) {
+                $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = $prevPytestAutoload
+            } else {
+                Remove-Item Env:PYTEST_DISABLE_PLUGIN_AUTOLOAD -ErrorAction SilentlyContinue
+            }
+        }
+    }
     "demo"           { & $py -m crypto_analyzer demo @filtered; exit $LASTEXITCODE }
     "check-dataset"  { & $py -m crypto_analyzer check-dataset @filtered; exit $LASTEXITCODE }
     "null_suite"     { & $py -m crypto_analyzer null_suite @filtered; exit $LASTEXITCODE }
@@ -214,7 +229,20 @@ switch ($Command) {
             exit $r1.ExitCode
         }
         _StepPass "doctor" $r1.Seconds
-        $r2 = _RunStep -Label "pytest" -ScriptBlock { & $py -m pytest -m "not slow and not network" -q tests/ }
+        $r2 = _RunStep -Label "pytest" -ScriptBlock {
+            $hadPytestAutoload = Test-Path Env:PYTEST_DISABLE_PLUGIN_AUTOLOAD
+            $prevPytestAutoload = $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD
+            $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = "1"
+            try {
+                & $py -m pytest -m "not slow and not network" -q tests/
+            } finally {
+                if ($hadPytestAutoload) {
+                    $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = $prevPytestAutoload
+                } else {
+                    Remove-Item Env:PYTEST_DISABLE_PLUGIN_AUTOLOAD -ErrorAction SilentlyContinue
+                }
+            }
+        }
         if ($r2.ExitCode -ne 0) {
             _StepFail "pytest" "(exit $($r2.ExitCode), $($r2.Seconds)s)"
             $totalSw.Stop()
@@ -305,7 +333,7 @@ switch ($Command) {
     default          {
         if ($Command) { & $py $Command @filtered; exit $LASTEXITCODE } else {
             Write-Host "Usage: .\scripts\run.ps1 [-SkipDoctor] <command> [args...]"
-            Write-Host "Commands: poll, universe-poll, materialize, analyze, scan, report, reportv2,"
+            Write-Host "Commands: poll, universe-poll, materialize, venue-sync, analyze, scan, report, reportv2,"
             Write-Host "          case_study_liqshock, daily, backtest, walkforward, streamlit, api, doctor, test,"
             Write-Host "          demo, check-dataset, verify"
             Write-Host "  -SkipDoctor  Skip pre-flight doctor (default: run doctor before most commands)"

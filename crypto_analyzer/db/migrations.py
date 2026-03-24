@@ -140,6 +140,48 @@ def run_migrations(conn: sqlite3.Connection, db_path: str | None = None) -> None
         """
     )
 
+    # Coinbase Advanced Trade (and future venues): separate from DEX bars_* tables
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS venue_products (
+            venue TEXT NOT NULL,
+            product_id TEXT NOT NULL,
+            base_currency_id TEXT,
+            quote_currency_id TEXT,
+            status TEXT,
+            quote_increment TEXT,
+            base_increment TEXT,
+            display_name TEXT,
+            raw_json TEXT,
+            fetched_at_utc TEXT NOT NULL,
+            updated_at_utc TEXT NOT NULL,
+            PRIMARY KEY (venue, product_id)
+        );
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_venue_products_venue ON venue_products(venue);")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS venue_bars_1h (
+            ts_utc TEXT NOT NULL,
+            venue TEXT NOT NULL,
+            product_id TEXT NOT NULL,
+            open REAL,
+            high REAL,
+            low REAL,
+            close REAL NOT NULL,
+            volume REAL,
+            log_return REAL,
+            source TEXT,
+            ingested_at_utc TEXT NOT NULL,
+            PRIMARY KEY (ts_utc, venue, product_id)
+        );
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_venue_bars_1h_venue_product ON venue_bars_1h(venue, product_id);")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_venue_bars_1h_ts ON venue_bars_1h(ts_utc);")
+
     conn.commit()
     logger.debug("Core migrations complete")
 

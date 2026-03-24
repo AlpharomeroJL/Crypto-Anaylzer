@@ -13,7 +13,7 @@ cloud "DEX APIs" {
   [Dexscreener] as Dexscreener
 }
 
-database "SQLite\n(dex_data.sqlite)" as DB
+database "SQLite\n(db.path)" as DB
 
 User --> App : use (reports, backtest, dashboard)
 App --> Coinbase : spot prices (public)

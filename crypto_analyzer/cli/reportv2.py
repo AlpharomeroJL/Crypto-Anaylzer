@@ -40,13 +40,27 @@ from crypto_analyzer.artifacts import (
     write_json,
     write_json_sorted,
 )
+from crypto_analyzer.config import db_path as config_sqlite_db_path
 from crypto_analyzer.data import get_factor_returns, load_bars, load_factor_run
-from crypto_analyzer.dataset import compute_dataset_fingerprint, dataset_id_from_fingerprint, fingerprint_to_json
-from crypto_analyzer.dataset_v2 import get_dataset_id_v2
+from crypto_analyzer.dataset import (
+    compute_dataset_fingerprint,
+    dataset_fingerprint_tables,
+    dataset_id_from_fingerprint,
+    fingerprint_to_json,
+)
+from crypto_analyzer.dataset_v2 import (
+    DATASET_HASH_SCOPE_V2_DEX,
+    DATASET_HASH_SCOPE_V2_MAJORS,
+    get_dataset_id_v2,
+)
 from crypto_analyzer.diagnostics import build_health_summary, rolling_ic_stability
 from crypto_analyzer.evaluation import conditional_metrics, lead_lag_analysis
 from crypto_analyzer.experiments import log_experiment, record_experiment_run
-from crypto_analyzer.factors import build_factor_matrix, rolling_multifactor_ols
+from crypto_analyzer.factors import (
+    aggregate_multifactor_metrics_walk_forward,
+    build_factor_matrix,
+    rolling_multifactor_ols,
+)
 from crypto_analyzer.governance import (
     compute_run_key,
     get_env_fingerprint,
@@ -58,7 +72,6 @@ from crypto_analyzer.governance import (
 )
 from crypto_analyzer.integrity import (
     assert_monotonic_time_index,
-    assert_no_negative_or_zero_prices,
     bad_row_rate,
     count_non_positive_prices,
 )
@@ -76,7 +89,7 @@ from crypto_analyzer.portfolio import (
     turnover_from_weights,
 )
 from crypto_analyzer.portfolio_advanced import optimize_long_short_portfolio
-from crypto_analyzer.research_universe import get_research_assets
+from crypto_analyzer.research_universe import get_benchmark_majors_assets, get_research_assets
 from crypto_analyzer.risk_model import estimate_covariance
 from crypto_analyzer.signals_xs import (
     build_exposure_panel,
@@ -98,6 +111,7 @@ VALIDATION_HORIZONS = [1, 4, 12]
 DEFAULT_TOP_K = 3
 DEFAULT_BOTTOM_K = 3
 DISPERSION_WINDOW = 24
+DEFAULT_REPORTV2_OUT_DIR = "reports/reportv2"
 
 
 def _table(df: pd.DataFrame) -> str:
@@ -148,7 +162,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         dest="pbo_metric",
         help="CSCV in-fold metric: mean or sharpe.",
     )
-    ap.add_argument("--out-dir", default="reports")
+    ap.add_argument(
+        "--out-dir",
+        default=DEFAULT_REPORTV2_OUT_DIR,
+        help="Artifact root (default: reports/reportv2). Use --out-dir reports for legacy layout.",
+    )
     ap.add_argument("--run-name", default=None, help="Run name for manifest (default: research_report_v2)")
     ap.add_argument("--notes", default="")
     ap.add_argument("--save-manifest", action="store_true", default=True)
@@ -245,6 +263,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Minimum bars per pair (quality gate). Default: use config. Does not create more assets.",
     )
     ap.add_argument(
+        "--universe",
+        choices=["dex", "majors"],
+        default="dex",
+        help="dex: DEX bars + optional spot (default). majors: Coinbase Advanced venue_bars_1h only (requires --freq 1h).",
+    )
+    ap.add_argument(
         "--dex-only",
         dest="dex_only",
         action="store_true",
@@ -258,6 +282,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Top 10 eligibility: p10(liquidity_usd) >= this (USD). Default 250000.",
     )
     args = ap.parse_args(argv)
+
+    universe = getattr(args, "universe", "dex")
+    if universe == "majors" and str(args.freq).replace(" ", "").lower() != "1h":
+        print(
+            "Error: --universe majors requires --freq 1h (venue_bars_1h / Coinbase Advanced).",
+            file=sys.stderr,
+        )
+        return 1
 
     if getattr(args, "backend", "sqlite") == "duckdb":
         try:
@@ -311,7 +343,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
             return 1
 
-    db = args.db or (db_path() if callable(db_path) else db_path())
+    db = args.db or config_sqlite_db_path()
     # Optional: load materialized factor run when --factor-run-id set
     factor_run_loaded = None
     if getattr(args, "factor_run_id", None):
@@ -341,11 +373,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     except Exception:
         price_col = "dex_price_usd"
     bars_table = f"bars_{args.freq.replace(' ', '')}"
-    checks = [
-        ("spot_price_snapshots", "spot_price_usd"),
-        ("sol_monitor_snapshots", price_col),
-        (bars_table, "close"),
-    ]
+    if universe == "majors":
+        checks = [
+            ("spot_price_snapshots", "spot_price_usd"),
+            ("venue_bars_1h", "close"),
+        ]
+    else:
+        checks = [
+            ("spot_price_snapshots", "spot_price_usd"),
+            ("sol_monitor_snapshots", price_col),
+            (bars_table, "close"),
+        ]
     for table, col, count in count_non_positive_prices(db, checks):
         print(f"Integrity: {table}.{col}: {count} non-positive (dropped at load time)")
     if getattr(args, "strict_integrity", False):
@@ -356,13 +394,16 @@ def main(argv: Optional[List[str]] = None) -> int:
                 return 4
         print("Integrity: strict check passed (bad row rate within limit)")
 
-    include_spot = not getattr(args, "dex_only", False)
-    returns_df, meta_df = get_research_assets(
-        db,
-        args.freq,
-        include_spot=include_spot,
-        min_bars_override=getattr(args, "min_bars", None),
-    )
+    if universe == "majors":
+        returns_df, meta_df = get_benchmark_majors_assets(db, min_bars_override=getattr(args, "min_bars", None))
+    else:
+        include_spot = not getattr(args, "dex_only", False)
+        returns_df, meta_df = get_research_assets(
+            db,
+            args.freq,
+            include_spot=include_spot,
+            min_bars_override=getattr(args, "min_bars", None),
+        )
     n_assets = returns_df.shape[1] if not returns_df.empty else 0
     meta_dict = meta_df.set_index("asset_id")["label"].to_dict() if not meta_df.empty else {}
     bars_match_n_ret: int = 0
@@ -370,14 +411,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     bars_match_pct: float = 0.0
     factor_ret = get_factor_returns(returns_df, meta_dict, db_path_override=db, freq=args.freq) if meta_dict else None
 
+    report_heading = (
+        "# Research Report v2 (Majors / Coinbase Advanced Trade)"
+        if universe == "majors"
+        else "# Research Report v2 (Milestone 4)"
+    )
     lines = [
-        "# Research Report v2 (Milestone 4)",
+        report_heading,
         f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
         f"Freq: {args.freq}  Signals: {args.signals}  Portfolio: {args.portfolio}  Cov: {args.cov_method}",
         "",
         "## Assumptions",
         "| Parameter | Value |",
         "|-----------|-------|",
+        f"| universe | {universe} |",
         f"| freq | {args.freq} |",
         f"| fee_bps | {getattr(args, 'fee_bps', 30)} |",
         f"| slippage_bps | {getattr(args, 'slippage_bps', 10)} |",
@@ -389,7 +436,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         "## 1) Universe",
     ]
     if n_assets < 1:
-        lines.append("No assets. Add DEX pairs or ensure DB path is correct.")
+        if universe == "majors":
+            lines.append(
+                "No assets. Run `venue-sync candles` (see docs/runbooks/coinbase_advanced_phase1.md) or check DB path."
+            )
+        else:
+            lines.append("No assets. Add DEX pairs or ensure DB path is correct.")
         report_path = out_dir / timestamped_filename("research_v2", "md", sep="_")
         with open(report_path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
@@ -402,9 +454,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     warn_mono = assert_monotonic_time_index(df_for_ts, col=ts_col)
     if warn_mono:
         print("Integrity warning:", warn_mono)
-    warn_prices = assert_no_negative_or_zero_prices(returns_df)
-    if warn_prices:
-        print("Integrity warning:", warn_prices)
+    # returns_df holds log returns (can be negative); do not use price-level checks.
+    warn_returns = None
+    if not returns_df.empty:
+        _arr = returns_df.to_numpy(dtype=float, copy=False)
+        if not np.isfinite(_arr).all():
+            warn_returns = "Non-finite values in returns matrix."
+    if warn_returns:
+        print("Integrity warning:", warn_returns)
 
     lines.append(f"Assets: {n_assets}  Bars: {len(returns_df)}")
     lines.append("")
@@ -414,7 +471,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     # Bars + liquidity panel (only when liquidity_shock_reversion requested)
     liquidity_panel = None
     roll_vol_panel = None
-    if "liquidity_shock_reversion" in signal_names and not returns_df.empty:
+    if "liquidity_shock_reversion" in signal_names and not returns_df.empty and universe != "majors":
         bars = load_bars(args.freq, db_path_override=db, min_bars=None)
         if not bars.empty:
             bars = bars.copy()
@@ -522,7 +579,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     import json as _js
 
     config_blob_early = _js.dumps(
-        {"freq": args.freq, "signals": args.signals, "portfolio": args.portfolio, "cov_method": args.cov_method},
+        {
+            "freq": args.freq,
+            "signals": args.signals,
+            "portfolio": args.portfolio,
+            "cov_method": args.cov_method,
+            "universe": universe,
+        },
         sort_keys=True,
     )
     config_hash_early = _hl.sha256(config_blob_early.encode()).hexdigest()[:16]
@@ -531,11 +594,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     run_id_early = stable_run_id(
         {"name": "research_report_v2", "ts_utc": ts_now_early, "config_hash": config_hash_early}
     )
-    _fp_early = compute_dataset_fingerprint(str(db))
+    _fp_early = compute_dataset_fingerprint(str(db), tables=dataset_fingerprint_tables(universe))
     _computed_dataset_id_early = dataset_id_from_fingerprint(_fp_early)
     # Phase 1: dataset_id_v2 (logical content) and run_key (semantic, no timestamps)
+    _v2_scope = DATASET_HASH_SCOPE_V2_MAJORS if universe == "majors" else DATASET_HASH_SCOPE_V2_DEX
     try:
-        _dataset_id_v2_early, _dataset_hash_meta_early = get_dataset_id_v2(str(db), mode="STRICT")
+        _dataset_id_v2_early, _dataset_hash_meta_early = get_dataset_id_v2(
+            str(db), mode="STRICT", scope=_v2_scope
+        )
     except Exception:
         _dataset_id_v2_early = ""
         _dataset_hash_meta_early = {}
@@ -550,6 +616,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "signals": args.signals,
         "portfolio": args.portfolio,
         "cov_method": args.cov_method,
+        "universe": universe,
         "engine_version": _engine_version_early,
         "config_version": config_hash_early,
         "research_spec_version": _RESEARCH_SPEC_VERSION,
@@ -584,6 +651,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     _rc_observed_stats: pd.Series | None = None  # for sweep registry persistence
     _rc_family_payload: dict | None = None  # canonical family payload for sweep_families.sweep_payload_json
     _walk_forward_used = False
+    _walk_forward_split_plan = None
     _fold_causality_attestation: dict | None = None
     _fold_causality_attestation_path: str | None = None
 
@@ -609,10 +677,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                 expanding=True,
             )
             split_plan = make_walk_forward_splits(returns_df.index, cfg_split)
+            _walk_forward_split_plan = split_plan
             if split_plan.folds:
                 data_wf = returns_df.copy()
-                data_wf["ts_utc"] = data_wf.index
+                # Mean only over return columns; do not include ts_utc (added next) or mean(axis=1) mixes float + Timestamp.
                 data_wf["ret"] = data_wf.mean(axis=1) if data_wf.shape[1] else 0.0
+                data_wf["ts_utc"] = data_wf.index
 
                 def _wf_scorer(df):
                     r = df["ret"].dropna()
@@ -1192,6 +1262,22 @@ def main(argv: Optional[List[str]] = None) -> int:
                 mf_metrics["beta_eth_mean"] = float(betas_dict["ETH_spot"].mean(skipna=True).mean())
             if not r2_mf.empty:
                 mf_metrics["r2_mean"] = float(r2_mf.mean(skipna=True).mean())
+        elif (
+            _walk_forward_used
+            and _walk_forward_split_plan is not None
+            and getattr(_walk_forward_split_plan, "folds", None)
+        ):
+            # D6: multifactor metrics for strict walk-forward use train-window-only fits at test bars
+            factor_matrix = build_factor_matrix(returns_df)
+            if not factor_matrix.empty:
+                wf_mf = aggregate_multifactor_metrics_walk_forward(
+                    returns_df,
+                    factor_matrix,
+                    _walk_forward_split_plan.folds,
+                    window=72,
+                    min_obs=24,
+                )
+                mf_metrics.update(wf_mf)
         else:
             factor_matrix = build_factor_matrix(returns_df)
             if not factor_matrix.empty:

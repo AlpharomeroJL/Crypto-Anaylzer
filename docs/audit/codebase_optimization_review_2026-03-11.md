@@ -45,8 +45,8 @@ This review summarizes high-impact opportunities to improve correctness, maintai
    - Change: add a small shared helper for CLI parsing, project-root resolution, and consistent error codes/messages.
 
 6. **Normalize project naming typo across user-facing docs over time**
-   - Problem: repository and title currently use `Crypto-Anaylzer` spelling.
-   - Change: introduce a staged rename plan (docs aliases first, package/distribution compatibility shims, then final rename) to avoid ecosystem breakage.
+   - Problem: GitHub repository slug may still use `Crypto-Anaylzer` spelling while public docs prefer **Crypto-Analyzer**.
+   - Change: keep public-facing prose on **Crypto-Analyzer**; optional future GitHub rename and release URL updates; package name `crypto_analyzer` unchanged.
 
 ### P2 — Quality scaling / architecture hygiene
 

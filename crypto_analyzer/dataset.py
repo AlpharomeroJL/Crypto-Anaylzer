@@ -21,7 +21,19 @@ KNOWN_TABLES = [
     "bars_5min",
     "universe_allowlist",
     "experiments",
+    "venue_products",
+    "venue_bars_1h",
 ]
+
+# v1 fingerprint: reportv2 scopes by universe so DEX lineage ignores venue backfill rows.
+_VENUE_FINGERPRINT_TABLES = frozenset({"venue_products", "venue_bars_1h"})
+
+
+def dataset_fingerprint_tables(universe: str) -> List[str]:
+    """Subset of KNOWN_TABLES for compute_dataset_fingerprint (reportv2 dex vs majors)."""
+    if universe == "majors":
+        return sorted(_VENUE_FINGERPRINT_TABLES)
+    return [t for t in KNOWN_TABLES if t not in _VENUE_FINGERPRINT_TABLES]
 
 _TS_COLUMN_CANDIDATES = ["ts_utc", "ts", "timestamp"]
 

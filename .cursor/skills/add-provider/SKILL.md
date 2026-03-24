@@ -1,41 +1,45 @@
 ---
 name: add-provider
-description: Add a new CEX or DEX provider to the Crypto-Analyzer platform. Enforces wiring sequence: implement protocol, register in defaults, add config keys, add tests with mocked HTTP, optional docs snippet. Use when the user wants to add a new exchange, data source, or provider.
+description: Add a new CEX or DEX provider to the Crypto-Analyzer platform. Enforce the repo wiring sequence: implement the provider protocol, register it in defaults, update config keys, add tests with mocked HTTP, and optionally add a short docs snippet. Use when adding a new exchange, data source, or provider.
 ---
 
-# Add a New Provider
+# Add A New Provider
 
-## Wiring Sequence (Do in Order)
+## Wiring Sequence
 
-### 1. Implement provider (cex/ or dex/)
-- **CEX spot**: New file under `crypto_analyzer/providers/cex/<name>.py`. Implement `SpotPriceProvider`: `provider_name` property, `get_spot(symbol) -> SpotQuote`. Use frozen `SpotQuote` from `..base`; set `provider_name`, `fetched_at_utc`; on invalid/rate-limit return DEGRADED or raise so chain can retry/fallback.
-- **DEX**: New file under `crypto_analyzer/providers/dex/<name>.py`. Implement `DexSnapshotProvider`: `provider_name`, `get_snapshot(chain_id, pair_address) -> DexSnapshot`, `search_pairs(query, chain_id) -> list[dict]`. Use `DexSnapshot` from `..base`.
-- Do **not** add retry/circuit breaker inside the provider; the chain uses `resilient_call()`.
+### 1. Implement the provider
+- For CEX spot data, add a new file under `crypto_analyzer/providers/cex/<name>.py`.
+- For DEX data, add a new file under `crypto_analyzer/providers/dex/<name>.py`.
+- Implement the correct protocol, expose a stable `provider_name`, and return the repo DTOs (`SpotQuote` or `DexSnapshot`).
+- Do not add retry or circuit-breaker behavior inside the provider. The chain handles resilience with `resilient_call()`.
 
-### 2. Register in defaults.py
-- In `crypto_analyzer/providers/defaults.py`: import the new class and call `registry.register_spot("provider_key", MySpotProvider)` or `registry.register_dex("provider_key", MyDexProvider)`.
-- Use a stable `provider_key` (e.g. lowercase, no spaces).
+### 2. Register it in defaults
+- Import the provider in `crypto_analyzer/providers/defaults.py`.
+- Register it with a stable lowercase key using `registry.register_spot(...)` or `registry.register_dex(...)`.
 
-### 3. Add config keys
-- In `config.yaml`: add the provider key to `providers.spot_priority` or `providers.dex_priority` in the desired order (first = primary).
-- If the provider needs new options, add new keys under a clearly named section; do not change existing schema keys (see project rule "Do Not Touch").
+### 3. Update config
+- Add the provider key to `config.yaml` under `providers.spot_priority` or `providers.dex_priority`.
+- If the provider needs extra settings, add new keys under a clearly named section.
+- Do not rename or remove existing config keys.
 
-### 4. Add tests (mocked HTTP)
-- New or existing test file in `tests/`. Use `unittest.mock.patch` on the provider’s `requests.get` (patch at the module where `requests` is used, e.g. `crypto_analyzer.providers.cex.myprovider.requests.get`).
-- Unit test: provider returns valid SpotQuote/DexSnapshot for mocked 200 response; handles 429/errors appropriately.
-- Optionally: add to integration test that runs one poll cycle with temp SQLite and mocked HTTP (see `test_provider_integration.py`).
+### 4. Add tests
+- Add or update tests under `tests/`.
+- Mock HTTP at the module where `requests` is used, for example `crypto_analyzer.providers.cex.my_provider.requests.get`.
+- Cover happy path parsing and failure behavior such as 429s, timeouts, or malformed payloads.
+- Keep tests offline. No live network calls.
 
-### 5. Docs snippet (optional but recommended)
-- Add one short paragraph or bullet under CONTRIBUTING.md "Adding a New Provider" or README "Extending providers": name and one-line description so the new provider is discoverable.
+### 5. Add a short docs note
+- Optionally add one short paragraph or bullet to `CONTRIBUTING.md` or `README.md` so the provider is discoverable.
 
 ## Checklist Before Finishing
-- [ ] Implementation in cex/ or dex/ with correct Protocol and provider_name
-- [ ] Registered in defaults.py
-- [ ] Listed in config.yaml under providers.spot_priority or dex_priority
-- [ ] Tests added with mocked HTTP; no live network
-- [ ] (Optional) Docs snippet added
+- [ ] Provider implementation added in `cex/` or `dex/`
+- [ ] Registered in `defaults.py`
+- [ ] Added to `config.yaml`
+- [ ] Tests added with mocked HTTP
+- [ ] Optional docs snippet added
 
 ## Output
-- **Files changed** (list)
-- **Commands to run** (`python -m pytest -q`, `ruff check .`, optionally one poll cycle)
-- **What to look for** (all tests pass; config loads; poll uses new provider when in priority list)
+- Files changed
+- Commands to run: `python -m pytest -q`, `ruff check .`, and optionally one poll cycle
+- What to look for: tests pass, config loads, and the provider appears in the configured priority chain
+

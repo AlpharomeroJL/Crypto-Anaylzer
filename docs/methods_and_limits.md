@@ -1,12 +1,12 @@
 # Methods & Limits
 
-This document formalizes the statistical methods used in Crypto-Anaylzer's research validation stack and clarifies their assumptions, implementation boundaries, and limitations.
+This document formalizes the statistical methods used in Crypto-Analyzer's research validation stack and clarifies their assumptions, implementation boundaries, and limitations.
 
 The goal is not to "prove alpha," but to control false discovery, quantify selection bias, and make overfitting visible.
 
 ## 1. Research Philosophy
 
-Crypto-Anaylzer treats backtesting as a multiple testing problem under dependence.
+Crypto-Analyzer treats backtesting as a multiple testing problem under dependence.
 
 Markets exhibit:
 
@@ -333,7 +333,7 @@ All conditions must hold.
 
 ## 18. Research Integrity Statement
 
-Crypto-Anaylzer is a research validation engine. It is not a trading system, an execution engine, or a guarantee of profit.
+Crypto-Analyzer is a research validation engine. It is not a trading system, an execution engine, or a guarantee of profit.
 
 All outputs are conditional on: data quality, model assumptions, market stability.
 

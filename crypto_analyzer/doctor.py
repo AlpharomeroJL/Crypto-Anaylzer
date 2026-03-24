@@ -34,9 +34,7 @@ def _get_db_path() -> str:
         p = db_path() if callable(db_path) else db_path
         path = p() if callable(p) else str(p)
     except Exception:
-        path = "dex_data.sqlite"
-    if not os.path.isabs(path):
-        path = str(_REPO_ROOT / path)
+        path = str(_REPO_ROOT / "dex_data.sqlite")
     return path
 
 
@@ -87,10 +85,8 @@ def check_db() -> bool:
     db = _get_db_path()
     if not os.path.isfile(db):
         print(f"[FAIL] DB not found: {db}")
-        print("  Create DB: .\\.venv\\Scripts\\python.exe dex_poll_to_sqlite.py --interval 60")
-        print(
-            "  Or universe: .\\.venv\\Scripts\\python.exe dex_poll_to_sqlite.py --universe --universe-chain solana --universe-query USDC --universe-query USDT --interval 60"
-        )
+        print("  Create DB: .\\.venv\\Scripts\\python.exe -m crypto_analyzer poll --interval 60")
+        print("  Or universe: .\\.venv\\Scripts\\python.exe -m crypto_analyzer universe-poll --interval 60")
         print("  (If universe returns 0 pairs, try broader queries: --universe-query USDC --universe-query USDT)")
         return False
     print(f"[OK] DB exists  {db}")
@@ -126,6 +122,14 @@ def check_db() -> bool:
                 print(f"[FAIL] Missing column: {table}.{c}")
                 return False
     print("[OK] schema  required columns present")
+
+    if "venue_bars_1h" in tables:
+        try:
+            with sqlite3.connect(db) as con:
+                n_venue = con.execute("SELECT COUNT(*) FROM venue_bars_1h").fetchone()[0]
+            print(f"[info] venue  venue_bars_1h rows={n_venue} (Coinbase majors; run venue-sync if empty)")
+        except Exception:
+            pass
     return True
 
 
@@ -143,6 +147,15 @@ def check_integrity() -> None:
         ("sol_monitor_snapshots", price_col),
         ("bars_1h", "close"),
     ]
+    try:
+        import sqlite3
+
+        with sqlite3.connect(db) as con:
+            cur = con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='venue_bars_1h'")
+            if cur.fetchone():
+                checks.append(("venue_bars_1h", "close"))
+    except Exception:
+        pass
     try:
         from .integrity import bad_row_rate, count_non_positive_prices
 
@@ -189,7 +202,7 @@ def check_pipeline_smoke() -> bool:
             print(f"[OK] pipeline  bars loaded, universe size={n}")
     except Exception as e:
         print(f"[FAIL] pipeline smoke: {e}")
-        print("  Ensure: .\\.venv\\Scripts\\python.exe dex_poll_to_sqlite.py ... then materialize_bars.py")
+        print("  Ensure: poll is writing data, then  .\\.venv\\Scripts\\python.exe -m crypto_analyzer materialize")
         return False
     return True
 

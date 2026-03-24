@@ -2,7 +2,7 @@
 
 ## Architecture Overview
 
-Crypto-Anaylzer is a **deterministic research validation platform**: local-first, SQLite-backed. It governs whether a research result is eligible for promotion (candidate → accepted) and maintains an auditable chain from accepted results back to dataset identity, run identity, fold causality, and artifacts. Flow: **Ingestion** (CEX/DEX providers) → **Materialization** (OHLCV bars) → **Modeling** (factors, signals, inference) → **Presentation** (dashboard/API/CLI). Research validation adds: dataset hashing, run identity, seeded RNG, fold attestation, eligibility gating, governance events, and artifact lineage. SQLite is the single source of truth for governance and lineage; execution and trading are out of scope.
+Crypto-Analyzer is **local-first crypto quantitative research and market intelligence infrastructure** (SQLite-backed). Core flow: **Ingestion** (CEX/DEX providers) → **Materialization** (OHLCV bars) → **Modeling** (factors, signals, inference) → **Presentation** (dashboard/API/CLI). **Governance is the differentiator:** it governs whether a research result is eligible for promotion (candidate → accepted) and maintains an auditable chain from accepted results back to dataset identity, run identity, fold causality, and artifacts—via dataset hashing, run identity, seeded RNG, fold attestation, eligibility gating, governance events, and artifact lineage. SQLite is the single source of truth for governance and lineage; execution and trading are out of scope.
 
 ---
 

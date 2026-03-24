@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 
 from crypto_analyzer import ingest
+from crypto_analyzer.config import db_path as config_sqlite_db_path
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,28 @@ class _DualStreamHandler(logging.Handler):
                 pass
 
 
+def _poll_sqlite_path(args: argparse.Namespace) -> str:
+    """SQLite file for this poll process: explicit --db wins, else config (YAML + CRYPTO_DB_PATH)."""
+    if getattr(args, "db", None):
+        return str(args.db)
+    return config_sqlite_db_path()
+
+
+def _configure_poll_stream_loggers(handler: logging.Handler) -> None:
+    """Mirror ingest/db/chain warnings to stdout (and optional log file) during poll."""
+    handler.setFormatter(logging.Formatter("%(levelname)s  %(name)s  %(message)s"))
+    for name in (
+        "crypto_analyzer.ingest",
+        "crypto_analyzer.db.writer",
+        "crypto_analyzer.providers.chain",
+    ):
+        lg = logging.getLogger(name)
+        lg.handlers.clear()
+        lg.addHandler(handler)
+        lg.setLevel(logging.INFO)
+        lg.propagate = False
+
+
 def _log(msg: str) -> None:
     print(msg, flush=True)
     if _log_file is not None:
@@ -54,6 +77,24 @@ def _log(msg: str) -> None:
             pass
 
 
+def _log_snapshot_freshness(conn: sqlite3.Connection) -> None:
+    """After each cycle: latest snapshot timestamps so operators can confirm the open DB is advancing."""
+    dex_ts: Optional[str] = None
+    spot_ts: Optional[str] = None
+    try:
+        row = conn.execute("SELECT MAX(ts_utc) FROM sol_monitor_snapshots").fetchone()
+        dex_ts = row[0] if row else None
+    except sqlite3.OperationalError:
+        pass
+    try:
+        row = conn.execute("SELECT MAX(ts_utc) FROM spot_price_snapshots").fetchone()
+        spot_ts = row[0] if row else None
+    except sqlite3.OperationalError:
+        pass
+    _log(f"[freshness] latest_sol_monitor_ts={dex_ts!s}  latest_spot_ts={spot_ts!s}")
+
+
+# Legacy default filename only; live `poll` uses config `db.path` / `CRYPTO_DB_PATH` or `--db`.
 DB_PATH = "dex_data.sqlite"
 
 DEX_BASE_URL = "https://api.dexscreener.com"
@@ -961,6 +1002,7 @@ def insert_spot_prices(conn: sqlite3.Connection, ts: str, prices: List[Tuple[str
 
 def main(argv: Optional[List[str]] = None) -> int:
     global _log_file
+    _log_file = None
     if argv is None:
         argv = sys.argv[1:]
     if sys.prefix == sys.base_prefix:
@@ -970,6 +1012,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
     parser = argparse.ArgumentParser(description="Poll Dexscreener + spot prices into SQLite")
     parser.add_argument("--config", default="config.yaml", help="Path to config YAML (default: config.yaml)")
+    parser.add_argument(
+        "--db",
+        default=None,
+        metavar="PATH",
+        help="SQLite database path (default: db.path from config.yaml; override with env CRYPTO_DB_PATH)",
+    )
     parser.add_argument(
         "--pairs-from-config",
         dest="pairs_from_config",
@@ -1098,6 +1146,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     args = parser.parse_args(argv)
     interval_sec = args.interval
+    sqlite_db = _poll_sqlite_path(args)
+    try:
+        resolved_db = str(Path(sqlite_db).resolve())
+    except OSError:
+        resolved_db = sqlite_db
+
+    if getattr(args, "log_file", None):
+        log_path = getattr(args, "log_file")
+        os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
+        _log_file = open(log_path, "a", encoding="utf-8")
 
     # Universe mode: refresh allowlist periodically (--universe or --universe top)
     universe_enabled = getattr(args, "universe", None) == "top"
@@ -1252,84 +1310,85 @@ def main(argv: Optional[List[str]] = None) -> int:
                 _log(f"  {i}. {p.get('label', '?')}  {p.get('pair_address', '')}")
         return universe_cache[0] or []
 
-    with ingest.get_poll_context(DB_PATH) as ctx:
-        conn = ctx.conn
+    try:
+        with ingest.get_poll_context(sqlite_db) as ctx:
+            conn = ctx.conn
 
-        # Route ingest logger to stdout (and _log_file when set) so operator sees cycle output
-        _ingest_logger = logging.getLogger("crypto_analyzer.ingest")
-        _ingest_logger.handlers.clear()
-        _h = _DualStreamHandler()
-        _h.setFormatter(logging.Formatter("%(message)s"))
-        _ingest_logger.addHandler(_h)
-        _ingest_logger.setLevel(logging.INFO)
-        _ingest_logger.propagate = False
+            # Ingest + DbWriter + provider chain: warnings go to stdout / --log-file
+            _stream_handler = _DualStreamHandler()
+            _configure_poll_stream_loggers(_stream_handler)
 
-        # Build dex_pairs list (universe mode needs conn for persist + churn)
-        dex_pairs = []
-        if universe_enabled:
-            dex_pairs = _get_universe_pairs(conn)
-        if not dex_pairs and args.pairs_from_config:
-            dex_pairs = load_dex_pairs_from_config(args.config)
-        if not dex_pairs:
-            dex_pairs = list(DEFAULT_DEX_PAIRS)
-        for raw in args.pair:
-            if ":" in raw:
-                cid, addr = raw.split(":", 1)
-                dex_pairs.append(
-                    {
-                        "chain_id": cid.strip(),
-                        "pair_address": addr.strip(),
-                        "label": f"{cid.strip()}/{addr.strip()[:8]}",
-                    }
-                )
-
-        if getattr(args, "log_file", None):
-            log_path = getattr(args, "log_file")
-            os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
-            _log_file = open(log_path, "a", encoding="utf-8")
-
-        # Mutable ref so universe mode can refresh the list each cycle
-        current_dex_pairs: List[List[Dict[str, str]]] = [dex_pairs]
-        spot_priority = ", ".join(p.provider_name for p in ctx.spot_chain._providers)
-        _log(f"Writing to SQLite: {DB_PATH}")
-        _log(f"Dex pairs: {len(dex_pairs)}  (universe_mode={universe_enabled})")
-        _log(f"Spot assets: {[s[0] for s in ingest.SPOT_ASSETS]}")
-        _log(f"Spot provider chain: [{spot_priority}]")
-        _log(f"DEX provider chain: [{', '.join(p.provider_name for p in ctx.dex_chain._providers)}]")
-        _log(f"Poll every {interval_sec}s. Pair delay {args.pair_delay}s. Stop with Ctrl+C.\n")
-
-        _poll_start = time.time()
-        _run_seconds = getattr(args, "run_seconds", None)
-
-        try:
-            while True:
-                if _run_seconds is not None and (time.time() - _poll_start) >= _run_seconds:
-                    _log(f"Reached --run-seconds={_run_seconds}. Stopping.")
-                    break
-                if universe_enabled:
-                    u = _get_universe_pairs(conn)
-                    if u:
-                        current_dex_pairs[0] = u
-                dex_pairs_this_cycle = current_dex_pairs[0]
+            # Build dex_pairs list (universe mode needs conn for persist + churn)
+            dex_pairs = []
+            if universe_enabled:
                 try:
-                    ingest.run_one_cycle(
-                        ctx,
-                        dex_pairs_this_cycle,
-                        pair_delay=args.pair_delay,
-                    )
+                    dex_pairs = _get_universe_pairs(conn)
                 except Exception as e:
-                    _log(f"{utc_now_iso()}  ERR  {e}")
+                    _log(f"{utc_now_iso()}  UNIVERSE_ERR  startup: {e}")
+            if not dex_pairs and args.pairs_from_config:
+                dex_pairs = load_dex_pairs_from_config(args.config)
+            if not dex_pairs:
+                dex_pairs = list(DEFAULT_DEX_PAIRS)
+            for raw in args.pair:
+                if ":" in raw:
+                    cid, addr = raw.split(":", 1)
+                    dex_pairs.append(
+                        {
+                            "chain_id": cid.strip(),
+                            "pair_address": addr.strip(),
+                            "label": f"{cid.strip()}/{addr.strip()[:8]}",
+                        }
+                    )
 
-                time.sleep(interval_sec)
+            # Mutable ref so universe mode can refresh the list each cycle
+            current_dex_pairs: List[List[Dict[str, str]]] = [dex_pairs]
+            spot_priority = ", ".join(p.provider_name for p in ctx.spot_chain._providers)
+            _log(f"Writing to SQLite: {sqlite_db}")
+            _log(f"SQLite resolved path: {resolved_db}")
+            _log(f"Dex pairs: {len(dex_pairs)}  (universe_mode={universe_enabled})")
+            _log(f"Spot assets: {[s[0] for s in ingest.SPOT_ASSETS]}")
+            _log(f"Spot provider chain: [{spot_priority}]")
+            _log(f"DEX provider chain: [{', '.join(p.provider_name for p in ctx.dex_chain._providers)}]")
+            _log(f"Poll every {interval_sec}s. Pair delay {args.pair_delay}s. Stop with Ctrl+C.\n")
 
-        except KeyboardInterrupt:
-            _log("\nStopped.")
-        finally:
-            if _log_file is not None:
-                try:
-                    _log_file.close()
-                except Exception:
-                    pass
+            _poll_start = time.time()
+            _run_seconds = getattr(args, "run_seconds", None)
+
+            try:
+                while True:
+                    if _run_seconds is not None and (time.time() - _poll_start) >= _run_seconds:
+                        _log(f"Reached --run-seconds={_run_seconds}. Stopping.")
+                        break
+                    if universe_enabled:
+                        try:
+                            u = _get_universe_pairs(conn)
+                            if u:
+                                current_dex_pairs[0] = u
+                        except Exception as e:
+                            _log(f"{utc_now_iso()}  UNIVERSE_ERR  refresh: {e}")
+                    dex_pairs_this_cycle = current_dex_pairs[0]
+                    try:
+                        ingest.run_one_cycle(
+                            ctx,
+                            dex_pairs_this_cycle,
+                            pair_delay=args.pair_delay,
+                        )
+                        _log_snapshot_freshness(conn)
+                    except Exception as e:
+                        _log(f"{utc_now_iso()}  ERR  {e}")
+                        _log("[freshness] cycle failed; DB timestamps unchanged for this cycle")
+
+                    time.sleep(interval_sec)
+
+            except KeyboardInterrupt:
+                _log("\nStopped.")
+    finally:
+        if _log_file is not None:
+            try:
+                _log_file.close()
+            except Exception:
+                pass
+            _log_file = None
 
     return 0
 

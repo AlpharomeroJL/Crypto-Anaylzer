@@ -19,6 +19,7 @@ from crypto_analyzer.config import (
     db_table,
     is_btc_pair,
     price_column,
+    venue_coinbase_advanced_slug,
 )
 from crypto_analyzer.config import factor_symbol as config_factor_symbol
 from crypto_analyzer.config import (
@@ -141,6 +142,72 @@ def load_snapshots(
             import warnings
 
             warnings.warn(f"load_snapshots: {w}", UserWarning, stacklevel=2)
+    except Exception:
+        pass
+    return df
+
+
+def load_venue_bars_1h(
+    db_path_override: Optional[str] = None,
+    *,
+    venue: Optional[str] = None,
+    min_bars: Optional[int] = None,
+    product_ids: Optional[List[str]] = None,
+) -> pd.DataFrame:
+    """
+    Load Coinbase Advanced (or other venue) 1h OHLCV from venue_bars_1h.
+
+    ts_utc is ISO UTC bar **open** time. Does not use DEX chain_id/pair_address.
+    """
+    path = db_path_override or db_path()
+    v = venue or venue_coinbase_advanced_slug()
+    where = "WHERE venue = ?"
+    params: List[str] = [v]
+    if product_ids:
+        placeholders = ",".join("?" for _ in product_ids)
+        where += f" AND product_id IN ({placeholders})"
+        params.extend(product_ids)
+
+    query = f"""
+        SELECT ts_utc, venue, product_id, open, high, low, close, volume, log_return,
+               source, ingested_at_utc
+        FROM venue_bars_1h
+        {where}
+        ORDER BY ts_utc ASC
+    """
+    try:
+        with _with_conn(path) as con:
+            df = pd.read_sql_query(query, con, params=params)
+    except Exception as e:
+        if "no such table" not in str(e).lower():
+            raise
+        import warnings
+
+        warnings.warn(
+            "load_venue_bars_1h: table venue_bars_1h does not exist. Run migrations and venue-sync.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return pd.DataFrame()
+
+    if df.empty:
+        return df
+    df["ts_utc"] = pd.to_datetime(df["ts_utc"], utc=True, errors="coerce")
+    df = df.dropna(subset=["ts_utc", "product_id", "close"])
+    df["close"] = pd.to_numeric(df["close"], errors="coerce")
+    df = df[df["close"] > 0]
+    if min_bars is not None:
+        counts = df.groupby("product_id").size()
+        valid = counts[counts >= min_bars].index
+        df = df[df["product_id"].isin(valid)].reset_index(drop=True)
+    try:
+        from crypto_analyzer.integrity import assert_monotonic_time_index
+
+        w = assert_monotonic_time_index(df, col="ts_utc")
+        if w:
+            import warnings
+
+            warnings.warn(f"load_venue_bars_1h: {w}", UserWarning, stacklevel=2)
     except Exception:
         pass
     return df
@@ -348,6 +415,11 @@ def get_factor_returns(
         s = returns_df["BTC_spot"].copy()
         return s if not s.dropna().empty else None
     sym = factor_symbol or config_factor_symbol()
+    # Coinbase majors panel: use BTC-USD returns as market factor when present
+    btc_majors_col = f"{str(sym).upper()}-USD"
+    if btc_majors_col in returns_df.columns:
+        s = returns_df[btc_majors_col].copy()
+        return s if not s.dropna().empty else None
     for col in returns_df.columns:
         if is_btc_pair(meta.get(col, "")):
             return returns_df[col].copy()
@@ -424,4 +496,5 @@ __all__ = [
     "load_snapshots_as_bars",
     "load_spot_price_resampled",
     "load_spot_series",
+    "load_venue_bars_1h",
 ]

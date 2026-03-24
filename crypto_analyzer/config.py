@@ -8,6 +8,32 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+
+def _repo_root() -> Path:
+    """Repo root (parent of the crypto_analyzer package); same anchor as default config.yaml."""
+    return Path(__file__).resolve().parent.parent
+
+
+def resolve_config_db_path(raw: str) -> str:
+    """
+    Resolve SQLite paths from config / CRYPTO_DB_PATH.
+
+    Relative paths are anchored to the repo root so poll, materialize, and report
+    hit the same file as doctor and `config.yaml` intend, regardless of process cwd
+    (NSSM, Task Scheduler, IDE, or subdirectory shells).
+    """
+    p = (raw or "").strip()
+    if not p or p == ":memory:":
+        return p
+    expanded = os.path.expandvars(os.path.expanduser(p))
+    if expanded.startswith("file:"):
+        return expanded
+    pl = Path(expanded)
+    if pl.is_absolute():
+        return str(pl.resolve())
+    return str((_repo_root() / pl).resolve())
+
+
 # Defaults if no YAML or env
 _DEFAULTS = {
     "db": {
@@ -26,12 +52,19 @@ _DEFAULTS = {
     },
     "bars_freqs": ["5min", "15min", "1h", "1D"],
     "factor_symbol": "BTC",
+    "venue": {
+        "coinbase_advanced": {
+            "venue": "coinbase_advanced",
+            "rest_base": "https://api.coinbase.com",
+            "product_ids": ["BTC-USD", "ETH-USD", "SOL-USD"],
+        }
+    },
 }
 
 
 def _config_yaml_path() -> Path:
     """Config.yaml lives at repo root (parent of package dir)."""
-    return Path(__file__).resolve().parent.parent / "config.yaml"
+    return _repo_root() / "config.yaml"
 
 
 def _load_yaml() -> dict:
@@ -80,7 +113,7 @@ def get_config() -> dict:
 
 # Convenience accessors
 def db_path() -> str:
-    return get_config()["db"]["path"]
+    return resolve_config_db_path(str(get_config()["db"]["path"]))
 
 
 def db_busy_timeout_ms() -> int:
@@ -169,6 +202,36 @@ def universe_max_churn_pct() -> float:
         return float(u.get("max_churn_pct", 0.20))
     except (TypeError, ValueError):
         return 0.20
+
+
+def venue_coinbase_advanced() -> dict:
+    """Coinbase Advanced Trade venue block from config (product_ids, rest_base, venue slug)."""
+    merged = get_config()
+    v = merged.get("venue") or {}
+    ca = v.get("coinbase_advanced")
+    if isinstance(ca, dict):
+        return dict(ca)
+    return dict(_DEFAULTS["venue"]["coinbase_advanced"])
+
+
+def venue_coinbase_advanced_product_ids() -> list:
+    """Configured majors product_ids (e.g. BTC-USD)."""
+    ca = venue_coinbase_advanced()
+    raw = ca.get("product_ids")
+    if isinstance(raw, list) and raw:
+        return [str(x).strip() for x in raw if str(x).strip()]
+    return list(_DEFAULTS["venue"]["coinbase_advanced"]["product_ids"])
+
+
+def venue_coinbase_advanced_rest_base() -> str:
+    ca = venue_coinbase_advanced()
+    b = ca.get("rest_base") or _DEFAULTS["venue"]["coinbase_advanced"]["rest_base"]
+    return str(b).rstrip("/")
+
+
+def venue_coinbase_advanced_slug() -> str:
+    ca = venue_coinbase_advanced()
+    return str(ca.get("venue") or _DEFAULTS["venue"]["coinbase_advanced"]["venue"])
 
 
 STABLE_SYMBOLS = frozenset({"USDC", "USDT", "DAI", "BUSD", "TUSD", "USDP", "FRAX"})

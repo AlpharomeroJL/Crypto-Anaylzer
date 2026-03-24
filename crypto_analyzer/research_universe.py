@@ -6,14 +6,19 @@ Research-only; no execution.
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
-from .config import STABLE_SYMBOLS, exclude_stable_pairs
+from .config import (
+    STABLE_SYMBOLS,
+    exclude_stable_pairs,
+    venue_coinbase_advanced_product_ids,
+    venue_coinbase_advanced_slug,
+)
 from .config import min_bars as config_min_bars
-from .data import append_spot_returns_to_returns_df, load_bars
+from .data import append_spot_returns_to_returns_df, load_bars, load_venue_bars_1h
 
 
 def _is_stable_pair(base: str, quote: str) -> bool:
@@ -127,4 +132,65 @@ def get_research_assets(
             meta_df[meta_df["asset_id"].isin(valid_cols)].drop_duplicates(subset=["asset_id"]).reset_index(drop=True)
         )
 
+    return returns_df, meta_df
+
+
+def get_benchmark_majors_assets(
+    db_path: str,
+    *,
+    min_bars_override: Optional[int] = None,
+    venue: Optional[str] = None,
+    product_ids: Optional[List[str]] = None,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Majors venue panel from venue_bars_1h (Coinbase Advanced Trade Phase 1).
+
+    Columns are product_id (e.g. BTC-USD). Does not append Consumer spot snapshots.
+    """
+    min_bars = (
+        min_bars_override if min_bars_override is not None else (config_min_bars() if callable(config_min_bars) else 48)
+    )
+    v = venue or venue_coinbase_advanced_slug()
+    pids = product_ids if product_ids is not None else venue_coinbase_advanced_product_ids()
+
+    bars = load_venue_bars_1h(
+        db_path_override=db_path,
+        venue=v,
+        min_bars=min_bars,
+        product_ids=pids if pids else None,
+    )
+    if bars.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    close_pt = bars.pivot_table(index="ts_utc", columns="product_id", values="close")
+    lr_pt = bars.pivot_table(index="ts_utc", columns="product_id", values="log_return")
+    returns_df = pd.DataFrame(index=close_pt.index)
+    for c in close_pt.columns:
+        s = lr_pt[c] if c in lr_pt.columns else None
+        if s is None or s.notna().sum() == 0:
+            returns_df[c] = np.log(close_pt[c]).diff()
+        else:
+            returns_df[c] = s
+
+    returns_df = returns_df.dropna(how="all")
+
+    meta_rows = []
+    for pid in returns_df.columns:
+        meta_rows.append(
+            {
+                "asset_id": pid,
+                "label": pid,
+                "asset_type": "venue_majors",
+                "chain_id": "",
+                "pair_address": "",
+            }
+        )
+
+    valid_cols = [c for c in returns_df.columns if _sanity_returns(returns_df[c])]
+    returns_df = returns_df[valid_cols].copy()
+    meta_df = pd.DataFrame([r for r in meta_rows if r["asset_id"] in valid_cols])
+    if not meta_df.empty:
+        meta_df = meta_df.drop_duplicates(subset=["asset_id"]).reset_index(drop=True)
+
+    returns_df = returns_df.sort_index()
     return returns_df, meta_df

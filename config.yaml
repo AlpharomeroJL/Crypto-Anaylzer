@@ -29,6 +29,16 @@ bars_freqs:
 # Market factor for beta/correlation (if no BTC pair in data, load from spot_price_snapshots)
 factor_symbol: "BTC"
 
+# Coinbase Advanced Trade (public REST): majors venue layer — use `venue-sync` CLI to backfill
+venue:
+  coinbase_advanced:
+    venue: "coinbase_advanced"
+    rest_base: "https://api.coinbase.com"
+    product_ids:
+      - "BTC-USD"
+      - "ETH-USD"
+      - "SOL-USD"
+
 # Provider chain configuration (ordered by priority — first healthy provider wins)
 # To add a new provider: implement the SpotPriceProvider or DexSnapshotProvider protocol,
 # register it in crypto_analyzer/providers/defaults.py, and add its name here.

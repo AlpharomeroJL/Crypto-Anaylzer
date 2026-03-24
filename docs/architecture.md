@@ -1,6 +1,6 @@
 # Architecture
 
-This expands the README’s high-level diagram with module responsibilities and data flow.
+This expands the [README](../README.md) overview and diagram with module responsibilities and data flow.
 
 ## Diagram
 
@@ -92,6 +92,10 @@ Data flow: **ingest** (poll) → SQLite (core + v2 + optional Phase 3) → mater
 4. **Analyze / Scan / Report / Reportv2** load bars and spot via data, compute features/factors/regimes (regimes.classify_market_regime from legacy), optionally use factor_materialize outputs and regime-conditioned IC when regimes enabled.
 5. **Backtest** uses bars with execution_cost (fees, slippage, capacity). **backtest_walkforward** runs OOS folds.
 6. **Streamlit** (app.py) uses data/features/regimes/signals for Overview, Scanner, Backtest, Walk-Forward, Market Structure, Signals, Research, Institutional Research, Experiments, Runtime/Health, Governance. Reads allowlist and health via read_api; provider status via ingest.get_provider_health.
+
+### Venue layer (Coinbase Advanced Trade, Phase 1)
+
+**Public REST only** (no poll integration): `cli/venue_sync.py` calls Coinbase Advanced Trade **market** endpoints and writes **`venue_products`** and **`venue_bars_1h`** (same SQLite DB, separate from DEX `bars_*`). **`reportv2 --universe majors --freq 1h`** loads `venue_bars_1h` via `get_benchmark_majors_assets`; default DEX flow is unchanged. See `docs/runbooks/coinbase_advanced_phase1.md`.
 
 ## Research-only
 

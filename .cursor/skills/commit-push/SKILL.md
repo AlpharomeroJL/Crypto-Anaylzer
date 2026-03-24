@@ -1,45 +1,36 @@
 ---
 name: commit-push
-description: Produce a conventional commit message and PR description (deterministic text output). Use when the user asks for a clean commit, commit message, push description, PR description, or release summary. Output is copy-paste text only; do not imply the agent can push to remote.
+description: Produce a conventional commit message and PR description for this repo. Use when the user asks for a clean commit, commit message, push summary, PR description, or release summary. Output text only and do not imply that the agent can push to a remote by itself.
 ---
 
-# Commit and PR Description
-
-## When to Use
-- User asks for: clean commit, commit message, push description, PR description, or release/changelog summary.
-- Output is **text only** for the user to copy-paste (e.g. into GitHub Desktop or PR body). Do not state that the agent will push; the user pushes.
+# Commit And PR Description
 
 ## Workflow
-1. Run (or ask user to confirm): `git status` to see what will be committed.
-2. Run verification: `python -m pytest -q`, `ruff check .` (and optionally `.\scripts\run.ps1 doctor`). Record pass/fail.
-3. Compose the outputs below from the changed files and verification results.
+1. Inspect `git status` so the commit scope is explicit.
+2. Run or summarize verification status from `python -m pytest -q`, `ruff check .`, and optionally `.\scripts\run.ps1 doctor`.
+3. Write the outputs below from the actual changed files and verification results.
 
-## Output Template (Always Include)
+## Output Template
 
 ### 1. Git status expectation
-- Short sentence: what will be committed (e.g. "27 files changed, 3,050 insertions, 235 deletions" or "2 files: .cursor/rules/project-context.mdc, .cursor/skills/commit-push/SKILL.md").
+- One short sentence describing what will be committed.
 
-### 2. Commands run + pass/fail
-| Command | Result |
-|---------|--------|
-| `python -m pytest -q` | … |
-| `ruff check .` | … |
-| (optional) `.\scripts\run.ps1 doctor` | … |
+### 2. Commands run and pass/fail
+- Report each verification command and whether it passed.
 
 ### 3. Conventional commit
-- **Title** (one line): `type(scope): short description` (e.g. `feat(providers): add provider architecture with CEX/DEX plugin system`).
-- **Body**: 1–3 sentences explaining what and why; wrap at ~72 chars.
+- Title format: `type(scope): short description`
+- Body: 1-3 sentences describing what changed and why.
 
-### 4. Changelog bullets (for PR description or release notes)
-- 3–8 bullets: what changed from a user/reader perspective (features, fixes, docs, tests).
+### 4. Changelog bullets
+- Write 3-8 bullets describing the user-visible or reviewer-relevant changes.
 
-### 5. Risk / rollback note
-- One short paragraph: how to roll back or what to watch (e.g. "Rollback: revert commit and re-run migrations if schema changed. Watch: provider health in dashboard after deploy."). MBSE and hiring managers value this.
+### 5. Risk and rollback note
+- Add one short paragraph describing rollback steps or what to watch after merge.
 
-## Example (concise)
-**Git status:** 5 files (rules + skills).  
-**Commands:** pytest 200 passed; ruff all checks passed.  
-**Commit:** `docs(cursor): add project rules and commit-push skill`  
-**Body:** Add .cursor rules (project context, Python/providers, tests) and commit-push skill for conventional commit + PR description output.  
-**Changelog:** • Project rules: decision defaults, do-not-touch, verification commands • Commit-push skill: commit title/body, changelog bullets, risk note  
-**Risk:** None; rules/skills are additive. Rollback: remove .cursor/rules/*.mdc and .cursor/skills/commit-push if desired.
+## Example Shape
+- Git status: 5 files changed in rules and skills
+- Commands: pytest passed, ruff passed
+- Commit: `docs(cursor): add shared repo rules and skill sync`
+- Risk: additive docs and tooling only; rollback is a normal revert
+

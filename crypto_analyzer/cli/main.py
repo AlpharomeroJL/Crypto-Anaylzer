@@ -98,6 +98,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "null_suite",
         "audit_trace",
         "dashboard",
+        "venue-sync",
     ):
         subparsers.add_parser(name, help=f"Run {name}")
 
@@ -195,6 +196,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         return mod.main(rest)
     if cmd == "dashboard":
         from crypto_analyzer.cli import dashboard as mod
+
+        return mod.main(rest)
+    if cmd == "venue-sync":
+        from crypto_analyzer.cli import venue_sync as mod
 
         return mod.main(rest)
 

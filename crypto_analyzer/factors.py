@@ -6,10 +6,13 @@ Research-only; no execution.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+
+if TYPE_CHECKING:
+    from crypto_analyzer.fold_causality.folds import FoldSpec
 
 
 def _solve_normal_equations(X: np.ndarray, y: np.ndarray, ridge_lambda: float = 1e-8) -> np.ndarray:
@@ -190,6 +193,98 @@ def rolling_multifactor_ols(
                 residual_df.iloc[i, residual_df.columns.get_loc(col)] = y_point - fitted
 
     return betas_dict, r2_df, residual_df
+
+
+def _positions_in_closed_interval(idx: pd.DatetimeIndex, start_ts, end_ts) -> np.ndarray:
+    """Integer positions in idx where start_ts <= t <= end_ts (inclusive)."""
+    t0 = pd.Timestamp(start_ts) if not isinstance(start_ts, pd.Timestamp) else start_ts
+    t1 = pd.Timestamp(end_ts) if not isinstance(end_ts, pd.Timestamp) else end_ts
+    mask = (idx >= t0) & (idx <= t1)
+    return np.flatnonzero(np.asarray(mask))
+
+
+def aggregate_multifactor_metrics_walk_forward(
+    returns_df: pd.DataFrame,
+    factor_df: pd.DataFrame,
+    folds: List["FoldSpec"],
+    window: int = 72,
+    min_obs: int = 24,
+    add_const: bool = True,
+) -> Dict[str, float]:
+    """
+    Mean multifactor OLS betas and R² over all **test** timestamps, where each fit uses
+    only that fold's **train** timestamps (no rows from the same fold's test window).
+
+    Used by reportv2 when strict walk-forward is enabled so canonical mf_metrics do not
+    incorporate same-fold test-period observations into factor regression windows (D6).
+    """
+    if not folds:
+        return {}
+
+    desired_factors = ["BTC_spot", "ETH_spot"]
+    available_factors = [f for f in desired_factors if f in factor_df.columns]
+    if not available_factors:
+        available_factors = [c for c in factor_df.columns if c in returns_df.columns]
+    if not available_factors:
+        return {}
+
+    factor_sub = factor_df[available_factors].copy()
+    asset_cols = [c for c in returns_df.columns if c not in available_factors]
+    if not asset_cols:
+        return {}
+
+    common_idx = returns_df.index.intersection(factor_sub.dropna(how="any").index)
+    if len(common_idx) < min_obs:
+        return {}
+
+    F_all = factor_sub.reindex(common_idx).values.astype(float)
+
+    y_by_col = {c: returns_df[c].reindex(common_idx).values.astype(float) for c in asset_cols}
+
+    btc_samples: List[float] = []
+    eth_samples: List[float] = []
+    r2_samples: List[float] = []
+
+    for fold in folds:
+        train_pos = _positions_in_closed_interval(common_idx, fold.train_start_ts, fold.train_end_ts)
+        test_pos = _positions_in_closed_interval(common_idx, fold.test_start_ts, fold.test_end_ts)
+        if train_pos.size == 0 or test_pos.size == 0:
+            continue
+
+        for col in asset_cols:
+            y_all = y_by_col[col]
+            for i in test_pos:
+                eligible = train_pos[train_pos <= i]
+                if eligible.size == 0:
+                    continue
+                j_sel = eligible[-window:]
+                if j_sel.size < min_obs:
+                    continue
+                y_v = y_all[j_sel]
+                F_v = F_all[j_sel]
+                valid = ~(np.isnan(y_v) | np.any(np.isnan(F_v), axis=1))
+                if valid.sum() < min_obs:
+                    continue
+                y_fit = y_v[valid]
+                F_fit = F_v[valid]
+                betas, intercept, r2 = fit_ols(F_fit, y_fit, add_const=add_const)
+                if np.any(np.isnan(betas)):
+                    continue
+                if "BTC_spot" in available_factors:
+                    btc_samples.append(float(betas[available_factors.index("BTC_spot")]))
+                if "ETH_spot" in available_factors:
+                    eth_samples.append(float(betas[available_factors.index("ETH_spot")]))
+                if np.isfinite(r2):
+                    r2_samples.append(float(r2))
+
+    out: Dict[str, float] = {}
+    if btc_samples:
+        out["beta_btc_mean"] = float(np.mean(btc_samples))
+    if eth_samples:
+        out["beta_eth_mean"] = float(np.mean(eth_samples))
+    if r2_samples:
+        out["r2_mean"] = float(np.mean(r2_samples))
+    return out
 
 
 def causal_rolling_ols(

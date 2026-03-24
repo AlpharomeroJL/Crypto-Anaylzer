@@ -72,6 +72,6 @@ Entries are labeled as:
    **Impact:** Intentionally local to the fold_causality module (build/validate attestation and gating reference it there). A future refactor could centralize schema versions in `schema_versions.py`; no commitment to that change.
 
 4. **Project name spelling** — *Deviation from some academic presentations (benign)*  
-   **Doc:** Several docs said “Crypto-Analyzer”.  
-   **Code:** Repo name is “Crypto-Anaylzer”.  
-   **Impact:** Naming consistency only; docs updated to use “Crypto-Anaylzer” where referring to the repo/project.
+   **Doc:** Public-facing docs use the product name **Crypto-Analyzer**.  
+   **Code / GitHub:** The repository slug may still be `Crypto-Anaylzer` until a GitHub rename; clone paths and release URLs follow the slug.  
+   **Impact:** Display name vs URL/path; no functional change.

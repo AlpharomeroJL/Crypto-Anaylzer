@@ -16,6 +16,40 @@ from crypto_analyzer.validation_bundle import ValidationBundle
 from .execution_evidence import ExecutionEvidence
 
 
+def _resolve_relative_file_path(rel: str, directory_base: Union[str, Path, None]) -> Path:
+    """
+    Resolve a relative path to an on-disk file for promotion evidence loading.
+
+    Tries, in order: (directory_base / rel), (cwd / rel), (rel as given). This matches
+    create/evaluate usage where stored paths may be repo-root-relative (e.g. reports/csv/x.json)
+    while evaluate passes directory_base = parent(bundle_path) (e.g. reports/csv), which must
+    not be prepended twice.
+    """
+    rel_stripped = (rel or "").strip()
+    if not rel_stripped:
+        return Path(rel_stripped)
+    p = Path(rel_stripped)
+    if p.is_absolute():
+        return p
+    db = Path(directory_base) if directory_base is not None else Path(".")
+    candidates = [db / p, Path.cwd() / p, p]
+    seen: set[str] = set()
+    for cand in candidates:
+        try:
+            key = str(cand.resolve())
+        except OSError:
+            key = str(cand)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            if cand.is_file():
+                return cand
+        except OSError:
+            continue
+    return db / p
+
+
 def _load_bundle(path: Union[str, Path]) -> Optional[ValidationBundle]:
     """Load ValidationBundle from JSON path. Returns None if file missing or invalid."""
     path = Path(path)
@@ -104,30 +138,28 @@ def resolve_evidence(
     if isinstance(bundle_or_path, ValidationBundle):
         bundle = bundle_or_path
     else:
-        bundle = _load_bundle(bundle_or_path)
+        bstr = str(bundle_or_path).strip() if bundle_or_path is not None else ""
+        if not bstr:
+            bundle = None
+        else:
+            bundle = _load_bundle(_resolve_relative_file_path(bstr, base))
 
     regime_summary_df: Optional[pd.DataFrame] = None
     if evidence_json.get("ic_summary_by_regime_path"):
-        p = (
-            base / evidence_json["ic_summary_by_regime_path"]
-            if not Path(evidence_json["ic_summary_by_regime_path"]).is_absolute()
-            else Path(evidence_json["ic_summary_by_regime_path"])
-        )
+        rp = evidence_json["ic_summary_by_regime_path"]
+        p = Path(rp) if Path(rp).is_absolute() else _resolve_relative_file_path(str(rp), base)
         regime_summary_df = _load_regime_summary(p)
 
     rc_summary: Optional[Dict[str, Any]] = None
     if evidence_json.get("rc_summary_path"):
-        p = (
-            base / evidence_json["rc_summary_path"]
-            if not Path(evidence_json["rc_summary_path"]).is_absolute()
-            else Path(evidence_json["rc_summary_path"])
-        )
+        rp = evidence_json["rc_summary_path"]
+        p = Path(rp) if Path(rp).is_absolute() else _resolve_relative_file_path(str(rp), base)
         rc_summary = _load_rc_summary(p)
 
     execution_evidence: Optional[ExecutionEvidence] = None
     exec_path = evidence_json.get("execution_evidence_path")
     if exec_path:
-        p = base / exec_path if not Path(exec_path).is_absolute() else Path(exec_path)
+        p = Path(exec_path) if Path(exec_path).is_absolute() else _resolve_relative_file_path(str(exec_path), base)
         execution_evidence = _load_execution_evidence(p)
 
     return bundle, regime_summary_df, rc_summary, execution_evidence

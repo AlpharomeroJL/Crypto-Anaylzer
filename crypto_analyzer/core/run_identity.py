@@ -12,13 +12,10 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict
+from typing import TYPE_CHECKING, Any, Dict
 
-import pandas as pd
-
-from crypto_analyzer.artifacts import ensure_dir, write_json_sorted
-from crypto_analyzer.spec import spec_summary
-from crypto_analyzer.timeutils import now_utc_iso
+if TYPE_CHECKING:
+    import pandas as pd
 
 # Keys to exclude from run_key (semantic identity must not depend on these)
 _RUN_KEY_EXCLUDE_KEYS = frozenset({"ts_utc", "created_utc", "timestamp", "out_dir", "output_dir", "path", "paths"})
@@ -146,6 +143,9 @@ def make_run_manifest(
     Build manifest dict with run_id, created_utc, git_commit, env_fingerprint,
     args, data_window, outputs, metrics, spec, notes.
     """
+    from crypto_analyzer.spec import spec_summary
+    from crypto_analyzer.timeutils import now_utc_iso
+
     created = now_utc_iso()
     payload = {
         "name": name,
@@ -172,6 +172,8 @@ def make_run_manifest(
 
 def append_run_registry(out_dir: str | Path, run_id: str, manifest_path: str) -> None:
     """Append one JSON line to out_dir/run_registry.jsonl (run_id, manifest path, timestamp)."""
+    from crypto_analyzer.timeutils import now_utc_iso
+
     out_dir = Path(out_dir)
     registry_path = out_dir / "run_registry.jsonl"
     line = (
@@ -193,6 +195,8 @@ def append_run_registry(out_dir: str | Path, run_id: str, manifest_path: str) ->
 
 def save_manifest(out_dir: str | Path, manifest: dict) -> str:
     """Write manifest JSON to out_dir/manifests/<run_id>.json. Return path."""
+    from crypto_analyzer.artifacts import ensure_dir, write_json_sorted
+
     out_dir = Path(out_dir)
     manifests_dir = out_dir / "manifests"
     ensure_dir(manifests_dir)
@@ -204,8 +208,10 @@ def save_manifest(out_dir: str | Path, manifest: dict) -> str:
     return manifest_path_str
 
 
-def load_manifests(out_dir: str | Path) -> pd.DataFrame:
+def load_manifests(out_dir: str | Path) -> "pd.DataFrame":
     """Load all manifest JSONs from out_dir/manifests into a flat DataFrame."""
+    import pandas as pd
+
     out_dir = Path(out_dir)
     manifests_dir = out_dir / "manifests"
     if not manifests_dir.is_dir():

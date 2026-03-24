@@ -53,6 +53,7 @@ DEFAULT_TOP_K = 3
 DEFAULT_BOTTOM_K = 3
 DEFAULT_HORIZONS = [1, 2, 3, 6, 12, 24]
 DISPERSION_WINDOW = 24
+DEFAULT_REPORT_OUT_DIR = "reports/report"
 
 
 def _table(df: pd.DataFrame) -> str:
@@ -75,7 +76,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--horizons", default=",".join(map(str, DEFAULT_HORIZONS)), help="Comma-separated horizon bars")
     ap.add_argument("--fee-bps", type=float, default=30)
     ap.add_argument("--slippage-bps", type=float, default=10)
-    ap.add_argument("--out-dir", default="reports")
+    ap.add_argument(
+        "--out-dir",
+        default=DEFAULT_REPORT_OUT_DIR,
+        help="Artifact root (default: reports/report). Use --out-dir reports for legacy layout.",
+    )
     ap.add_argument("--run-name", default=None, help="Run name for manifest (default: research_report)")
     ap.add_argument("--notes", default="")
     ap.add_argument("--save-manifest", action="store_true", default=True, help="Write run manifest (default: True)")

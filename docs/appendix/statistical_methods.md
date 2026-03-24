@@ -1,6 +1,6 @@
 # Appendix A — Statistical Methods, Formal Definitions, and Assumptions
 
-This appendix provides formal definitions of the statistical procedures used in Crypto-Anaylzer's research validation framework. The objective is to rigorously control selection bias, overfitting, and false discoveries in systematic signal research under temporal and cross-sectional dependence.
+This appendix provides formal definitions of the statistical procedures used in Crypto-Analyzer's research validation framework. The objective is to rigorously control selection bias, overfitting, and false discoveries in systematic signal research under temporal and cross-sectional dependence.
 
 ## A.1 Notation and Setup
 
