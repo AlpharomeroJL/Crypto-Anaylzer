@@ -492,6 +492,7 @@ Short form and artifact keys: [Methods & limits](docs/methods_and_limits.md) (§
 | [Phase 1 verification](docs/audit/phase1_verification.md) | Phase 1 verification checklist (dataset_id_v2, run_key, backfill). |
 | [Research validation workflow](docs/research_validation_workflow.md) | Exploratory vs full-scale runs, run_id, snapshot semantics, validation readiness criteria. |
 | [Case study: Coinbase majors benchmark (Phase 1.1)](docs/case_studies/coinbase_majors_benchmark_phase1_1.md) | Public-facing benchmark artifact for the expanded Coinbase majors workflow with explicit scope and caveats. |
+| [Case study: Coinbase majors strict validation (Phase 1.2)](docs/case_studies/coinbase_majors_strict_validation_phase1_2.md) | Follow-on case study documenting stricter validation evidence and a rigor-focused upgrade with explicit scope and caveats. |
 | [Spec index (canonical)](docs/spec/README.md) | Master spec, system overview, implementation ledger, component specs. |
 | [System overview](docs/spec/system_overview.md) | Pipeline lifecycle, determinism, statistical stack, feature flags, promotion. |
 | [Implementation ledger](docs/spec/implementation_ledger.md) | Requirement → status, PRs, evidence. |
