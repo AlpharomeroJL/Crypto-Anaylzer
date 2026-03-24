@@ -56,7 +56,17 @@ _DEFAULTS = {
         "coinbase_advanced": {
             "venue": "coinbase_advanced",
             "rest_base": "https://api.coinbase.com",
-            "product_ids": ["BTC-USD", "ETH-USD", "SOL-USD"],
+            "product_ids": [
+                "BTC-USD",
+                "ETH-USD",
+                "SOL-USD",
+                "XRP-USD",
+                "ADA-USD",
+                "DOGE-USD",
+                "AVAX-USD",
+                "LINK-USD",
+                "LTC-USD",
+            ],
         }
     },
 }

@@ -2,6 +2,7 @@
 # Override with environment variables: CRYPTO_DB_PATH, CRYPTO_TABLE, etc. (see config.py).
 
 db:
+  # Primary operator DB (repo-root-relative; matches init/demo-lite defaults and poll)
   path: "dex_data.sqlite"
   table: "sol_monitor_snapshots"
   price_column: "dex_price_usd"   # use "price_usd" for generic snapshots table
@@ -38,6 +39,12 @@ venue:
       - "BTC-USD"
       - "ETH-USD"
       - "SOL-USD"
+      - "XRP-USD"
+      - "ADA-USD"
+      - "DOGE-USD"
+      - "AVAX-USD"
+      - "LINK-USD"
+      - "LTC-USD"
 
 # Provider chain configuration (ordered by priority — first healthy provider wins)
 # To add a new provider: implement the SpotPriceProvider or DexSnapshotProvider protocol,

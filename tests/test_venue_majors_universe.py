@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import sqlite3
 
+from crypto_analyzer.cli.venue_sync import _flush_closed_hourly_bars, _update_bucket
 from crypto_analyzer.db.migrations import run_migrations
+from crypto_analyzer.providers.coinbase_advanced.ws_client import TradeTick
 from crypto_analyzer.research_universe import get_benchmark_majors_assets
 
 
@@ -98,3 +100,48 @@ def test_migrations_create_venue_tables(tmp_path) -> None:
         )
         names = {row[0] for row in cur.fetchall()}
     assert names == {"venue_products", "venue_bars_1h"}
+
+
+def test_ws_hourly_bucket_flush_writes_venue_bars(tmp_path) -> None:
+    db = tmp_path / "ws.sqlite"
+    with sqlite3.connect(str(db)) as conn:
+        run_migrations(conn, str(db))
+        buckets = {}
+        _update_bucket(
+            buckets,
+            TradeTick(product_id="BTC-USD", event_ts=1735689605, price=100.0, size=1.0),  # 2025-01-01 00:00:05Z
+        )
+        _update_bucket(
+            buckets,
+            TradeTick(product_id="BTC-USD", event_ts=1735691405, price=101.0, size=2.0),  # 2025-01-01 00:30:05Z
+        )
+        _update_bucket(
+            buckets,
+            TradeTick(product_id="BTC-USD", event_ts=1735693205, price=99.0, size=1.5),  # 2025-01-01 01:00:05Z
+        )
+
+        n = _flush_closed_hourly_bars(
+            conn,
+            venue="coinbase_advanced",
+            source="coinbase_advanced_ws_market_trades",
+            now_unix=1735696800,  # 2025-01-01 02:00:00Z
+            buckets=buckets,
+        )
+        assert n >= 1
+        row = conn.execute(
+            """
+            SELECT ts_utc, open, high, low, close, volume, source
+            FROM venue_bars_1h
+            WHERE venue = ? AND product_id = ?
+            ORDER BY ts_utc ASC
+            LIMIT 1
+            """,
+            ("coinbase_advanced", "BTC-USD"),
+        ).fetchone()
+        assert row is not None
+        assert row[1] == 100.0
+        assert row[2] == 101.0
+        assert row[3] == 100.0
+        assert row[4] == 101.0
+        assert row[5] == 3.0
+        assert str(row[6]).startswith("coinbase_advanced_ws_")

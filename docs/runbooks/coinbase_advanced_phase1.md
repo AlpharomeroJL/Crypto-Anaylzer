@@ -1,6 +1,6 @@
 # Coinbase Advanced Trade — Phase 1 (majors venue layer)
 
-Phase 1 uses **public REST only** (no API keys, no trading). Data lands in SQLite tables `venue_products` and `venue_bars_1h`, separate from DEX `bars_*` and `sol_monitor_snapshots`.
+Phase 1 uses **public market-data only** (REST plus optional websocket liveness path; no API keys, no trading). Data lands in SQLite tables `venue_products` and `venue_bars_1h`, separate from DEX `bars_*` and `sol_monitor_snapshots`.
 
 ## Prerequisites
 
@@ -35,6 +35,17 @@ Phase 1 uses **public REST only** (no API keys, no trading). Data lands in SQLit
    python -m crypto_analyzer reportv2 --universe majors --freq 1h
    ```
 
+4. **Optional live freshness path (public websocket)**:
+
+   ```text
+   python -m crypto_analyzer venue-sync ws-live --channel market_trades --run-seconds 120 --status-interval-sec 15
+   ```
+
+   Notes:
+   - This path writes hourly bars into `venue_bars_1h` with source `coinbase_advanced_ws_market_trades` or `coinbase_advanced_ws_ticker`.
+   - Health logs print message age, feed lag, reconnect count, and flushed-bar count.
+   - It remains strictly market-data ingestion; no authenticated channels or execution logic.
+
 ## Commands reference
 
 | Command | Purpose |
@@ -42,6 +53,7 @@ Phase 1 uses **public REST only** (no API keys, no trading). Data lands in SQLit
 | `venue-sync products` | Upsert product metadata into `venue_products` for configured IDs |
 | `venue-sync candles` | Upsert OHLCV into `venue_bars_1h`, recompute `log_return` per product |
 | `venue-sync all` | `products` then `candles` |
+| `venue-sync ws-live` | Subscribe to Coinbase public websocket and materialize closed 1h bars into `venue_bars_1h` |
 | `reportv2 --universe majors --freq 1h` | Report using **only** `venue_bars_1h` (no DEX cross-section) |
 
 ## Semantics

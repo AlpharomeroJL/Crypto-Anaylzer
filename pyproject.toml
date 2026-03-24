@@ -13,6 +13,7 @@ dependencies = [
     "scipy>=1.10.0",
     "PyYAML",
     "requests",
+    "websocket-client",
     "matplotlib",
     "pyarrow",
 ]

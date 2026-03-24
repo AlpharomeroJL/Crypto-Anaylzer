@@ -255,7 +255,10 @@ def value_vs_beta(
     """
     from .alpha_research import signal_residual_momentum_24h
 
-    sig = signal_residual_momentum_24h(returns_df, freq)
+    majors_factor_cols = [c for c in ["BTC-USD", "ETH-USD"] if c in returns_df.columns]
+    dex_factor_cols = [c for c in ["BTC_spot", "ETH_spot"] if c in returns_df.columns]
+    factor_cols = majors_factor_cols if majors_factor_cols else dex_factor_cols
+    sig = signal_residual_momentum_24h(returns_df, freq, factor_cols=factor_cols)
     if sig is None or sig.empty:
         return None
     exposures = build_exposure_panel(

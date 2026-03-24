@@ -23,8 +23,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     ap.add_argument(
         "--db",
-        default="data/crypto_analyzer.sqlite",
-        help="DB path (default: data/crypto_analyzer.sqlite)",
+        default="dex_data.sqlite",
+        help="DB path (default: dex_data.sqlite at repo root; matches config.yaml db.path)",
     )
     args = ap.parse_args(argv)
     db_path = Path(args.db)

@@ -244,34 +244,40 @@ def render_case_study_liqshock(
             )
     lines.append("")
 
-    # ----- Top 10 most valuable pairs (OOS-only) -----
-    lines.append("## Top 10 most valuable pairs")
-    oos_index = returns_df.index
-    top10 = _top10_valuable_pairs(returns_df, liquidity_panel, oos_index, p10_liq_floor=float(top10_p10_liq_floor))
-    lines.append(
-        "*Valuable = economically meaningful (stable liquidity/activity) + statistically informative (enough shock events, low missingness).*"
-    )
-    lines.append("")
-    if not top10:
-        lines.append(f"*No eligible pairs (p10 ≥ {top10_p10_liq_floor:,} USD, missing% < 10%, or insufficient data).*")
-    else:
-        if len(top10) < 5 and top10_p10_liq_floor >= 250000:
-            lines.append("*Eligible pairs < 5; consider --top10-p10-liq-floor 100000 for broader coverage.*")
-            lines.append("")
-        table_rows = [
-            "| Pair | median_liquidity_usd | p10_liquidity_usd | missing_pct | event_rate | opportunity_score |"
-        ]
-        table_rows.append(
-            "|------|---------------------|-------------------|-------------|------------|-------------------|"
+    # ----- Top 10 most valuable pairs (DEX-only panel) -----
+    universe = str(getattr(args, "universe", "dex")).lower()
+    if universe != "majors":
+        lines.append("## Top 10 most valuable pairs")
+        oos_index = returns_df.index
+        top10 = _top10_valuable_pairs(returns_df, liquidity_panel, oos_index, p10_liq_floor=float(top10_p10_liq_floor))
+        lines.append(
+            "*Valuable = economically meaningful (stable liquidity/activity) + statistically informative (enough shock events, low missingness).*"
         )
-        for r in top10:
+        lines.append("")
+        if not top10:
+            lines.append(f"*No eligible pairs (p10 ≥ {top10_p10_liq_floor:,} USD, missing% < 10%, or insufficient data).*")
+        else:
+            if len(top10) < 5 and top10_p10_liq_floor >= 250000:
+                lines.append("*Eligible pairs < 5; consider --top10-p10-liq-floor 100000 for broader coverage.*")
+                lines.append("")
+            table_rows = [
+                "| Pair | median_liquidity_usd | p10_liquidity_usd | missing_pct | event_rate | opportunity_score |"
+            ]
             table_rows.append(
-                f"| {r['pair']} | {r['median_liquidity_usd']:.0f} | {r['p10_liquidity_usd']:.0f} | "
-                f"{r['missing_pct']:.1f} | {r['event_rate']:.4f} | {r['opportunity_score']:.0f} |"
+                "|------|---------------------|-------------------|-------------|------------|-------------------|"
             )
-        for row in table_rows:
-            lines.append(row)
-    lines.append("")
+            for r in top10:
+                table_rows.append(
+                    f"| {r['pair']} | {r['median_liquidity_usd']:.0f} | {r['p10_liquidity_usd']:.0f} | "
+                    f"{r['missing_pct']:.1f} | {r['event_rate']:.4f} | {r['opportunity_score']:.0f} |"
+                )
+            for row in table_rows:
+                lines.append(row)
+        lines.append("")
+    else:
+        lines.append("## Top 10 most valuable pairs")
+        lines.append("*Not applicable for `--universe majors` (DEX liquidity panel is not used in majors mode).*")
+        lines.append("")
 
     # Tradability / Capacity
     lines.append("## Tradability / Capacity")

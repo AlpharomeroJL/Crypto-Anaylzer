@@ -1,7 +1,7 @@
 """
 Initialize a local SQLite DB: create file, run core and optional Phase 3 migrations.
 Use: crypto-analyzer init [--db PATH] [--phase3]
-Default DB path: data/crypto_analyzer.sqlite (repo-local).
+Default DB path: dex_data.sqlite at repo root (same default as config.yaml db.path).
 """
 
 from __future__ import annotations
@@ -22,8 +22,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     ap.add_argument(
         "--db",
-        default="data/crypto_analyzer.sqlite",
-        help="DB path (default: data/crypto_analyzer.sqlite)",
+        default="dex_data.sqlite",
+        help="DB path (default: dex_data.sqlite at repo root; matches config.yaml db.path)",
     )
     ap.add_argument(
         "--phase3",
