@@ -44,6 +44,8 @@ A local-first **research validation control plane** for crypto: it enforces dete
 
 Prerequisites: Python 3.10+. No API keys (public endpoints only). Run all commands from the **repo root** after cloning.
 
+**SQLite:** The default database file is **`dex_data.sqlite`** at the repo root (`config.yaml` → `db.path`). Poll, materialize, and most flows use this path (also resolved when relative). Override with **`CRYPTO_DB_PATH`** or per-command **`--db`**.
+
 ### Canonical install (uv)
 
 ```powershell
@@ -72,7 +74,7 @@ One-command demo: `uv run crypto-analyzer demo`
 ```powershell
 uv run crypto-analyzer init
 uv run crypto-analyzer demo-lite
-uv run crypto-analyzer check-dataset --db data/crypto_analyzer.sqlite
+uv run crypto-analyzer check-dataset --db dex_data.sqlite
 ```
 
 ### Pip fallback
@@ -252,8 +254,8 @@ Run any command as **`crypto-analyzer <command> [args...]`** or **`python -m cry
 | `doctor` | Preflight: environment, DB schema, pipeline smoke test |
 | `doctor --ci` | CI-safe preflight (no network, temp DB, migrations + tables) |
 | `smoke --ci` | Synthetic-data, no-network smoke (migrations, dataset_id_v2, run identity) |
-| `init` | Create local SQLite DB and run migrations (default `data/crypto_analyzer.sqlite`; optional `--phase3`) |
-| `demo-lite` | Synthetic dataset, no network; run after init for offline onboarding |
+| `init` | Create local SQLite DB and run migrations (default `dex_data.sqlite`; optional `--phase3`) |
+| `demo-lite` | Synthetic dataset, no network; run after `init` (same default DB: `dex_data.sqlite`) |
 | `poll` | Single-pair data poll (provider fallback) |
 | `universe-poll --universe ...` | Multi-asset universe discovery (e.g. `--universe-chain solana`) |
 | `materialize` | Build OHLCV bars (e.g. `--freq 1h`) |
@@ -489,6 +491,7 @@ Short form and artifact keys: [Methods & limits](docs/methods_and_limits.md) (§
 | [Phase 3 summary](docs/phase3_summary.md) | Phase 3 migrations, governance, lineage, store. |
 | [Phase 1 verification](docs/audit/phase1_verification.md) | Phase 1 verification checklist (dataset_id_v2, run_key, backfill). |
 | [Research validation workflow](docs/research_validation_workflow.md) | Exploratory vs full-scale runs, run_id, snapshot semantics, validation readiness criteria. |
+| [Case study: Coinbase majors benchmark (Phase 1.1)](docs/case_studies/coinbase_majors_benchmark_phase1_1.md) | Public-facing benchmark artifact for the expanded Coinbase majors workflow with explicit scope and caveats. |
 | [Spec index (canonical)](docs/spec/README.md) | Master spec, system overview, implementation ledger, component specs. |
 | [System overview](docs/spec/system_overview.md) | Pipeline lifecycle, determinism, statistical stack, feature flags, promotion. |
 | [Implementation ledger](docs/spec/implementation_ledger.md) | Requirement → status, PRs, evidence. |
