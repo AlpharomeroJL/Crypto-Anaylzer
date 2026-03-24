@@ -494,6 +494,7 @@ Short form and artifact keys: [Methods & limits](docs/methods_and_limits.md) (§
 | [Case study: Coinbase majors benchmark (Phase 1.1)](docs/case_studies/coinbase_majors_benchmark_phase1_1.md) | Public-facing benchmark artifact for the expanded Coinbase majors workflow with explicit scope and caveats. |
 | [Case study: Coinbase majors strict validation (Phase 1.2)](docs/case_studies/coinbase_majors_strict_validation_phase1_2.md) | Follow-on case study documenting stricter validation evidence and a rigor-focused upgrade with explicit scope and caveats. |
 | [Case study: Coinbase majors live + signal upgrade (Phase 1.3)](docs/case_studies/coinbase_majors_live_and_signal_upgrade_phase1_3.md) | Public-facing methodology upgrade covering websocket live-majors ingestion, second active majors signal path, and stricter validation on the same benchmark surface. |
+| [Case study: Coinbase majors methodology correction (Phase 1.4)](docs/case_studies/coinbase_majors_methodology_correction_phase1_4.md) | Public-facing methodology-correction upgrade covering lagged portfolio application, more robust neutralization, cleaner majors-native factor preference, and a strict rerun on the same benchmark surface. |
 | [Spec index (canonical)](docs/spec/README.md) | Master spec, system overview, implementation ledger, component specs. |
 | [System overview](docs/spec/system_overview.md) | Pipeline lifecycle, determinism, statistical stack, feature flags, promotion. |
 | [Implementation ledger](docs/spec/implementation_ledger.md) | Requirement → status, PRs, evidence. |
