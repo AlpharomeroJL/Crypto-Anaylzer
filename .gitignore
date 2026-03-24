@@ -48,6 +48,17 @@ Thumbs.db
 # private docs (never push to GitHub)
 docs/private_conversion.md
 
+# Local agent / nested worktree metadata (never commit as normal repo files)
+.claude/
+.cursor/
+**/.cursor/
+
+# Root-level report / scratch markdown dumps (accidental `git add .` risk).
+# Intentional docs live under docs/; exports belong under reports/ (ignored above).
+/research_v2_*.md
+/report_*.md
+/research_report*.md
+
 # Service logs live outside repo (not trackable here):
 # C:\ProgramData\CryptoAnalyzer\poller.log
 # C:\ProgramData\CryptoAnalyzer\poller_error.log
