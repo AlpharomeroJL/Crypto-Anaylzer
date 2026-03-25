@@ -5,6 +5,8 @@ Research-only; no execution or order routing.
 
 from __future__ import annotations
 
+from typing import Optional
+
 import numpy as np
 import pandas as pd
 
@@ -95,21 +97,52 @@ def beta_neutralize_weights(
     return out
 
 
+def adaptive_long_short_k(n_assets: int, top_k: int, bottom_k: int) -> tuple[int, int]:
+    """
+    Cap bucket sizes on small cross-sections so long+short does not consume most names.
+
+    Rule: each leg at most max(1, n // 4), then min with requested k. Keeps a middle cohort on
+    ~9-name panels (e.g. k<=2 vs default 3) to reduce brittle all-in long/short churn.
+    """
+    if n_assets < 2:
+        return max(1, top_k), max(1, bottom_k)
+    cap = max(1, n_assets // 4)
+    tk = max(1, min(int(top_k), cap))
+    bk = max(1, min(int(bottom_k), cap))
+    if tk + bk > n_assets:
+        # Last resort: shrink larger leg
+        while tk + bk > n_assets and (tk > 1 or bk > 1):
+            if tk >= bk and tk > 1:
+                tk -= 1
+            elif bk > 1:
+                bk -= 1
+    return tk, bk
+
+
 def long_short_from_ranks(
     ranks_df: pd.DataFrame,
     top_k: int,
     bottom_k: int,
     gross_leverage: float = 1.0,
+    signal_df: Optional[pd.DataFrame] = None,
+    within_bucket: str = "equal",
 ) -> pd.DataFrame:
     """
-    Weights panel: at each timestamp, long top_k (equal weight), short bottom_k (equal weight).
-    Long weight each = (gross_leverage/2) / top_k, short each = -(gross_leverage/2) / bottom_k.
+    Weights panel: at each timestamp, long top_k, short bottom_k (by cross-sectional rank pct).
+
+    within_bucket:
+      - ``equal``: equal weight within each leg (legacy).
+      - ``signal_abs``: weight by absolute pre-rank signal magnitude within each leg (requires
+        ``signal_df`` aligned to ranks_df); preserves dollar-neutral gross leverage.
+
+    Long leg sums to +gross_leverage/2, short leg to -gross_leverage/2.
     Returns DataFrame index=ts_utc, columns=asset_id, values=weight.
     """
     if ranks_df.empty or ranks_df.shape[1] < 2:
         return pd.DataFrame()
-    w_plus = (gross_leverage / 2.0) / max(1, top_k)
-    w_minus = -(gross_leverage / 2.0) / max(1, bottom_k)
+    use_signal = within_bucket == "signal_abs" and signal_df is not None and not signal_df.empty
+    w_plus_eq = (gross_leverage / 2.0) / max(1, top_k)
+    w_minus_eq = -(gross_leverage / 2.0) / max(1, bottom_k)
     out = pd.DataFrame(0.0, index=ranks_df.index, columns=ranks_df.columns)
     for t in ranks_df.index:
         r = ranks_df.loc[t].dropna()
@@ -117,9 +150,48 @@ def long_short_from_ranks(
             continue
         top = r.nlargest(top_k).index
         bot = r.nsmallest(bottom_k).index
-        out.loc[t, top] = w_plus
-        out.loc[t, bot] = w_minus
+        if not use_signal:
+            out.loc[t, top] = w_plus_eq
+            out.loc[t, bot] = w_minus_eq
+            continue
+        srow = signal_df.loc[t].reindex(r.index).astype(float)
+        long_w = _bucket_weights_abs(srow.loc[top], gross_leverage / 2.0)
+        short_w = _bucket_weights_abs(srow.loc[bot], gross_leverage / 2.0)
+        out.loc[t, long_w.index] = long_w.values
+        out.loc[t, short_w.index] = -short_w.values
     return out
+
+
+def _bucket_weights_abs(s: pd.Series, gross_half: float) -> pd.Series:
+    """Nonnegative weights summing to gross_half from absolute signal values; equal fallback."""
+    s = s.dropna()
+    if s.empty:
+        return pd.Series(dtype=float)
+    a = s.abs().astype(float)
+    a = a.replace(0.0, np.nan)
+    ssum = float(a.sum())
+    if not np.isfinite(ssum) or ssum <= 0:
+        n = len(a)
+        return pd.Series(gross_half / max(1, n), index=a.index)
+    w = a / ssum * gross_half
+    return w.fillna(0.0)
+
+
+def ema_smooth_weights(weights_df: pd.DataFrame, alpha: float) -> pd.DataFrame:
+    """
+    Exponential smoothing of target weights along time (reduces turnover; research-only).
+
+    w_smooth[t] = alpha * w[t] + (1-alpha) * w_smooth[t-1]. First row unchanged.
+    """
+    if weights_df.empty or alpha <= 0.0:
+        return weights_df
+    if alpha > 1.0:
+        alpha = 1.0
+    out = weights_df.copy()
+    arr = out.to_numpy(dtype=float)
+    for i in range(1, len(out)):
+        arr[i] = alpha * arr[i] + (1.0 - alpha) * arr[i - 1]
+    return pd.DataFrame(arr, index=out.index, columns=out.columns)
 
 
 def apply_costs_to_portfolio(

@@ -239,6 +239,10 @@ def _signal_residual_momentum_24h_lookahead(
             lambda x: np.exp(x.sum()) - 1.0 if len(x) == bars_24h else np.nan, raw=False
         )
         out[col] = ret_24h
+    # Do not score the factor legs themselves in cross-section.
+    for fcol in factor_cols:
+        if fcol in out.columns:
+            out[fcol] = np.nan
     return out.replace([np.inf, -np.inf], np.nan)
 
 
@@ -261,7 +265,7 @@ def signal_residual_momentum_24h(
     allow_lookahead: if True, use full-sample OLS (lookahead). For comparison only; default False.
     """
     if factor_cols is None:
-        factor_cols = [c for c in ["BTC_spot", "ETH_spot"] if c in returns_df.columns]
+        factor_cols = [c for c in ["BTC-USD", "ETH-USD", "BTC_spot", "ETH_spot"] if c in returns_df.columns]
     if not factor_cols:
         return None
     if allow_lookahead:
@@ -285,6 +289,10 @@ def signal_residual_momentum_24h(
         out[col] = r.rolling(bars_24h).apply(
             lambda x: np.exp(x.sum()) - 1.0 if len(x) == bars_24h else np.nan, raw=False
         )
+    # Do not score the factor legs themselves in cross-section.
+    for fcol in factor_cols:
+        if fcol in out.columns:
+            out[fcol] = np.nan
     return out.replace([np.inf, -np.inf], np.nan)
 
 

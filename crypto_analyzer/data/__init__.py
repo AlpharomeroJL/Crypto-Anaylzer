@@ -411,14 +411,14 @@ def get_factor_returns(
     freq: str = "1h",
     factor_symbol: Optional[str] = None,
 ) -> Optional[pd.Series]:
-    if "BTC_spot" in returns_df.columns:
-        s = returns_df["BTC_spot"].copy()
-        return s if not s.dropna().empty else None
     sym = factor_symbol or config_factor_symbol()
     # Coinbase majors panel: use BTC-USD returns as market factor when present
     btc_majors_col = f"{str(sym).upper()}-USD"
     if btc_majors_col in returns_df.columns:
         s = returns_df[btc_majors_col].copy()
+        return s if not s.dropna().empty else None
+    if "BTC_spot" in returns_df.columns:
+        s = returns_df["BTC_spot"].copy()
         return s if not s.dropna().empty else None
     for col in returns_df.columns:
         if is_btc_pair(meta.get(col, "")):

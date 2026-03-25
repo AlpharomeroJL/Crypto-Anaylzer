@@ -13,6 +13,14 @@ import pandas as pd
 from .features import period_return_bars
 
 
+def _resolve_market_factor_cols(returns_df: pd.DataFrame) -> List[str]:
+    """
+    Prefer majors-native factor legs first, then spot fallbacks.
+    """
+    preferred = ["BTC-USD", "ETH-USD", "BTC_spot", "ETH_spot"]
+    return [c for c in preferred if c in returns_df.columns]
+
+
 def zscore_cross_section(signal_df: pd.DataFrame, clip: float = 5.0) -> pd.DataFrame:
     """
     Cross-sectional z-score at each timestamp: (x - mean) / std, then clip to [-clip, clip].
@@ -77,20 +85,28 @@ def neutralize_signal_to_exposures(
         return signal_df.copy()
     out = pd.DataFrame(index=common_idx, columns=cols, dtype=float)
     for t in common_idx:
-        y = signal_df.loc[t].values
-        valid = np.isfinite(y)
+        y = signal_df.loc[t].values.astype(float)
+        if not np.isfinite(y).any():
+            out.loc[t] = signal_df.loc[t]
+            continue
+        X_rows: List[np.ndarray] = []
+        for xdf in X_list:
+            row = xdf.loc[t].values if t in xdf.index else np.full(len(cols), np.nan)
+            X_rows.append(row.astype(float))
+        if not X_rows:
+            out.loc[t] = signal_df.loc[t]
+            continue
+        X_no_const = np.column_stack(X_rows)
+        valid = np.isfinite(y) & np.all(np.isfinite(X_no_const), axis=1)
         if valid.sum() < 3:
             out.loc[t] = signal_df.loc[t]
             continue
-        X_rows = []
-        for xdf in X_list:
-            row = xdf.loc[t].values if t in xdf.index else np.full(len(cols), np.nan)
-            X_rows.append(row)
-        X_mat = np.column_stack([np.ones(len(cols)), *X_rows])
-        X_mat = np.where(np.isfinite(X_mat), X_mat, 0.0)
-        y_finite = np.where(valid, y, 0.0)
-        resid = _ols_residual_cross_section(y_finite, X_mat)
-        out.loc[t] = np.where(valid, resid, np.nan)
+        X_valid = np.column_stack([np.ones(valid.sum()), X_no_const[valid]])
+        y_valid = y[valid]
+        resid_valid = _ols_residual_cross_section(y_valid, X_valid)
+        resid_full = np.full(len(cols), np.nan, dtype=float)
+        resid_full[valid] = resid_valid
+        out.loc[t] = resid_full
     return out
 
 
@@ -149,8 +165,13 @@ def orthogonalize_signals(
             if valid.sum() < 3:
                 out.loc[t] = S.loc[t]
                 continue
-            resid = _ols_residual_cross_section(np.where(valid, y, 0.0), np.where(np.isfinite(X), X, 0.0))
-            out.loc[t] = np.where(valid, resid, np.nan)
+            # Regress only on valid cross-section rows; keep invalid assets as NaN.
+            y_valid = y[valid]
+            X_valid = X[valid]
+            resid_valid = _ols_residual_cross_section(y_valid, X_valid)
+            resid_full = np.full(len(y), np.nan, dtype=float)
+            resid_full[valid] = resid_valid
+            out.loc[t] = resid_full
         orth[name] = out
     # Report: average absolute cross-correlation before/after
     report: Dict[str, float] = {}
@@ -255,12 +276,12 @@ def value_vs_beta(
     """
     from .alpha_research import signal_residual_momentum_24h
 
-    majors_factor_cols = [c for c in ["BTC-USD", "ETH-USD"] if c in returns_df.columns]
-    dex_factor_cols = [c for c in ["BTC_spot", "ETH_spot"] if c in returns_df.columns]
-    factor_cols = majors_factor_cols if majors_factor_cols else dex_factor_cols
+    factor_cols = _resolve_market_factor_cols(returns_df)
     sig = signal_residual_momentum_24h(returns_df, freq, factor_cols=factor_cols)
     if sig is None or sig.empty:
         return None
+    # Native value/reversion direction for majors: opposite of residual momentum.
+    sig = -sig
     exposures = build_exposure_panel(
         returns_df, pd.DataFrame(), factor_returns=factor_returns, freq=freq, liquidity_panel=liquidity_panel
     )
@@ -283,6 +304,11 @@ def clean_momentum(
     mom = signal_momentum_24h(returns_df, freq)
     if mom.empty:
         return mom
+    # Do not score benchmark factor legs in cross-section.
+    factor_cols = _resolve_market_factor_cols(returns_df)
+    for fcol in factor_cols:
+        if fcol in mom.columns:
+            mom[fcol] = np.nan
     exposures = build_exposure_panel(returns_df, pd.DataFrame(), factor_returns=factor_returns, freq=freq)
     beta_df = exposures.get("beta_btc_72")
     vol_df = exposures.get("rolling_vol_24h")
@@ -294,6 +320,152 @@ def clean_momentum(
     if not to_use:
         return mom
     return neutralize_signal_to_exposures(mom, to_use, method="ols")
+
+
+def xs_low_vol_tilt(returns_df: pd.DataFrame, freq: str) -> pd.DataFrame:
+    """
+    Majors-native low-volatility tilt: signal = -rolling std of log returns (same window as 24h bar count).
+
+    Higher values => lower recent realized volatility. Cross-sectionally rankable; not a return-momentum
+    or residual-momentum family — uses second-moment path only. Factor benchmark legs excluded from scoring.
+    """
+    if returns_df.empty:
+        return returns_df.copy()
+    bars_24 = period_return_bars(freq).get("24h", 24)
+    vol = returns_df.rolling(bars_24).std(ddof=1)
+    out = -vol
+    factor_cols = _resolve_market_factor_cols(returns_df)
+    for fcol in factor_cols:
+        if fcol in out.columns:
+            out[fcol] = np.nan
+    return out.replace([np.inf, -np.inf], np.nan)
+
+
+def xs_low_vol_dispersion_conditional(
+    returns_df: pd.DataFrame,
+    freq: str,
+    dispersion_window: int = 24,
+) -> pd.DataFrame:
+    """
+    Low-vol tilt conditioned on cross-sectional dispersion regime (majors-native).
+
+    Base is ``xs_low_vol_tilt`` (second moment only). Dispersion state uses the same
+    cross-sectional return dispersion and rolling z-score as reportv2's regime section
+    (``compute_dispersion_series`` + ``dispersion_zscore_series``; default window 24 bars).
+
+    Row-wise: ``signal = base * sign(dispersion_z)``, with ``sign(0) -> +1``. This mirrors
+    ``alpha_research.signal_dispersion_conditioned`` (momentum × sign(z)) but swaps in
+    low-vol tilt so the family is regime-conditioned rather than an unconditional vol factor.
+    Uses only information available at each bar (no forward dispersion).
+    """
+    from .alpha_research import compute_dispersion_series, dispersion_zscore_series
+
+    base = xs_low_vol_tilt(returns_df, freq)
+    if base.empty:
+        return base
+    disp = compute_dispersion_series(returns_df)
+    if disp.empty or len(disp.dropna()) < max(dispersion_window, 2):
+        return base.replace([np.inf, -np.inf], np.nan)
+    dz = dispersion_zscore_series(disp, dispersion_window)
+    common = base.index.intersection(dz.index)
+    if len(common) == 0:
+        return base.replace([np.inf, -np.inf], np.nan)
+    out = base.reindex(common).copy()
+    z = dz.reindex(common).ffill().bfill()
+    sign_z = np.sign(z.to_numpy(dtype=float))
+    sign_z = np.where(sign_z == 0.0, 1.0, sign_z)
+    out = out.mul(sign_z, axis=0)
+    return out.replace([np.inf, -np.inf], np.nan)
+
+
+def short_horizon_reversal(returns_df: pd.DataFrame, freq: str) -> pd.DataFrame:
+    """
+    Cross-sectional short-horizon mean-reversion tilt (majors-native).
+
+    Signal = minus rolling sum of log returns over ``short_bars``, where
+    ``short_bars = max(2, bars_24 // 4)`` and ``bars_24`` is the same 24h bar count as
+    ``period_return_bars(freq)`` (e.g. 6 bars at 1h vs 24 for the day-momentum window).
+
+    Higher values => assets that lost over the lookback (reversion candidates). Uses
+    only past returns at each bar. Distinct from 24h momentum (longer cumulative return,
+    different construction in ``signal_momentum_24h`` / ``clean_momentum``), from
+    low-vol tilt (second moment), and from dispersion-conditioned low-vol. Factor legs
+    excluded via ``_resolve_market_factor_cols``.
+    """
+    if returns_df.empty:
+        return returns_df.copy()
+    bars_24 = period_return_bars(freq).get("24h", 24)
+    short_bars = max(2, bars_24 // 4)
+    cum = returns_df.rolling(short_bars, min_periods=short_bars).sum()
+    out = -cum
+    factor_cols = _resolve_market_factor_cols(returns_df)
+    for fcol in factor_cols:
+        if fcol in out.columns:
+            out[fcol] = np.nan
+    return out.replace([np.inf, -np.inf], np.nan)
+
+
+def majors_venue_volume_surprise_research_v1(
+    returns_df: pd.DataFrame,
+    volume_df: pd.DataFrame,
+    freq: str,
+) -> pd.DataFrame:
+    """
+    Majors-native **participation / flow** family (v1): unexpected venue volume vs each asset's
+    own trailing history — not a pure price transform.
+
+    Construction (causal within the bar timeline):
+    - ``lv = log(volume + 1)`` on venue-reported bar volume.
+    - ``baseline = rolling_mean(lv, 24h window).shift(1)`` so the benchmark uses **past** bars only.
+    - ``surprise = lv - baseline``
+    - Cross-sectional z-score per bar, then **negate** → research tilt that **fades** unusually high
+      volume vs recent participation (interpretable as crowded-attention / pressure mean-reversion).
+
+    Benchmark factor columns (e.g. BTC-USD, ETH-USD) are nulled for cross-sectional scoring.
+    Requires a volume panel aligned to ``returns_df`` (e.g. from ``venue_bars_1h``); empty if missing.
+    """
+    if returns_df.empty or volume_df is None or volume_df.empty:
+        return pd.DataFrame(index=returns_df.index, columns=returns_df.columns, dtype=float)
+    v = volume_df.reindex(index=returns_df.index, columns=returns_df.columns).astype(float)
+    v = v.clip(lower=0.0)
+    lv = np.log(v + 1.0)
+    bars_24 = period_return_bars(freq).get("24h", 24)
+    w = max(2, int(bars_24))
+    baseline = lv.rolling(window=w, min_periods=w).mean().shift(1)
+    surprise = lv - baseline
+    z = zscore_cross_section(surprise)
+    out = -z
+    factor_cols = _resolve_market_factor_cols(returns_df)
+    for fcol in factor_cols:
+        if fcol in out.columns:
+            out[fcol] = np.nan
+    return out.replace([np.inf, -np.inf], np.nan)
+
+
+def majors_composite_research_v1(returns_df: pd.DataFrame, freq: str) -> pd.DataFrame:
+    """
+    Small majors research composite (v1): equal-weight blend of cross-sectional z-scores of
+    ``short_horizon_reversal`` and ``xs_low_vol_tilt`` — short-horizon first moment vs
+    rolling-vol second moment, both already majors-native and factor-leg nulled in the
+    underlying builders.
+
+    ``value_vs_beta`` is **not** folded in; pair this composite with ``value_vs_beta`` in
+    ``--signals`` for the usual two-leg orthogonalized layout vs single-family baselines.
+    No meta-model: plain mean of two z-scored panels.
+    """
+    sh = short_horizon_reversal(returns_df, freq)
+    lv = xs_low_vol_tilt(returns_df, freq)
+    if sh.empty or lv.empty:
+        return pd.DataFrame(index=returns_df.index, columns=returns_df.columns, dtype=float)
+    z_sh = zscore_cross_section(sh)
+    z_lv = zscore_cross_section(lv)
+    idx = z_sh.index.intersection(z_lv.index)
+    cols = z_sh.columns.intersection(z_lv.columns)
+    if len(idx) == 0 or len(cols) == 0:
+        return pd.DataFrame(index=returns_df.index, columns=returns_df.columns, dtype=float)
+    blended = (z_sh.reindex(idx).reindex(columns=cols) + z_lv.reindex(idx).reindex(columns=cols)) / 2.0
+    out = blended.reindex(index=returns_df.index, columns=returns_df.columns)
+    return out.replace([np.inf, -np.inf], np.nan)
 
 
 # --- Liquidity shock reversion (case study) ---

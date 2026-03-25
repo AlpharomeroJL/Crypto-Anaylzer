@@ -1,0 +1,103 @@
+{
+  "files.associations": {
+    "*.mdc": "markdown"
+  },
+  "editor.formatOnSave": false,
+  "editor.codeActionsOnSave": {
+    "source.fixAll.ruff": "explicit",
+    "source.organizeImports.ruff": "explicit"
+  },
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.rulers": [
+      120
+    ]
+  },
+  "[markdown]": {
+    "editor.wordWrap": "on"
+  },
+  "python.defaultInterpreterPath": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+  "python.terminal.activateEnvironment": true,
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+  "python.testing.cwd": "${workspaceFolder}",
+  "python.testing.pytestArgs": [
+    "-m",
+    "not slow and not network",
+    "-q",
+    "--tb=short",
+    "tests"
+  ],
+  "python.analysis.autoImportCompletions": true,
+  "python.analysis.diagnosticMode": "openFilesOnly",
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}"
+  ],
+  "ruff.nativeServer": "on",
+  "terminal.integrated.defaultProfile.windows": "PowerShell",
+  "terminal.integrated.cwd": "${workspaceFolder}",
+  "search.exclude": {
+    "**/.git": true,
+    "**/.venv": true,
+    "**/__pycache__": true,
+    "**/.pytest_cache": true,
+    "**/.ruff_cache": true,
+    "**/artifacts": true,
+    "**/logs": true,
+    "**/plots": true,
+    "**/reports": true,
+    "**/tmp_profile_off": true,
+    "**/tmp_profile_on": true,
+    "**/tmp_rerun_1": true,
+    "**/tmp_rerun_2": true,
+    "**/tools/graphviz": true,
+    "**/*.sqlite": true,
+    "**/*.sqlite3": true,
+    "**/*.sqlite-shm": true,
+    "**/*.sqlite-wal": true,
+    "**/*.sqlite.bak*": true
+  },
+  "files.exclude": {
+    "**/.venv": true,
+    "**/__pycache__": true,
+    "**/.pytest_cache": true,
+    "**/.ruff_cache": true,
+    "**/artifacts": true,
+    "**/logs": true,
+    "**/plots": true,
+    "**/reports": true,
+    "**/tmp_profile_off": true,
+    "**/tmp_profile_on": true,
+    "**/tmp_rerun_1": true,
+    "**/tmp_rerun_2": true,
+    "**/*.sqlite": true,
+    "**/*.sqlite3": true,
+    "**/*.sqlite-shm": true,
+    "**/*.sqlite-wal": true,
+    "**/*.sqlite.bak*": true
+  },
+  "files.watcherExclude": {
+    "**/.git/objects/**": true,
+    "**/.venv/**": true,
+    "**/__pycache__/**": true,
+    "**/.pytest_cache/**": true,
+    "**/.ruff_cache/**": true,
+    "**/artifacts/**": true,
+    "**/logs/**": true,
+    "**/plots/**": true,
+    "**/reports/**": true,
+    "**/tmp_profile_off/**": true,
+    "**/tmp_profile_on/**": true,
+    "**/tmp_rerun_1/**": true,
+    "**/tmp_rerun_2/**": true,
+    "**/tools/graphviz/**": true
+  },
+  "plantuml.render": "Local",
+  "plantuml.jar": "${workspaceFolder}/tools/plantuml/plantuml.jar",
+  "plantuml.commandArgs": [
+    "-graphvizdot",
+    "${workspaceFolder}/tools/graphviz/bin/dot.exe"
+  ]
+}
+

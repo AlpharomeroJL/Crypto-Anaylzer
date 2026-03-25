@@ -1,0 +1,45 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Crypto Analyzer: doctor",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "crypto_analyzer",
+      "args": [
+        "doctor"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "Crypto Analyzer: smoke --ci",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "crypto_analyzer",
+      "args": [
+        "smoke",
+        "--ci"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "Pytest: current file",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": [
+        "-q",
+        "--tb=short",
+        "${file}"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    }
+  ]
+}
+

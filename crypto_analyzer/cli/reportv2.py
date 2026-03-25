@@ -83,20 +83,31 @@ from crypto_analyzer.multiple_testing import (
 )
 from crypto_analyzer.multiple_testing_adjuster import adjust as adjust_pvalues
 from crypto_analyzer.portfolio import (
+    adaptive_long_short_k,
     apply_costs_to_portfolio,
+    ema_smooth_weights,
     long_short_from_ranks,
     portfolio_returns_from_weights,
     turnover_from_weights,
 )
 from crypto_analyzer.portfolio_advanced import optimize_long_short_portfolio
-from crypto_analyzer.research_universe import get_benchmark_majors_assets, get_research_assets
+from crypto_analyzer.research_universe import (
+    get_benchmark_majors_assets,
+    get_benchmark_majors_volume_panel,
+    get_research_assets,
+)
 from crypto_analyzer.risk_model import estimate_covariance
 from crypto_analyzer.signals_xs import (
     build_exposure_panel,
     clean_momentum,
     liquidity_shock_reversion_variants,
+    majors_composite_research_v1,
+    majors_venue_volume_surprise_research_v1,
     orthogonalize_signals,
+    short_horizon_reversal,
     value_vs_beta,
+    xs_low_vol_dispersion_conditional,
+    xs_low_vol_tilt,
 )
 from crypto_analyzer.statistics import hac_mean_inference, safe_nanmean
 from crypto_analyzer.validation import (
@@ -118,6 +129,105 @@ def _table(df: pd.DataFrame) -> str:
     if df.empty:
         return "*No data*"
     return df.to_string(index=False)
+
+
+def _apply_rebalance_hold(weights_exec: pd.DataFrame, rebalance_every: int) -> pd.DataFrame:
+    """Hold lagged weights between rebalance bars (diagnostic sensitivity only)."""
+    if weights_exec.empty or rebalance_every <= 1:
+        return weights_exec
+    held = weights_exec.copy()
+    for i in range(1, len(held)):
+        if i % rebalance_every != 0:
+            held.iloc[i] = held.iloc[i - 1]
+    return held
+
+
+def _long_short_weights_for_signal(
+    sig_df: pd.DataFrame,
+    ranks_df: pd.DataFrame,
+    *,
+    top_k: int,
+    bottom_k: int,
+    adaptive_k: bool,
+    n_assets: int,
+    bucket_weighting: str,
+    weight_smooth_alpha: float,
+) -> pd.DataFrame:
+    """
+    Rank long/short weights with optional adaptive bucket sizes, signal-strength intra-bucket
+    weights, and EMA smoothing of target weights before causal lag.
+    """
+    tk, bk = int(top_k), int(bottom_k)
+    if adaptive_k:
+        tk, bk = adaptive_long_short_k(n_assets, top_k, bottom_k)
+    extra: dict = {"within_bucket": bucket_weighting}
+    if bucket_weighting == "signal_abs":
+        extra["signal_df"] = sig_df
+    w = long_short_from_ranks(
+        ranks_df,
+        tk,
+        bk,
+        gross_leverage=1.0,
+        **extra,
+    )
+    a = float(weight_smooth_alpha)
+    if a > 0.0:
+        w = ema_smooth_weights(w, a)
+    return w
+
+
+def _apply_fold_local_sign_calibration(
+    sig_df: pd.DataFrame,
+    returns_df: pd.DataFrame,
+    split_plan,
+    horizon: int,
+    min_abs_ic: float,
+    min_obs: int,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Diagnostic-only sign calibration:
+    - fit sign on train fold IC only
+    - apply sign to that fold's test window only
+    """
+    if sig_df is None or sig_df.empty or split_plan is None or not getattr(split_plan, "folds", None):
+        return sig_df, pd.DataFrame()
+    fwd = compute_forward_returns(returns_df, horizon)
+    calibrated = sig_df.copy()
+    rows: list[dict] = []
+    idx = sig_df.index
+    for fold in split_plan.folds:
+        train_mask = (idx >= pd.Timestamp(fold.train_start_ts)) & (idx <= pd.Timestamp(fold.train_end_ts))
+        test_mask = (idx >= pd.Timestamp(fold.test_start_ts)) & (idx <= pd.Timestamp(fold.test_end_ts))
+        if not test_mask.any():
+            continue
+        train_sig = sig_df.loc[train_mask]
+        train_fwd = fwd.loc[train_mask].reindex(columns=train_sig.columns)
+        ic_ts = information_coefficient(train_sig, train_fwd, method="spearman")
+        train_ic_mean = float(ic_ts.mean()) if not ic_ts.dropna().empty else float("nan")
+        train_n_obs = int(ic_ts.dropna().shape[0])
+        chosen_sign = 1
+        if (
+            np.isfinite(train_ic_mean)
+            and train_n_obs >= int(min_obs)
+            and abs(train_ic_mean) >= float(min_abs_ic)
+            and train_ic_mean < 0.0
+        ):
+            chosen_sign = -1
+        calibrated.loc[test_mask] = calibrated.loc[test_mask] * float(chosen_sign)
+        rows.append(
+            {
+                "fold_id": fold.fold_id,
+                "train_start_ts": str(fold.train_start_ts),
+                "train_end_ts": str(fold.train_end_ts),
+                "test_start_ts": str(fold.test_start_ts),
+                "test_end_ts": str(fold.test_end_ts),
+                "horizon": int(horizon),
+                "train_ic_mean": train_ic_mean,
+                "train_n_obs": train_n_obs,
+                "chosen_sign": chosen_sign,
+            }
+        )
+    return calibrated, pd.DataFrame(rows)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -176,6 +286,33 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--bottom-k", type=int, default=DEFAULT_BOTTOM_K)
     ap.add_argument("--fee-bps", type=float, default=30)
     ap.add_argument("--slippage-bps", type=float, default=10)
+    ap.add_argument(
+        "--rebalance-every",
+        dest="rebalance_every",
+        type=int,
+        default=1,
+        help="Rebalance every N bars (hold weights in-between). Diagnostic sensitivity only; default 1.",
+    )
+    ap.add_argument(
+        "--adaptive-k",
+        dest="adaptive_k",
+        action="store_true",
+        help="Cap top/bottom k on small panels (each leg <= max(1, n_assets//4)); reduces brittle L/S on ~9 names.",
+    )
+    ap.add_argument(
+        "--bucket-weighting",
+        dest="bucket_weighting",
+        choices=["equal", "signal_abs"],
+        default="equal",
+        help="Within long/short buckets: equal (legacy) or signal_abs (|signal| weights; uses raw signal pre-rank).",
+    )
+    ap.add_argument(
+        "--weight-smooth-alpha",
+        dest="weight_smooth_alpha",
+        type=float,
+        default=0.0,
+        help="EMA smooth target weights (0=off, e.g. 0.35); applied before causal lag; reduces turnover.",
+    )
     ap.add_argument("--db", default=None)
     ap.add_argument(
         "--backend",
@@ -249,6 +386,34 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Run fold-causality walk-forward; produce attestation (required for candidate/accepted when used).",
     )
     ap.add_argument(
+        "--signal-sign-calibration",
+        dest="signal_sign_calibration",
+        choices=["off", "train_ic"],
+        default="off",
+        help="Diagnostic only: fold-local train-only sign calibration mode (default off).",
+    )
+    ap.add_argument(
+        "--sign-calibration-horizon",
+        dest="sign_calibration_horizon",
+        type=int,
+        default=1,
+        help="Forward-return horizon used for fold train IC sign choice (default 1).",
+    )
+    ap.add_argument(
+        "--sign-calibration-min-abs-ic",
+        dest="sign_calibration_min_abs_ic",
+        type=float,
+        default=0.0,
+        help="Minimum abs(train IC) required before sign flip may be applied (default 0.0).",
+    )
+    ap.add_argument(
+        "--sign-calibration-min-obs",
+        dest="sign_calibration_min_obs",
+        type=int,
+        default=100,
+        help="Minimum train IC observations required before sign flip may be applied (default 100).",
+    )
+    ap.add_argument(
         "--case-study",
         dest="case_study",
         choices=["liqshock"],
@@ -284,6 +449,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = ap.parse_args(argv)
 
     universe = getattr(args, "universe", "dex")
+    if int(getattr(args, "rebalance_every", 1)) < 1:
+        print("Error: --rebalance-every must be >= 1", file=sys.stderr)
+        return 1
+    if float(getattr(args, "weight_smooth_alpha", 0.0)) < 0.0:
+        print("Error: --weight-smooth-alpha must be >= 0", file=sys.stderr)
+        return 1
+    if float(getattr(args, "weight_smooth_alpha", 0.0)) > 1.0:
+        print("Error: --weight-smooth-alpha must be <= 1", file=sys.stderr)
+        return 1
     if universe == "majors" and str(args.freq).replace(" ", "").lower() != "1h":
         print(
             "Error: --universe majors requires --freq 1h (venue_bars_1h / Coinbase Advanced).",
@@ -429,6 +603,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         f"| fee_bps | {getattr(args, 'fee_bps', 30)} |",
         f"| slippage_bps | {getattr(args, 'slippage_bps', 10)} |",
         "| cost model | fee + slippage (bps) |",
+        f"| rebalance_every | {int(getattr(args, 'rebalance_every', 1))} |",
+        f"| adaptive_k | {bool(getattr(args, 'adaptive_k', False))} |",
+        f"| bucket_weighting | {getattr(args, 'bucket_weighting', 'equal')} |",
+        f"| weight_smooth_alpha | {float(getattr(args, 'weight_smooth_alpha', 0.0))} |",
+        f"| signal_sign_calibration | {getattr(args, 'signal_sign_calibration', 'off')} |",
         f"| cov_method | {args.cov_method} |",
         f"| portfolio | {args.portfolio} |",
         f"| deflated_sharpe n_trials | {args.n_trials if hasattr(args, 'n_trials') else 'auto'} |",
@@ -505,14 +684,49 @@ def main(argv: Optional[List[str]] = None) -> int:
     sig_value = value_vs_beta(returns_df, args.freq, factor_ret) if not returns_df.empty else None
     if sig_value is not None and sig_value.empty:
         sig_value = None
+    sig_xs_lv = xs_low_vol_tilt(returns_df, args.freq) if not returns_df.empty else pd.DataFrame()
+    sig_xs_lv_disp = (
+        xs_low_vol_dispersion_conditional(returns_df, args.freq, dispersion_window=DISPERSION_WINDOW)
+        if not returns_df.empty
+        else pd.DataFrame()
+    )
+    sig_shrev = short_horizon_reversal(returns_df, args.freq) if not returns_df.empty else pd.DataFrame()
+    sig_maj_comp = (
+        majors_composite_research_v1(returns_df, args.freq) if not returns_df.empty else pd.DataFrame()
+    )
 
+    majors_volume_panel: Optional[pd.DataFrame] = None
+    if universe == "majors" and "majors_volume_surprise_research_v1" in signal_names:
+        majors_volume_panel = get_benchmark_majors_volume_panel(
+            db, min_bars_override=getattr(args, "min_bars", None)
+        )
+    sig_vol_surprise = (
+        majors_venue_volume_surprise_research_v1(returns_df, majors_volume_panel, args.freq)
+        if majors_volume_panel is not None
+        and not majors_volume_panel.empty
+        and not returns_df.empty
+        else pd.DataFrame()
+    )
+
+    _signal_candidates: dict[str, Optional[pd.DataFrame]] = {
+        "clean_momentum": sig_clean if not sig_clean.empty else None,
+        "value_vs_beta": sig_value if sig_value is not None and not sig_value.empty else None,
+        "xs_low_vol_tilt": sig_xs_lv if not sig_xs_lv.empty else None,
+        "xs_low_vol_dispersion_conditional": sig_xs_lv_disp if not sig_xs_lv_disp.empty else None,
+        "short_horizon_reversal": sig_shrev if not sig_shrev.empty else None,
+        "majors_composite_research_v1": sig_maj_comp if not sig_maj_comp.empty else None,
+        "momentum_24h": sig_mom if not sig_mom.empty else None,
+        "majors_volume_surprise_research_v1": sig_vol_surprise if not sig_vol_surprise.empty else None,
+    }
+
+    # Preserve --signals order for orthogonalize_signals(dict insertion order).
     signals_dict = {}
-    if "clean_momentum" in signal_names and not sig_clean.empty:
-        signals_dict["clean_momentum"] = sig_clean
-    if "value_vs_beta" in signal_names and sig_value is not None and not sig_value.empty:
-        signals_dict["value_vs_beta"] = sig_value
-    if "momentum_24h" in signal_names and not sig_mom.empty:
-        signals_dict["momentum_24h"] = sig_mom
+    for _name in signal_names:
+        if _name == "liquidity_shock_reversion":
+            continue
+        _df = _signal_candidates.get(_name)
+        if _df is not None and not _df.empty:
+            signals_dict[_name] = _df
     if "liquidity_shock_reversion" in signal_names and liquidity_panel is not None:
         liqshock_variants = liquidity_shock_reversion_variants(
             liquidity_panel=liquidity_panel,
@@ -544,6 +758,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     # ---- Portfolio section (simple or advanced) ----
     lines.append("## 3) Portfolio (research-only)")
     lines.append(f"Mode: {args.portfolio}. Fee: {args.fee_bps} bps, Slippage: {args.slippage_bps} bps.")
+    if args.portfolio == "advanced":
+        lines.append("*Advanced optimizer diagnostics are reported; realized backtest uses lagged rank long/short weights.*")
     lines.append("")
 
     # Regime state (exact join, no ffill): load once when --regimes set for per-signal artifacts
@@ -585,6 +801,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             "portfolio": args.portfolio,
             "cov_method": args.cov_method,
             "universe": universe,
+            "adaptive_k": bool(getattr(args, "adaptive_k", False)),
+            "bucket_weighting": getattr(args, "bucket_weighting", "equal"),
+            "weight_smooth_alpha": float(getattr(args, "weight_smooth_alpha", 0.0)),
         },
         sort_keys=True,
     )
@@ -709,11 +928,52 @@ def main(argv: Optional[List[str]] = None) -> int:
         except Exception as e:
             print("Walk-forward strict skip:", e)
 
-    for name, sig_df in (orth_dict or signals_dict).items():
+    active_signals_dict = orth_dict or signals_dict
+    calibrated_signals: dict[str, pd.DataFrame] = {}
+    calibration_path_by_signal: dict[str, str] = {}
+    if (
+        getattr(args, "signal_sign_calibration", "off") == "train_ic"
+        and _walk_forward_split_plan is not None
+        and getattr(_walk_forward_split_plan, "folds", None)
+    ):
+        csv_dir = out_dir / "csv"
+        ensure_dir(csv_dir)
+        for _name, _sig in active_signals_dict.items():
+            _cal_sig, _diag_df = _apply_fold_local_sign_calibration(
+                _sig,
+                returns_df,
+                _walk_forward_split_plan,
+                horizon=int(getattr(args, "sign_calibration_horizon", 1)),
+                min_abs_ic=float(getattr(args, "sign_calibration_min_abs_ic", 0.0)),
+                min_obs=int(getattr(args, "sign_calibration_min_obs", 100)),
+            )
+            calibrated_signals[_name] = _cal_sig
+            if not _diag_df.empty:
+                _path = csv_dir / f"sign_calibration_{_name}_{run_id_early}.csv"
+                write_df_csv_stable(_diag_df, _path)
+                calibration_path_by_signal[_name] = str(_path.relative_to(out_dir))
+                bundle_output_paths.append(str(_path))
+        lines.append("## 2b) Sign Calibration (diagnostic)")
+        lines.append(
+            "Fold-local train-only sign calibration enabled (`train_ic`): sign selected on train fold IC and applied to test fold only."
+        )
+        lines.append("")
+
+    for name, sig_df_raw in active_signals_dict.items():
+        sig_df = calibrated_signals.get(name, sig_df_raw)
         if sig_df is None or sig_df.empty:
             continue
         ranks = rank_signal_df(sig_df)
-        weights_df = long_short_from_ranks(ranks, args.top_k, args.bottom_k, gross_leverage=1.0)
+        weights_df = _long_short_weights_for_signal(
+            sig_df,
+            ranks,
+            top_k=args.top_k,
+            bottom_k=args.bottom_k,
+            adaptive_k=bool(getattr(args, "adaptive_k", False)),
+            n_assets=n_assets,
+            bucket_weighting=str(getattr(args, "bucket_weighting", "equal")),
+            weight_smooth_alpha=float(getattr(args, "weight_smooth_alpha", 0.0)),
+        )
         if args.portfolio == "advanced" and n_assets >= MIN_ASSETS:
             last_t = ranks.index[-1] if len(ranks) else None
             if last_t is not None:
@@ -740,10 +1000,13 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         if weights_df.empty:
             continue
-        port_ret = portfolio_returns_from_weights(weights_df, returns_df)
+        # Enforce causal execution: apply weights from t-1 to returns at t.
+        weights_exec = weights_df.shift(1).reindex(index=returns_df.index).fillna(0.0)
+        weights_exec = _apply_rebalance_hold(weights_exec, int(getattr(args, "rebalance_every", 1)))
+        port_ret = portfolio_returns_from_weights(weights_exec, returns_df)
         if port_ret.dropna().empty:
             continue
-        turnover_ser = turnover_from_weights(weights_df)
+        turnover_ser = turnover_from_weights(weights_exec)
         port_ret_net = apply_costs_to_portfolio(port_ret, turnover_ser, args.fee_bps, args.slippage_bps)
         port_ret_net = port_ret_net.dropna()
         portfolio_pnls[name] = port_ret_net
@@ -814,6 +1077,13 @@ def main(argv: Optional[List[str]] = None) -> int:
                     "fold_causality_attestation_schema_version"
                 )
                 meta["fold_causality_attestation"] = _fold_causality_attestation
+            meta["rebalance_every"] = int(getattr(args, "rebalance_every", 1))
+            meta["adaptive_k"] = bool(getattr(args, "adaptive_k", False))
+            meta["bucket_weighting"] = str(getattr(args, "bucket_weighting", "equal"))
+            meta["weight_smooth_alpha"] = float(getattr(args, "weight_smooth_alpha", 0.0))
+            meta["signal_sign_calibration"] = getattr(args, "signal_sign_calibration", "off")
+            if name in calibration_path_by_signal:
+                meta["sign_calibration_path"] = calibration_path_by_signal[name]
             ic_summary_by_regime_path_rel: str | None = None
             ic_decay_by_regime_path_rel: str | None = None
             regime_coverage_path_rel: str | None = None
@@ -1349,8 +1619,19 @@ def main(argv: Optional[List[str]] = None) -> int:
                 sig = orth_dict.get(k)
             if sig is not None and not sig.empty:
                 r = rank_signal_df(sig)
-                w = long_short_from_ranks(r, args.top_k, args.bottom_k, gross_leverage=1.0)
-                t = turnover_from_weights(w)
+                w = _long_short_weights_for_signal(
+                    sig,
+                    r,
+                    top_k=args.top_k,
+                    bottom_k=args.bottom_k,
+                    adaptive_k=bool(getattr(args, "adaptive_k", False)),
+                    n_assets=n_assets,
+                    bucket_weighting=str(getattr(args, "bucket_weighting", "equal")),
+                    weight_smooth_alpha=float(getattr(args, "weight_smooth_alpha", 0.0)),
+                )
+                w_exec = w.shift(1).reindex(index=returns_df.index).fillna(0.0)
+                w_exec = _apply_rebalance_hold(w_exec, int(getattr(args, "rebalance_every", 1)))
+                t = turnover_from_weights(w_exec)
                 turnover_vals.append(float(t.mean()))
         if turnover_vals:
             canonical_metrics["turnover"] = float(np.nanmean(turnover_vals))

@@ -194,3 +194,42 @@ def get_benchmark_majors_assets(
 
     returns_df = returns_df.sort_index()
     return returns_df, meta_df
+
+
+def get_benchmark_majors_volume_panel(
+    db_path: str,
+    *,
+    min_bars_override: Optional[int] = None,
+    venue: Optional[str] = None,
+    product_ids: Optional[List[str]] = None,
+) -> pd.DataFrame:
+    """
+    Venue-reported bar **volume** (base-asset units) from ``venue_bars_1h``, pivoted like returns.
+
+    Same universe filter as ``get_benchmark_majors_assets`` (min_bars, venue, product_ids).
+    Index ``ts_utc``, columns ``product_id``. No DEX fields.
+
+    Used for majors-native participation / flow proxies without new tables or vendors.
+    """
+    min_bars = (
+        min_bars_override if min_bars_override is not None else (config_min_bars() if callable(config_min_bars) else 48)
+    )
+    v = venue or venue_coinbase_advanced_slug()
+    pids = product_ids if product_ids is not None else venue_coinbase_advanced_product_ids()
+
+    bars = load_venue_bars_1h(
+        db_path_override=db_path,
+        venue=v,
+        min_bars=min_bars,
+        product_ids=pids if pids else None,
+    )
+    if bars.empty or "volume" not in bars.columns:
+        return pd.DataFrame()
+
+    bars = bars.copy()
+    bars["volume"] = pd.to_numeric(bars["volume"], errors="coerce")
+    vol = bars.pivot_table(index="ts_utc", columns="product_id", values="volume", aggfunc="last")
+    vol.index = pd.to_datetime(vol.index, utc=True, errors="coerce")
+    vol = vol.sort_index()
+    vol = vol.dropna(axis=0, how="all")
+    return vol
