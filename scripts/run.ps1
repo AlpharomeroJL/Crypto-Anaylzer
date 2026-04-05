@@ -3,7 +3,7 @@
 # Doctor-first: runs doctor before most commands unless -SkipDoctor is passed.
 # Must run from repo root; script will cd to repo root (parent of scripts/).
 # Usage: .\scripts\run.ps1 [-SkipDoctor] <command> [args...]
-# Commands: poll, universe-poll, materialize, venue-sync, report, reportv2, case_study_liqshock, streamlit, doctor, test, demo, check-dataset
+# Commands: poll, universe-poll, materialize, venue-sync, report, reportv2, case_study_liqshock, streamlit, doctor, test, demo, check-dataset, graperoot-graph
 param(
     [switch]$SkipDoctor,
     [Parameter(Position = 0)]$Command,
@@ -33,7 +33,7 @@ if ($Passthrough) {
 }
 
 $runDoctorFirst = $false
-if ($Command -and $Command -ne 'doctor' -and $Command -ne 'test' -and $Command -ne 'demo' -and $Command -ne 'verify' -and (-not $SkipDoctor)) {
+if ($Command -and $Command -ne 'doctor' -and $Command -ne 'test' -and $Command -ne 'demo' -and $Command -ne 'verify' -and $Command -ne 'graperoot-graph' -and (-not $SkipDoctor)) {
     $runDoctorFirst = $true
 }
 
@@ -199,6 +199,11 @@ switch ($Command) {
         }
     }
     "demo"           { & $py -m crypto_analyzer demo @filtered; exit $LASTEXITCODE }
+    "graperoot-graph" {
+        $script = Join-Path $root "tools\rebuild_graperoot_graph.py"
+        & $py $script @filtered
+        exit $LASTEXITCODE
+    }
     "check-dataset"  { & $py -m crypto_analyzer check-dataset @filtered; exit $LASTEXITCODE }
     "null_suite"     { & $py -m crypto_analyzer null_suite @filtered; exit $LASTEXITCODE }
     "promotion"      { & $py -m crypto_analyzer promotion @filtered; exit $LASTEXITCODE }

@@ -36,6 +36,30 @@ This repo includes a shared editor setup for VS Code and Cursor plus a shared AI
 
 See [Developer Environment](docs/developer_environment.md) for the full workflow.
 
+### GrapeRoot (optional code graph)
+
+GrapeRoot’s bundled `graph_builder` only skips a fixed set of directories (`.git`, `node_modules`, `.venv`, …). For a **higher-signal** graph in this repo, we maintain **`.graperootignore`** (directory basenames to prune, aligned with noisy paths in `.gitignore`).
+
+Rebuild `.dual-graph/info_graph.json` and `symbol_index.json` after editing ignores:
+
+```powershell
+.\scripts\run.ps1 graperoot-graph
+# or: python tools/rebuild_graperoot_graph.py
+```
+
+Requires the `graperoot` package (`pip install graperoot` in `.venv`, or use GrapeRoot’s `~/.dual-graph/venv`). The stock `graperoot . --cursor` launcher does **not** read `.graperootignore`; use the script above when you want canonical prunes.
+
+**ripgrep (`rg`) on PATH:** GrapeRoot uses `rg` for fallback search. WinGet’s portable install may omit PATH for new terminals. One-time fix (or verify):
+
+```powershell
+winget install --id BurntSushi.ripgrep.MSVC -e --accept-source-agreements
+.\scripts\ensure_ripgrep_on_path.ps1   # append WinGet’s rg.exe folder to user PATH
+```
+
+Open a **new** terminal (or restart Cursor), then `rg --version`.
+
+**`graperoot "…\Crypto-Anaylzer" --cursor`:** Useful to refresh MCP wiring / open the IDE, but the launcher **rescans with upstream `SKIP_DIRS` only** and overwrites `.dual-graph/info_graph.json`. After running it, run **`.\scripts\run.ps1 graperoot-graph` again** so `.graperootignore` stays applied.
+
 ## Local verification (canonical commands)
 
 Run from repo root. These match CI exactly.

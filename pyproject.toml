@@ -56,6 +56,7 @@ ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 python_files = ["test_*.py"]
 markers = [
     "slow: marks tests that run the full report pipeline (deselect with -m 'not slow')",

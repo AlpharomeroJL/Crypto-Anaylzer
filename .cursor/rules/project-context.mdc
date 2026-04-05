@@ -57,6 +57,11 @@ When making changes:
 - Avoid opportunistic cleanup.
 - Preserve public interfaces.
 
+## GrapeRoot / dual-graph MCP (optional)
+- When **Tools & MCP → dual-graph** is enabled and the local MCP server is running, **prefer dual-graph tools first** for **cross-file questions**: where a symbol lives, how modules wire together (providers → ingest → CLI), or blast-radius before opening many files or spamming search.
+- Use **retrieval/read-style MCP calls** for targeted context; do **not** paste full `.dual-graph/info_graph.json` into the chat (too large; low signal per token).
+- Keep the pruned graph current: **`.\scripts\run.ps1 graperoot-graph`** after large refactors or new top-level dirs. The stock **`graperoot … --cursor`** scan ignores **`.graperootignore`**; run **`graperoot-graph` again** after using it if you rely on canonical prunes.
+
 ## Running Things (Windows)
 - **Venv**: `.venv` at repo root; activate with `.venv\Scripts\activate` (PowerShell).
 - **CLI**: Prefer `.\scripts\run.ps1 <command> [args...]` (e.g. `.\scripts\run.ps1 poll`, `.\scripts\run.ps1 test`, `.\scripts\run.ps1 streamlit`). Fallback: `python -m crypto_analyzer` or `python cli\<script>.py`.

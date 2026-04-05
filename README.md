@@ -531,3 +531,36 @@ Short form and artifact keys: [Methods & limits](docs/methods_and_limits.md) (§
 MIT License. See [LICENSE](LICENSE).
 
 **Research-only.** This tool analyzes data and produces reports. It does not execute trades, hold API keys, or connect to any broker. Opt-in features (regimes, Phase 3 migrations, Reality Check, promotion) do not change default behavior.
+
+---
+
+## Linux and macOS (Unix)
+
+The project is **cross-platform**: Python 3.10+, `uv`, and the CLI work the same on Linux and macOS as on Windows. The Quickstart commands that use `uv run crypto-analyzer …` are already copy-pasteable in **bash** or **zsh** from the repo root.
+
+**Virtual environment (pip fallback):** After `python -m venv .venv`, activate with:
+
+```bash
+source .venv/bin/activate
+```
+
+Then install and run as elsewhere in this README (`python -m pip install -e ".[dev]"`, `python -m crypto_analyzer doctor`, or `crypto-analyzer doctor` if the console script is on your PATH).
+
+**`scripts/run.ps1`:** That wrapper is **Windows-only**. On Linux or macOS, call the CLI directly, for example:
+
+- `uv run crypto-analyzer <command> [args…]`
+- `python -m crypto_analyzer <command> [args…]` (with venv activated)
+
+Full local verification without PowerShell: use the same **Tier 1** commands as in [Development / Verification](#development--verification), but run them in your shell (e.g. `uv run ruff check …`, `uv run python -m pytest …`). For the bundled doctor → pytest → ruff → boundary → diagram flow, use `uv run crypto-analyzer verify` or `python -m crypto_analyzer verify` instead of `.\scripts\run.ps1 verify`.
+
+**Environment variables:** Where this README uses PowerShell (`$env:NAME="value"`), use:
+
+```bash
+export CRYPTO_ANALYZER_NO_NETWORK=1   # example: no-network smoke
+```
+
+Unset with `unset CRYPTO_ANALYZER_NO_NETWORK` when you are done.
+
+**Optional tools:** [GrapeRoot](CONTRIBUTING.md#graperoot-optional-code-graph) and link checks may expect **`rg` (ripgrep)** on your PATH. On macOS: `brew install ripgrep`. On Debian/Ubuntu: `sudo apt install ripgrep` (or your distro’s package manager).
+
+**Paths:** Default SQLite DB path (`dex_data.sqlite` at repo root) and `CRYPTO_DB_PATH` / `--db` behavior are the same on all platforms.

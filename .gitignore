@@ -53,6 +53,9 @@ docs/private_conversion.md
 .cursor/
 **/.cursor/
 
+# GrapeRoot / dual-graph: local code index, excerpts, MCP logs, session graphs (machine paths; do not commit)
+.dual-graph/
+
 # Root-level report / scratch markdown dumps (accidental `git add .` risk).
 # Intentional docs live under docs/; exports belong under reports/ (ignored above).
 /research_v2_*.md

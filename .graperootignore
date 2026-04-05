@@ -1,0 +1,28 @@
+# GrapeRoot graph_builder — extra directory prunes for this repo.
+#
+# Upstream GrapeRoot only skips a fixed SKIP_DIRS (.git, node_modules, .venv, …).
+# Each non-comment line is one DIRECTORY BASENAME to skip during os.walk (same as
+# skipping a folder named "node_modules" anywhere in the tree).
+#
+# Rebuild the graph after editing:
+#   python tools/rebuild_graperoot_graph.py
+#   .\scripts\run.ps1 graperoot-graph
+#
+# Keep aligned with noisy / generated paths in .gitignore (reports, artifacts, …).
+
+.claude
+.cursor
+reports
+artifacts
+plots
+out_exec_evidence
+logs
+archive
+tmp_rerun_1
+tmp_rerun_2
+tmp_profile_off
+tmp_profile_on
+crypto_analyzer.egg-info
+.pytest_cache
+.ruff_cache
+graphviz
